@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test User Color Feature</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        button { margin: 10px; padding: 10px 20px; cursor: pointer; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ccc; }
+        #color-status { font-weight: bold; color: #333; }
+        #canvas { border: 1px solid #000; }
+    </style>
+</head>
+<body>
+    <h1>User Color Feature Test</h1>
+    
+    <div class="test-section">
+        <h2>Current User Color: <span id="color-status">#0066cc (default)</span></h2>
+        
+        <button onclick="setUserColor('#FF6B6B')">Set Red (#FF6B6B)</button>
+        <button onclick="setUserColor('#4ECDC4')">Set Teal (#4ECDC4)</button>
+        <button onclick="setUserColor('#45B7D1')">Set Blue (#45B7D1)</button>
+        <button onclick="setUserColor('#96CEB4')">Set Green (#96CEB4)</button>
+        <button onclick="setUserColor('#FECA57')">Set Yellow (#FECA57)</button>
+        
+        <div>
+            <p><strong>Instructions:</strong></p>
+            <ol>
+                <li>Click a color button to set your user color</li>
+                <li>Draw some shapes on the canvas below</li>
+                <li>Select a shape using the selection tool</li>
+                <li>Observe that the selection handles (small squares) now use your chosen user color!</li>
+            </ol>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Canvas Test Area</h2>
+        <ul class="tools" id="tools-menu"></ul>
+        <canvas id="drawArea" width="800" height="400"></canvas>
+        <div id="mouse-position">---, ---</div>
+    </div>
+
+    <!-- Load the drawing system -->
+    <script src="/scripts/menu-api.js" type="module"></script>
+    <script src="/scripts/drawer/index.js" type="module"></script>
+    
+    <script>
+        // Test functions
+        function setUserColor(color) {
+            if (window.Drawer && window.Drawer.utils && window.Drawer.utils.setUserColor) {
+                window.Drawer.utils.setUserColor(color);
+                document.getElementById('color-status').textContent = color;
+                document.getElementById('color-status').style.color = color;
+                
+                // Redraw canvas if it exists to update selection handles
+                if (window.canvas) {
+                    window.canvas.draw();
+                }
+            } else {
+                console.error('Drawer system not loaded yet');
+                alert('Please wait for the drawing system to load first.');
+            }
+        }
+        
+        function getUserColor() {
+            if (window.Drawer && window.Drawer.utils && window.Drawer.utils.getUserColor) {
+                return window.Drawer.utils.getUserColor();
+            }
+            return '#0066cc';
+        }
+        
+        // Initialize drawing system when page loads
+        window.addEventListener('load', async () => {
+            console.log('Initializing test page...');
+            
+            // Wait a moment for modules to load
+            setTimeout(() => {
+                if (window.init) {
+                    try {
+                        const toolsMenu = document.getElementById('tools-menu');
+                        const drawArea = document.getElementById('drawArea');
+                        
+                        if (toolsMenu && drawArea) {
+                            window.init(drawArea, toolsMenu);
+                            console.log('Drawing system initialized successfully!');
+                            
+                            // Update color status
+                            const currentColor = getUserColor();
+                            document.getElementById('color-status').textContent = currentColor;
+                            document.getElementById('color-status').style.color = currentColor;
+                        }
+                    } catch (e) {
+                        console.error('Error initializing drawing system:', e);
+                    }
+                } else {
+                    console.error('Drawing system not available');
+                }
+            }, 100);
+        });
+        
+        // Test that the feature works automatically
+        setTimeout(() => {
+            console.log('Running automatic test...');
+            if (window.Drawer && window.Drawer.utils) {
+                // Test setting and getting user color
+                window.Drawer.utils.setUserColor('#FF6B6B');
+                const retrievedColor = window.Drawer.utils.getUserColor();
+                console.log('✅ User color test passed:', retrievedColor === '#FF6B6B');
+                
+                // Reset to default
+                window.Drawer.utils.setUserColor('#0066cc');
+                console.log('Color feature test complete!');
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
