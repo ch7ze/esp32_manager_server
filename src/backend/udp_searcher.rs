@@ -170,7 +170,7 @@ impl UdpSearcher {
         };
         
         let mut buffer = [0u8; 1024];
-        match timeout(Duration::from_millis(1000), socket.recv_from(&mut buffer)).await {
+        match timeout(Duration::from_millis(100), socket.recv_from(&mut buffer)).await {
             Ok(Ok((bytes_read, from_addr))) => {
                 if bytes_read > 0 {
                     let data = buffer[..bytes_read].to_vec();
@@ -204,6 +204,6 @@ impl Drop for UdpSearcher {
 
 /// Create UDP searcher with default ESP32 port range
 pub fn create_esp32_udp_searcher() -> UdpSearcher {
-    let ports: Vec<u16> = (60000..=60099).collect();
+    let ports: Vec<u16> = (60000..=60004).collect();
     UdpSearcher::new(ports)
 }
