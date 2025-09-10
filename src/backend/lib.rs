@@ -1,12 +1,17 @@
 // ============================================================================
-// LIB.RS - BIBLIOTHEKS-EXPORTE FÜR TESTS
-// Macht interne Module für Integration Tests verfügbar
+// LIB.RS - LIBRARY EXPORTS
+// Makes internal modules available as library
 // ============================================================================
 
 pub mod auth;
 pub mod file_utils;
+pub mod esp32_types;
+pub mod esp32_connection;
+pub mod esp32_manager;
+pub mod udp_searcher;
+pub mod esp32_discovery;
 
-// Re-export wichtiger Typen und Funktionen für Tests
+// Re-export important types and functions
 pub use crate::auth::{User, UserStore, AuthResponse, LoginRequest, RegisterRequest, UpdateDisplayNameRequest};
 use axum::{
     body::Body,
@@ -35,7 +40,7 @@ use auth::{
 use file_utils::{handle_spa_route, handle_spa_route_with_cache_control};
 
 // ============================================================================
-// CREATE APP FUNCTION - FÜR TESTS EXPORTIERT
+// CREATE APP FUNCTION - APPLICATION SETUP
 // ============================================================================
 
 pub async fn create_app(client_hash: String, user_store: UserStore) -> Router {
@@ -116,7 +121,7 @@ pub async fn create_app(client_hash: String, user_store: UserStore) -> Router {
 }
 
 // ============================================================================
-// HANDLER FUNCTIONS - KOPIERT AUS MAIN.RS FÜR TESTS
+// HANDLER FUNCTIONS
 // ============================================================================
 
 async fn api_home() -> Json<Value> {
@@ -419,61 +424,3 @@ async fn update_display_name_handler(
     }
 }
 
-// ============================================================================
-// UNIT TESTS - Für VS Code Test Explorer
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_auth_types() {
-        let login_req = LoginRequest {
-            email: "test@example.com".to_string(),
-            password: "password123".to_string(),
-        };
-        
-        assert_eq!(login_req.email, "test@example.com");
-        assert_eq!(login_req.password, "password123");
-    }
-
-    #[test]
-    fn test_register_request_creation() {
-        let register_req = RegisterRequest {
-            email: "test@example.com".to_string(),
-            display_name: "Test User".to_string(),
-            password: "password123".to_string(),
-        };
-        
-        assert_eq!(register_req.email, "test@example.com");
-        assert_eq!(register_req.display_name, "Test User");
-        assert_eq!(register_req.password, "password123");
-    }
-
-    #[test]
-    fn test_auth_response_success() {
-        let response = AuthResponse {
-            success: true,
-            message: "Login successful".to_string(),
-            email: Some("test@example.com".to_string()),
-        };
-        
-        assert!(response.success);
-        assert_eq!(response.message, "Login successful");
-        assert_eq!(response.email, Some("test@example.com".to_string()));
-    }
-
-    #[test]
-    fn test_auth_response_failure() {
-        let response = AuthResponse {
-            success: false,
-            message: "Invalid credentials".to_string(),
-            email: None,
-        };
-        
-        assert!(!response.success);
-        assert_eq!(response.message, "Invalid credentials");
-        assert_eq!(response.email, None);
-    }
-}

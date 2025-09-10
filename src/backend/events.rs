@@ -118,55 +118,81 @@ pub enum DeviceEvent {
         #[serde(rename = "userColor")]
         user_color: String,
     },
+    // ESP32-specific events
+    #[serde(rename = "esp32Command")]
+    Esp32Command {
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        command: serde_json::Value,
+    },
+    #[serde(rename = "esp32VariableUpdate")]
+    Esp32VariableUpdate {
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        #[serde(rename = "variableName")]
+        variable_name: String,
+        #[serde(rename = "variableValue")]
+        variable_value: String,
+    },
+    #[serde(rename = "esp32StartOptions")]
+    Esp32StartOptions {
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        options: Vec<String>,
+    },
+    #[serde(rename = "esp32ChangeableVariables")]
+    Esp32ChangeableVariables {
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        variables: Vec<serde_json::Value>,
+    },
+    #[serde(rename = "esp32UdpBroadcast")]
+    Esp32UdpBroadcast {
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        message: String,
+        #[serde(rename = "fromIp")]
+        from_ip: String,
+        #[serde(rename = "fromPort")]
+        from_port: u16,
+    },
+    #[serde(rename = "esp32ConnectionStatus")]
+    Esp32ConnectionStatus {
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        connected: bool,
+        #[serde(rename = "deviceIp")]
+        device_ip: String,
+        #[serde(rename = "tcpPort")]
+        tcp_port: u16,
+        #[serde(rename = "udpPort")]
+        udp_port: u16,
+    },
+    #[serde(rename = "esp32DeviceInfo")]
+    Esp32DeviceInfo {
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        #[serde(rename = "deviceName")]
+        device_name: Option<String>,
+        #[serde(rename = "firmwareVersion")]
+        firmware_version: Option<String>,
+        uptime: Option<u64>,
+    },
+    #[serde(rename = "esp32DeviceDiscovered")]
+    Esp32DeviceDiscovered {
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        #[serde(rename = "deviceIp")]
+        device_ip: String,
+        #[serde(rename = "tcpPort")]
+        tcp_port: u16,
+        #[serde(rename = "udpPort")]
+        udp_port: u16,
+        #[serde(rename = "discoveredAt")]
+        discovered_at: String,
+    },
 }
 
-// ============================================================================
-// SHAPE DEFINITIONS - Compatible with Frontend Shape Classes
-// ============================================================================
-
-/// Shape data structure matching frontend implementation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Shape {
-    #[serde(rename = "type")]
-    pub shape_type: ShapeType,
-    pub id: String,
-    pub data: ShapeData,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ShapeType {
-    Line,
-    Rectangle, 
-    Circle,
-    Triangle,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShapeData {
-    // Common properties for all shapes
-    #[serde(rename = "zOrder")]
-    pub z_order: i32,
-    #[serde(rename = "bgColor")]
-    pub bg_color: Option<String>, // "transparent", "ff0000", etc.
-    #[serde(rename = "fgColor")]
-    pub fg_color: String, // "000000", etc.
-    
-    // Shape-specific properties (optional based on shape type)
-    pub from: Option<Point>,
-    pub to: Option<Point>,
-    pub center: Option<Point>,
-    pub radius: Option<f64>,
-    pub p1: Option<Point>,
-    pub p2: Option<Point>,
-    pub p3: Option<Point>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Point {
-    pub x: f64,
-    pub y: f64,
-}
 
 // ============================================================================
 // EVENT METADATA - For Event Sourcing & Synchronization
@@ -211,89 +237,38 @@ impl DeviceEvent {
     pub fn user_left(user_id: String, display_name: String, user_color: String) -> Self {
         DeviceEvent::UserLeft { user_id, display_name, user_color }
     }
-}
-
-impl Shape {
-    pub fn new_line(id: String, from: Point, to: Point, fg_color: String, z_order: i32) -> Self {
-        Shape {
-            shape_type: ShapeType::Line,
-            id,
-            data: ShapeData {
-                z_order,
-                bg_color: None, // Lines don't have background
-                fg_color,
-                from: Some(from),
-                to: Some(to),
-                center: None,
-                radius: None,
-                p1: None,
-                p2: None,
-                p3: None,
-            },
-        }
+    
+    // ESP32-specific event constructors
+    pub fn esp32_command(device_id: String, command: serde_json::Value) -> Self {
+        DeviceEvent::Esp32Command { device_id, command }
     }
     
-    pub fn new_rectangle(id: String, from: Point, to: Point, fg_color: String, bg_color: Option<String>, z_order: i32) -> Self {
-        Shape {
-            shape_type: ShapeType::Rectangle,
-            id,
-            data: ShapeData {
-                z_order,
-                bg_color,
-                fg_color,
-                from: Some(from),
-                to: Some(to),
-                center: None,
-                radius: None,
-                p1: None,
-                p2: None,
-                p3: None,
-            },
-        }
+    pub fn esp32_variable_update(device_id: String, variable_name: String, variable_value: String) -> Self {
+        DeviceEvent::Esp32VariableUpdate { device_id, variable_name, variable_value }
     }
     
-    pub fn new_circle(id: String, center: Point, radius: f64, fg_color: String, bg_color: Option<String>, z_order: i32) -> Self {
-        Shape {
-            shape_type: ShapeType::Circle,
-            id,
-            data: ShapeData {
-                z_order,
-                bg_color,
-                fg_color,
-                from: None,
-                to: None,
-                center: Some(center),
-                radius: Some(radius),
-                p1: None,
-                p2: None,
-                p3: None,
-            },
-        }
+    pub fn esp32_start_options(device_id: String, options: Vec<String>) -> Self {
+        DeviceEvent::Esp32StartOptions { device_id, options }
     }
     
-    pub fn new_triangle(id: String, p1: Point, p2: Point, p3: Point, fg_color: String, bg_color: Option<String>, z_order: i32) -> Self {
-        Shape {
-            shape_type: ShapeType::Triangle,
-            id,
-            data: ShapeData {
-                z_order,
-                bg_color,
-                fg_color,
-                from: None,
-                to: None,
-                center: None,
-                radius: None,
-                p1: Some(p1),
-                p2: Some(p2),
-                p3: Some(p3),
-            },
-        }
+    pub fn esp32_changeable_variables(device_id: String, variables: Vec<serde_json::Value>) -> Self {
+        DeviceEvent::Esp32ChangeableVariables { device_id, variables }
     }
-}
-
-impl Point {
-    pub fn new(x: f64, y: f64) -> Self {
-        Point { x, y }
+    
+    pub fn esp32_udp_broadcast(device_id: String, message: String, from_ip: String, from_port: u16) -> Self {
+        DeviceEvent::Esp32UdpBroadcast { device_id, message, from_ip, from_port }
+    }
+    
+    pub fn esp32_connection_status(device_id: String, connected: bool, device_ip: String, tcp_port: u16, udp_port: u16) -> Self {
+        DeviceEvent::Esp32ConnectionStatus { device_id, connected, device_ip, tcp_port, udp_port }
+    }
+    
+    pub fn esp32_device_info(device_id: String, device_name: Option<String>, firmware_version: Option<String>, uptime: Option<u64>) -> Self {
+        DeviceEvent::Esp32DeviceInfo { device_id, device_name, firmware_version, uptime }
+    }
+    
+    pub fn esp32_device_discovered(device_id: String, device_ip: String, tcp_port: u16, udp_port: u16, discovered_at: String) -> Self {
+        DeviceEvent::Esp32DeviceDiscovered { device_id, device_ip, tcp_port, udp_port, discovered_at }
     }
 }
 
@@ -341,48 +316,64 @@ impl DeviceEvent {
                     Ok(())
                 }
             },
+            // ESP32 event validations
+            DeviceEvent::Esp32Command { device_id, .. } => {
+                if device_id.is_empty() {
+                    Err("Esp32Command requires non-empty device_id".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            DeviceEvent::Esp32VariableUpdate { device_id, variable_name, .. } => {
+                if device_id.is_empty() || variable_name.is_empty() {
+                    Err("Esp32VariableUpdate requires non-empty device_id and variable_name".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            DeviceEvent::Esp32StartOptions { device_id, .. } => {
+                if device_id.is_empty() {
+                    Err("Esp32StartOptions requires non-empty device_id".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            DeviceEvent::Esp32ChangeableVariables { device_id, .. } => {
+                if device_id.is_empty() {
+                    Err("Esp32ChangeableVariables requires non-empty device_id".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            DeviceEvent::Esp32UdpBroadcast { device_id, .. } => {
+                if device_id.is_empty() {
+                    Err("Esp32UdpBroadcast requires non-empty device_id".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            DeviceEvent::Esp32ConnectionStatus { device_id, .. } => {
+                if device_id.is_empty() {
+                    Err("Esp32ConnectionStatus requires non-empty device_id".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            DeviceEvent::Esp32DeviceInfo { device_id, .. } => {
+                if device_id.is_empty() {
+                    Err("Esp32DeviceInfo requires non-empty device_id".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            DeviceEvent::Esp32DeviceDiscovered { device_id, device_ip, .. } => {
+                if device_id.is_empty() || device_ip.is_empty() {
+                    Err("Esp32DeviceDiscovered requires non-empty device_id and device_ip".to_string())
+                } else {
+                    Ok(())
+                }
+            },
         }
     }
 }
 
-impl Shape {
-    /// Validate that the shape has all required data for its type
-    pub fn validate(&self) -> Result<(), String> {
-        if self.id.is_empty() {
-            return Err("Shape must have non-empty id".to_string());
-        }
-        
-        match self.shape_type {
-            ShapeType::Line => {
-                if self.data.from.is_none() || self.data.to.is_none() {
-                    Err("Line shape requires from and to points".to_string())
-                } else {
-                    Ok(())
-                }
-            },
-            ShapeType::Rectangle => {
-                if self.data.from.is_none() || self.data.to.is_none() {
-                    Err("Rectangle shape requires from and to points".to_string())
-                } else {
-                    Ok(())
-                }
-            },
-            ShapeType::Circle => {
-                if self.data.center.is_none() || self.data.radius.is_none() {
-                    Err("Circle shape requires center and radius".to_string())
-                } else if self.data.radius.unwrap() <= 0.0 {
-                    Err("Circle radius must be positive".to_string())
-                } else {
-                    Ok(())
-                }
-            },
-            ShapeType::Triangle => {
-                if self.data.p1.is_none() || self.data.p2.is_none() || self.data.p3.is_none() {
-                    Err("Triangle shape requires p1, p2, and p3 points".to_string())
-                } else {
-                    Ok(())
-                }
-            },
-        }
-    }
-}

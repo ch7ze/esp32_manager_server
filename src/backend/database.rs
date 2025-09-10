@@ -112,6 +112,7 @@ impl ESP32Device {
 // DATABASE MANAGER
 // ============================================================================
 
+#[derive(Debug)]
 pub struct DatabaseManager {
     pool: SqlitePool,
 }

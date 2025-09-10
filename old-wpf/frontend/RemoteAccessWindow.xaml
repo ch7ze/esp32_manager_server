@@ -1,0 +1,42 @@
+<Window x:Class="ESP32_Manager.frontend.RemoteAccessWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Remote Access" Height="466" Width="626">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        
+        <TabControl x:Name="RemoteAccessTabControll">
+            <TabItem Header="UDP Monitor">
+                <TextBox Name="udpMonitorTextField" Margin="10" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" IsReadOnly="True" Height="400" TextWrapping="WrapWithOverflow" />
+            </TabItem>
+            <TabItem Header="TCP Monitor">
+                <TextBox Name="tcpMonitorTextField" Margin="10" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" IsReadOnly="True" Height="400"  TextWrapping="Wrap" />
+            </TabItem>
+            <TabItem Header="Control">
+                <StackPanel x:Name="ControlStackPanel">
+                    <StackPanel Orientation="Horizontal">
+                        <Label Content="Select Start Option" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <ComboBox x:Name="StartOptionComboBox" Margin="10" Width="250" DropDownClosed="StartOptionComboBox_DropDownClosed"  />
+                        <Button x:Name="SendStartOptionButton" Content="Start" Margin="10" Width="50" Click="SendStartOptionButton_Click" />
+                        <Button x:Name="SendResetButton" Content="Reset" Margin="10" Width="50" Click="SendResetButton_Click" />
+                        <CheckBox x:Name="AutoStartCheckBox" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="10" Content="Auto Start" Click="AutoStartCheckBox_Click"/>
+
+                    </StackPanel>
+                    <Label Content="Change Variable Values"/>
+                </StackPanel>
+				
+            </TabItem>
+            <TabItem Header="Variable Monitor">
+                <StackPanel x:Name="VariableMonitorStackPanel"/>
+            </TabItem>
+        </TabControl>
+        
+    </Grid>
+</Window>

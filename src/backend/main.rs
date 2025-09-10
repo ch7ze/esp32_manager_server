@@ -36,8 +36,13 @@ mod auth;        // auth.rs - Authentication (Login, Register, JWT)
 mod file_utils;  // file_utils.rs - File handling and SPA routing
 mod database;    // database.rs - SQLite database integration
 mod events;      // events.rs - Event definitions for ESP32 Devices
-mod canvas_store; // canvas_store.rs - In-Memory Event Store (to be renamed)
+mod device_store; // device_store.rs - In-Memory Event Store for ESP32 devices
 mod websocket;   // websocket.rs - WebSocket handler for multiuser
+mod esp32_types; // esp32_types.rs - ESP32 communication types
+mod esp32_connection; // esp32_connection.rs - ESP32 TCP/UDP connection handling
+mod esp32_manager; // esp32_manager.rs - ESP32 device management
+mod udp_searcher; // udp_searcher.rs - UDP port scanning for ESP32 discovery
+mod esp32_discovery; // esp32_discovery.rs - ESP32 device discovery service
 
 // Import all authentication functions from auth.rs
 // These are used for Login/Register/Logout on the website
@@ -66,7 +71,7 @@ use file_utils::{get_client_hash, handle_template_file};
 use database::{DatabaseManager};
 
 // Import Event Store and WebSocket functions
-use canvas_store::{create_shared_store, SharedCanvasStore};
+use device_store::{create_shared_store, SharedDeviceStore};
 use websocket::{websocket_handler, websocket_stats_handler, device_users_handler, start_cleanup_task, WebSocketState};
 
 // DEBUG: Simple test handler for WebSocket routing
@@ -82,7 +87,9 @@ async fn debug_websocket_handler() -> Result<String, (axum::http::StatusCode, St
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<DatabaseManager>,
-    pub canvas_store: SharedCanvasStore,
+    pub device_store: SharedDeviceStore,
+    pub esp32_manager: Arc<esp32_manager::Esp32Manager>,
+    pub esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>,
 }
 
 // ============================================================================
@@ -126,12 +133,42 @@ async fn main() {
         }
     };
 
-    // Initialize Canvas Event Store
-    tracing::info!("Initializing Canvas Event Store...");
-    let canvas_store = create_shared_store();
+    // Initialize Device Event Store
+    tracing::info!("Initializing Device Event Store...");
+    let device_store = create_shared_store();
+    
+    // Initialize ESP32 Manager
+    tracing::info!("Initializing ESP32 Manager...");
+    let esp32_manager = esp32_manager::create_esp32_manager(device_store.clone());
+    esp32_manager.start().await;
+    
+    // Start ESP32 Discovery Service
+    tracing::info!("Starting ESP32 Discovery Service...");
+    let esp32_discovery = Arc::new(tokio::sync::Mutex::new(esp32_discovery::Esp32Discovery::new(device_store.clone())));
+    let discovery_service = esp32_discovery.clone();
+    tokio::spawn(async move {
+        let mut discovery = discovery_service.lock().await;
+        if let Err(e) = discovery.start_discovery().await {
+            tracing::error!("ESP32 discovery failed to start: {}", e);
+        } else {
+            tracing::info!("ESP32 discovery service started successfully");
+        }
+    });
+    
+    // Example: Add a test ESP32 device configuration for testing
+    let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 43, 75));
+    let test_device = esp32_types::Esp32DeviceConfig::esp32_default(
+        "test-esp32-001".to_string(),
+        ip,
+    );
+    if let Err(e) = esp32_manager.add_device(test_device).await {
+        tracing::warn!("Failed to add test ESP32 device: {}", e);
+    } else {
+        tracing::info!("Added test ESP32 device: test-esp32-001 (192.168.43.75)");
+    }
     
     // Start WebSocket cleanup task
-    let cleanup_store = canvas_store.clone();
+    let cleanup_store = device_store.clone();
     tokio::spawn(async move {
         start_cleanup_task(cleanup_store).await;
     });
@@ -139,7 +176,7 @@ async fn main() {
 
     // Create web app with all routes
     tracing::info!("Creating application routes...");
-    let app = create_app(client_hash.clone(), db, canvas_store).await;
+    let app = create_app(client_hash.clone(), db, device_store, esp32_manager, esp32_discovery).await;
 
     // Start TCP listener on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
@@ -166,19 +203,22 @@ async fn main() {
 // Website feature: Defines all URLs and their handler functions
 // ============================================================================
 
-pub async fn create_app(client_hash: String, db: Arc<DatabaseManager>, canvas_store: SharedCanvasStore) -> Router {
+pub async fn create_app(client_hash: String, db: Arc<DatabaseManager>, device_store: SharedDeviceStore, esp32_manager: Arc<esp32_manager::Esp32Manager>, esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>) -> Router {
     let mut app = Router::new();
 
     // AppState for all handlers
     let app_state = AppState {
         db: db.clone(),
-        canvas_store: canvas_store.clone(),
+        device_store: device_store.clone(),
+        esp32_manager: esp32_manager.clone(),
+        esp32_discovery: esp32_discovery.clone(),
     };
 
     // WebSocket State for WebSocket handlers
     let websocket_state = WebSocketState {
-        canvas_store: canvas_store.clone(),
+        device_store: device_store.clone(),
         db: db.clone(),
+        esp32_manager: esp32_manager.clone(),
     };
 
     // ========================================
@@ -231,6 +271,9 @@ pub async fn create_app(client_hash: String, db: Arc<DatabaseManager>, canvas_st
         
         // POST /api/device-permissions/:id - Manage permissions for a device
         .route("/api/device-permissions/:id", post(simple_permissions_handler))
+        
+        // GET /api/esp32/discovered - List discovered ESP32 devices  
+        .route("/api/esp32/discovered", get(discovered_esp32_devices_handler))
         
         // GET /api/users/search - Search for users for permission management
         .route("/api/users/search", get(search_users_handler))
@@ -286,6 +329,7 @@ pub async fn create_app(client_hash: String, db: Arc<DatabaseManager>, canvas_st
         .route("/about.html", get(serve_spa_route))
         .route("/drawing_board.html", get(serve_spa_route))
         .route("/drawer_page.html", get(serve_spa_route))
+        .route("/esp32_control.html", get(serve_spa_route))
         .route("/docs.html", get(serve_spa_route));
 
     // Handle hashed SPA routes (with long-term caching)
@@ -299,6 +343,7 @@ pub async fn create_app(client_hash: String, db: Arc<DatabaseManager>, canvas_st
             .route(&format!("/{}/about.html", client_hash), get(serve_hashed_spa_route))
             .route(&format!("/{}/drawing_board.html", client_hash), get(serve_hashed_spa_route))
             .route(&format!("/{}/drawer_page.html", client_hash), get(serve_hashed_spa_route))
+            .route(&format!("/{}/esp32_control.html", client_hash), get(serve_hashed_spa_route))
             .route(&format!("/{}/docs.html", client_hash), get(serve_hashed_spa_route));
     }
 
@@ -1398,4 +1443,45 @@ async fn list_users_handler(
         "success": true,
         "users": users
     })))
+}
+
+// GET /api/esp32/discovered - List discovered ESP32 devices
+async fn discovered_esp32_devices_handler(
+    State(app_state): State<AppState>,
+    cookie_jar: CookieJar,
+) -> Result<Json<Value>, StatusCode> {
+    // Validate JWT token
+    let token = match cookie_jar.get("auth_token") {
+        Some(cookie) => cookie.value(),
+        None => return Err(StatusCode::UNAUTHORIZED),
+    };
+
+    match validate_jwt(token) {
+        Ok(_claims) => {
+            // Get discovered devices from ESP32Discovery service
+            let discovered_devices = {
+                let discovery = app_state.esp32_discovery.lock().await;
+                discovery.get_discovered_devices().await
+            };
+
+            let devices_json: Vec<Value> = discovered_devices
+                .into_iter()
+                .map(|(device_id, config)| {
+                    json!({
+                        "deviceId": device_id,
+                        "deviceIp": config.ip_address.to_string(),
+                        "tcpPort": config.tcp_port,
+                        "udpPort": config.udp_port,
+                        "status": "discovered"
+                    })
+                })
+                .collect();
+
+            Ok(Json(json!({
+                "success": true,
+                "devices": devices_json
+            })))
+        }
+        Err(_) => Err(StatusCode::UNAUTHORIZED),
+    }
 }

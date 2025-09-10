@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(rm:*)",
+      "Bash(mv:*)",
+      "Bash(del TEST_README.md)",
+      "Bash(del run_tests.bat)",
+      "Bash(cargo clean:*)",
+      "Bash(npm run clean:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

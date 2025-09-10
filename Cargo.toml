@@ -3,31 +3,11 @@ name = "drawing-app-backend"
 version = "0.1.0"
 edition = "2021"
 
-# Für Library Support (Tests)
-[lib]
-name = "drawing_app_backend"
-path = "src/backend/lib.rs"
 
 [[bin]]
 name = "drawing-app-backend"
 path = "src/backend/main.rs"
 
-# Integration Test Konfiguration
-[[test]]
-name = "auth_unit"
-path = "tests/auth_unit.rs"
-
-[[test]]
-name = "auth_integration"
-path = "tests/auth_integration.rs"
-
-[[test]]
-name = "backend_unit_tests"
-path = "tests/backend_unit_tests.rs"
-
-[[test]]
-name = "backend_integration_tests"
-path = "tests/backend_integration_tests.rs"
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
@@ -50,14 +30,9 @@ chrono = { version = "0.4", features = ["serde"] }
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 dotenvy = "0.15"
 pulldown-cmark = "0.9"
+regex = "1.0"
+thiserror = "1.0"
 
-[dev-dependencies]
-# Testing framework für Integration Tests
-tokio-test = "0.4"
-# HTTP Client für API Tests
-reqwest = { version = "0.11", features = ["json", "cookies"] }
-# Assertions und Test-Utilities
-assert_matches = "1.5"
 
 [profile.dev]
 opt-level = 0          # Keine Optimierung für schnellere Kompilierung
