@@ -42,6 +42,7 @@ mod esp32_types; // esp32_types.rs - ESP32 communication types
 mod esp32_connection; // esp32_connection.rs - ESP32 TCP/UDP connection handling
 mod esp32_manager; // esp32_manager.rs - ESP32 device management
 mod udp_searcher; // udp_searcher.rs - UDP port scanning for ESP32 discovery
+mod mdns_discovery; // mdns_discovery.rs - mDNS-based ESP32 discovery
 mod esp32_discovery; // esp32_discovery.rs - ESP32 device discovery service
 
 // Import all authentication functions from auth.rs

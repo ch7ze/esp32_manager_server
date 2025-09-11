@@ -1133,6 +1133,9 @@ input[type="text"]:focus {
     // ESP32 Discovery Event Listeners  
     setupEsp32Discovery();
     
+    // WebSocket Integration for live ESP32 updates
+    setupWebSocketForESP32Discovery();
+    
     async function loadUserInfo() {
         try {
             const response = await fetch('/api/user-info', {
@@ -1282,6 +1285,122 @@ input[type="text"]:focus {
     function setupEsp32Discovery() {
         // Refresh ESP32 Devices Button
         document.getElementById('refresh-esp32-btn').addEventListener('click', loadEsp32DevicesList);
+    }
+    
+    // WebSocket setup for live ESP32 device discovery
+    function setupWebSocketForESP32Discovery() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/channel`;
+        let websocket = null;
+        
+        function connectWebSocket() {
+            try {
+                websocket = new WebSocket(wsUrl);
+                
+                websocket.onopen = function() {
+                    console.log('ESP32 Discovery WebSocket connected');
+                    // Register for system events to receive ESP32 discovery
+                    websocket.send(JSON.stringify({
+                        command: 'registerForDevice',
+                        deviceId: 'system'
+                    }));
+                };
+                
+                websocket.onmessage = function(event) {
+                    try {
+                        const message = JSON.parse(event.data);
+                        handleESP32DiscoveryMessage(message);
+                    } catch (error) {
+                        console.error('Error parsing WebSocket message:', error);
+                    }
+                };
+                
+                websocket.onclose = function() {
+                    console.log('ESP32 Discovery WebSocket disconnected, reconnecting...');
+                    setTimeout(connectWebSocket, 3000);
+                };
+                
+                websocket.onerror = function(error) {
+                    console.error('ESP32 Discovery WebSocket error:', error);
+                };
+                
+            } catch (error) {
+                console.error('Failed to create ESP32 Discovery WebSocket:', error);
+                setTimeout(connectWebSocket, 3000);
+            }
+        }
+        
+        function handleESP32DiscoveryMessage(message) {
+            if (message.deviceId === 'system' && message.eventsForDevice) {
+                message.eventsForDevice.forEach(event => {
+                    if (event.event === 'Esp32DeviceDiscovered') {
+                        console.log('New ESP32 device discovered via WebSocket:', event.device_id);
+                        // Reload the device list to show the new device
+                        loadEsp32DevicesList();
+                        
+                        // Show notification
+                        showESP32DiscoveryNotification(event.device_id, event.device_ip);
+                    }
+                });
+            }
+        }
+        
+        function showESP32DiscoveryNotification(deviceId, deviceIp) {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6c3;
+                padding: 12px 16px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                z-index: 1000;
+                font-size: 14px;
+                max-width: 300px;
+                animation: slideInRight 0.3s ease-out;
+            `;
+            notification.innerHTML = `
+                <div style="font-weight: bold; margin-bottom: 4px;">🔍 ESP32 Gerät gefunden!</div>
+                <div><strong>${deviceId}</strong></div>
+                <div style="font-size: 12px; opacity: 0.8;">IP: ${deviceIp}</div>
+            `;
+            
+            // Add animation keyframes if not already present
+            if (!document.querySelector('#esp32-notification-styles')) {
+                const style = document.createElement('style');
+                style.id = 'esp32-notification-styles';
+                style.textContent = `
+                    @keyframes slideInRight {
+                        from {
+                            transform: translateX(100%);
+                            opacity: 0;
+                        }
+                        to {
+                            transform: translateX(0);
+                            opacity: 1;
+                        }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+            
+            document.body.appendChild(notification);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.style.animation = 'slideInRight 0.3s ease-out reverse';
+                    setTimeout(() => notification.remove(), 300);
+                }
+            }, 5000);
+        }
+        
+        // Start WebSocket connection
+        connectWebSocket();
     }
     
     function displayCanvasList(canvasList) {
