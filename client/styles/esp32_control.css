@@ -1,0 +1,136 @@
+/* ESP32-specific styling */
+.esp32-device-card {
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    min-height: 500px;
+}
+
+.esp32-device-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 15px;
+    border-radius: 8px 8px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.connection-status {
+    font-size: 0.9em;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-connected { background-color: #28a745; }
+.status-connecting { background-color: #ffc107; animation: pulse 2s infinite; }
+.status-disconnected { background-color: #dc3545; }
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.3; }
+    100% { opacity: 1; }
+}
+
+.monitor-area {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+    height: 200px;
+    overflow-y: auto;
+    border: 1px solid #444;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 4px;
+}
+
+.variable-control {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.variable-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 8px;
+    background: white;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+}
+
+.variable-name {
+    min-width: 120px;
+    font-weight: 500;
+    color: #495057;
+}
+
+.variable-value {
+    flex: 1;
+    max-width: 100px;
+}
+
+.start-options-area {
+    background: #e3f2fd;
+    border: 1px solid #bbdefb;
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+/* Responsive layout */
+@media (max-width: 768px) {
+    .esp32-tabs {
+        display: none !important;
+    }
+    .esp32-stack {
+        display: block !important;
+    }
+}
+
+@media (min-width: 769px) {
+    .esp32-tabs {
+        display: block !important;
+    }
+    .esp32-stack {
+        display: none !important;
+    }
+}
+
+@media (min-width: 1400px) {
+    .esp32-grid {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+        gap: 20px;
+    }
+    .esp32-tabs,
+    .esp32-stack {
+        display: none !important;
+    }
+}
+
+.user-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+}
+
+.device-users {
+    font-size: 0.8em;
+    opacity: 0.9;
+}

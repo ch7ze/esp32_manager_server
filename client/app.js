@@ -72,6 +72,14 @@ const pages = {
         styles: ['drawer_page.css'],
         requiresAuth: true
     },
+    'device_detail': {
+        title: 'ESP32 Device',
+        template: 'esp32_control.html',
+        defaultPath: '/devices/:id',
+        scripts: ['esp32_control.js'],
+        styles: [],
+        requiresAuth: true
+    },
     'docs': {
         title: 'Dokumentation',
         template: 'docs.html',
@@ -177,6 +185,7 @@ function updateGlobalNavigation(authenticated) {
 
 // Function for rendering the page based on the current URL
 async function renderPage() {
+    console.log('renderPage() called');
     const contentContainer = document.getElementById('content-container');
     
     // Analyze URL to determine the current page
@@ -215,26 +224,52 @@ async function renderPage() {
         pageName = 'canvas_detail';
     }
     
+    // Handle device detail pages
+    if (url.pathname.startsWith('/devices/')) {
+        pageName = 'device_detail';
+    }
+    
+    // Debug logging
+    console.log('SPA Navigation Debug:', {
+        pathname: url.pathname,
+        path: path,
+        pageName: pageName,
+        pageExists: !!pages[pageName]
+    });
+    
     // Page information
     const pageInfo = pages[pageName];
+    
+    if (!pageInfo) {
+        console.error('Page not found:', pageName, 'Available pages:', Object.keys(pages));
+        // Fallback to index
+        pageName = 'index';
+    }
+    
+    // Get page info (after potential fallback)
+    const finalPageInfo = pages[pageName];
+    if (!finalPageInfo) {
+        console.error('Even fallback page not found!');
+        return;
+    }
     
     // Check authentication requirements
     const authenticated = await isAuthenticated();
     
-    if (pageInfo.requiresAuth && !authenticated) {
+    if (finalPageInfo.requiresAuth && !authenticated) {
         // Redirect to login page if authentication is required but user is not authenticated
         navigateTo('/login');
         return;
     }
     
     // If user is authenticated but trying to access login/register, redirect to home
-    if (!pageInfo.requiresAuth && authenticated && (pageName === 'login' || pageName === 'register')) {
+    if (!finalPageInfo.requiresAuth && authenticated && (pageName === 'login' || pageName === 'register')) {
         navigateTo('/');
         return;
     }
     
     // Set document title
-    document.title = pageInfo.title;
+    document.title = finalPageInfo.title;
     
     // Update global navigation based on authentication status
     updateGlobalNavigation(authenticated);
@@ -243,7 +278,7 @@ async function renderPage() {
     const existingStyles = document.querySelectorAll('link[data-dynamic-style]');
     existingStyles.forEach(style => style.remove());
     
-    pageInfo.styles.forEach(style => {
+    finalPageInfo.styles.forEach(style => {
         const styleLink = document.createElement('link');
         styleLink.rel = 'stylesheet';
         styleLink.href = `/styles/${style}`;
@@ -252,7 +287,7 @@ async function renderPage() {
     });
     
     // Load template and insert into container
-    const templateData = await loadTemplate(pageInfo.template);
+    const templateData = await loadTemplate(finalPageInfo.template);
     contentContainer.innerHTML = templateData.html;
     
     // Execute template scripts immediately after DOM injection
@@ -273,7 +308,7 @@ async function renderPage() {
     const existingScripts = document.querySelectorAll('script[data-dynamic-script]');
     existingScripts.forEach(script => script.remove());    // Load scripts in sequence
     async function loadScriptsSequentially() {
-        for (const scriptSrc of pageInfo.scripts) {
+        for (const scriptSrc of finalPageInfo.scripts) {
             await new Promise((resolve, reject) => {
                 const scriptElement = document.createElement('script');
                 scriptElement.src = `/scripts/${scriptSrc}`;
