@@ -6,21 +6,6 @@ use axum::{
 use serde_json::Value;
 use std::{fs, path::Path, time::UNIX_EPOCH};
 
-pub fn get_client_hash() -> Result<String, Box<dyn std::error::Error>> {
-    let hash_file = "client-hash.json";
-    
-    if Path::new(hash_file).exists() {
-        let contents = fs::read_to_string(hash_file)?;
-        let json: Value = serde_json::from_str(&contents)?;
-        
-        if let Some(hash) = json.get("hash").and_then(|h| h.as_str()) {
-            return Ok(hash.to_string());
-        }
-    }
-    
-    println!("No client hash found, caching will not be optimal");
-    Ok(String::new())
-}
 
 // ============================================================================
 // SPA ROUTE HANDLER - Serviert die Haupt-HTML Datei für alle SPA-Routes
@@ -35,7 +20,7 @@ pub async fn handle_spa_route() -> Response<Body> {
 
 // Serviert SPA Route mit angegebener Cache-Control
 pub async fn handle_spa_route_with_cache_control(cache_control: &str) -> Response<Body> {
-    handle_template_file("dest/index.html", cache_control).await
+    handle_template_file("client/index.html", cache_control).await
 }
 
 // Serviert eine spezifische Template-Datei

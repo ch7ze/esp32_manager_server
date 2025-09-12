@@ -147,6 +147,8 @@
         
         let html = '';
         devicesList.forEach(device => {
+            console.log('Device data:', device);
+            console.log('MAC Address:', device.macAddress);
             html += `
                 <div class="esp32-device" data-device-id="${device.deviceId}">
                     <h4>${device.deviceId}</h4>
@@ -154,6 +156,7 @@
                         <span><strong>IP:</strong> ${device.deviceIp}</span>
                         <span><strong>TCP Port:</strong> ${device.tcpPort}</span>
                         <span><strong>UDP Port:</strong> ${device.udpPort}</span>
+                        <span><strong>MAC:</strong> ${device.macAddress || 'UNDEFINED'}</span>
                         <span class="esp32-device-status ${device.status}">${device.status}</span>
                     </div>
                     <div class="esp32-actions">

@@ -43,7 +43,7 @@ use file_utils::{handle_spa_route, handle_spa_route_with_cache_control};
 // CREATE APP FUNCTION - APPLICATION SETUP
 // ============================================================================
 
-pub async fn create_app(client_hash: String, user_store: UserStore) -> Router {
+pub async fn create_app(user_store: UserStore) -> Router {
     let mut app = Router::new();
 
     // API ROUTES
@@ -76,37 +76,18 @@ pub async fn create_app(client_hash: String, user_store: UserStore) -> Router {
         .route("/drawing_board.html", get(serve_spa_route))
         .route("/drawer_page.html", get(serve_spa_route));
 
-    // Handle hashed SPA routes (with long-term caching)
-    if !client_hash.is_empty() {
-        app = app
-            .route(&format!("/{}/index.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/login.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/login", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/register.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/register", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/debug.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/hallo.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/about.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/drawing_board.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/drawer_page.html", client_hash), get(serve_hashed_spa_route));
-    }
 
     // Static files are handled by explicit SPA routes above
     // No ServeDir needed for templates, scripts, styles
 
-    // Serve static files with hash in URL path (1-year cache)
-    if !client_hash.is_empty() {
-        let hashed_path = format!("/{}", client_hash);
-        app = app.nest_service(&hashed_path, ServeDir::new("dest"));
-    }
 
     // Root path serves SPA
     app = app.route("/", get(serve_spa_route));
 
-    // Serve remaining static files from dest
+    // Serve remaining static files from client
     app = app
-        .route("/index.css", get(|| serve_static_file("dest/index.css")))
-        .route("/app.js", get(|| serve_static_file("dest/app.js")));
+        .route("/index.css", get(|| serve_static_file("client/index.css")))
+        .route("/app.js", get(|| serve_static_file("client/app.js")));
 
     // Catch-all for SPA fallback
     app = app.fallback(spa_fallback);

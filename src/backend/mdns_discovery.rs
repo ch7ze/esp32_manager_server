@@ -180,10 +180,12 @@ impl MdnsDiscovery {
                 // Parse TXT records
                 let mut txt_records = HashMap::new();
                 let properties = info.get_properties();
+                debug!("Parsing TXT records for {}: {} properties found", hostname, properties.len());
                 for property in properties.iter() {
                     let key = property.key();
                     if let Some(value) = property.val() {
                         if let Ok(value_str) = std::str::from_utf8(value) {
+                            debug!("TXT Record: {} = {}", key, value_str);
                             txt_records.insert(key.to_string(), value_str.to_string());
                         }
                     }

@@ -6,7 +6,9 @@ void ota::setupOTA()
 {
 	MDNS.begin(HOSTNAME);           // mDNS initialisieren
 	MDNS.addService("arduino", "tcp", 3232); // Arduino OTA Service registrieren
+	MDNS.addServiceTxt("arduino", "tcp", "mac", WiFi.macAddress()); // MAC-Adresse als TXT-Record hinzufügen
 
+	Serial.println("OTA ready");
 
 	// Set hostname for OTA
 	ArduinoOTA.setHostname(HOSTNAME);

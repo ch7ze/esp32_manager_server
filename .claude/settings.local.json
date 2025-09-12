@@ -9,7 +9,10 @@
       "Bash(cargo clean:*)",
       "Bash(npm run clean:*)",
       "Bash(find:*)",
-      "Bash(cargo:*)"
+      "Bash(cargo:*)",
+      "WebFetch(domain:localhost)",
+      "Bash(curl:*)",
+      "Bash(git ls-tree:*)"
     ],
     "deny": [],
     "ask": []

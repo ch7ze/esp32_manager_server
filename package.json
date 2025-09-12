@@ -3,9 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "start": "npm run clean && npm run build && cargo run",
+    "start": "npm run clean && cargo run",
     "dev": "concurrently --kill-others \"tsc --watch\" \"cargo watch -x run\"",
-    "build": "node scripts/build.js",
     "dev-frontend": "tsc --watch",
     "dev-backend": "cargo watch -x run",
     "tsc": "tsc",

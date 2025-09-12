@@ -66,7 +66,7 @@ use auth::{
 
 // Import all file handling functions
 // These are used for serving website files
-use file_utils::{get_client_hash, handle_template_file};
+use file_utils::handle_template_file;
 
 // Import database functions
 use database::{DatabaseManager};
@@ -110,10 +110,6 @@ async fn main() {
 
     tracing::info!("Starting Drawing App Backend Server");
 
-    // Load client hash for cache busting of static files
-    // This hash is used in URLs like "/abc123/app.js"
-    let client_hash = get_client_hash().unwrap_or_default();
-    tracing::info!("Using client hash: {}", client_hash);
 
     // Initialize SQLite database
     tracing::info!("Initializing SQLite database...");
@@ -177,7 +173,7 @@ async fn main() {
 
     // Create web app with all routes
     tracing::info!("Creating application routes...");
-    let app = create_app(client_hash.clone(), db, device_store, esp32_manager, esp32_discovery).await;
+    let app = create_app(db, device_store, esp32_manager, esp32_discovery).await;
 
     // Start TCP listener on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
@@ -204,7 +200,7 @@ async fn main() {
 // Website feature: Defines all URLs and their handler functions
 // ============================================================================
 
-pub async fn create_app(client_hash: String, db: Arc<DatabaseManager>, device_store: SharedDeviceStore, esp32_manager: Arc<esp32_manager::Esp32Manager>, esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>) -> Router {
+pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStore, esp32_manager: Arc<esp32_manager::Esp32Manager>, esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>) -> Router {
     let mut app = Router::new();
 
     // AppState for all handlers
@@ -333,41 +329,22 @@ pub async fn create_app(client_hash: String, db: Arc<DatabaseManager>, device_st
         .route("/esp32_control.html", get(serve_spa_route))
         .route("/docs.html", get(serve_spa_route));
 
-    // Handle hashed SPA routes (with long-term caching)
-    if !client_hash.is_empty() {
-        app = app
-            .route(&format!("/{}/index.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/login.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/register.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/debug.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/hallo.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/about.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/drawing_board.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/drawer_page.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/esp32_control.html", client_hash), get(serve_hashed_spa_route))
-            .route(&format!("/{}/docs.html", client_hash), get(serve_hashed_spa_route));
-    }
 
-    // Serve static files from 'dest' for SPA functionality
-    app = app.nest_service("/templates", ServeDir::new("dest/templates"));
-    app = app.nest_service("/scripts", ServeDir::new("dest/scripts"));
-    app = app.nest_service("/styles", ServeDir::new("dest/styles"));
+    // Serve static files directly from 'client' directory
+    app = app.nest_service("/templates", ServeDir::new("client/templates"));
+    app = app.nest_service("/scripts", ServeDir::new("client/scripts"));
+    app = app.nest_service("/styles", ServeDir::new("client/styles"));
     
     // Note: /docs is now handled as SPA route, markdown API available at /api/docs
 
-    // Serve static files with hash in URL path (1-year cache)
-    if !client_hash.is_empty() {
-        let hashed_path = format!("/{}", client_hash);
-        app = app.nest_service(&hashed_path, ServeDir::new("dest"));
-    }
 
     // Root path serves SPA
     app = app.route("/", get(serve_spa_route));
 
-    // Serve remaining static files from dest
+    // Serve remaining static files from client
     app = app
-        .route("/index.css", get(|| serve_static_file("dest/index.css")))
-        .route("/app.js", get(|| serve_static_file("dest/app.js")));
+        .route("/index.css", get(|| serve_static_file("client/index.css")))
+        .route("/app.js", get(|| serve_static_file("client/app.js")));
 
     // SPA routes for specific paths
     app = app
@@ -412,13 +389,9 @@ async fn api_users() -> Json<Value> {
 
 // SPA route handler - always serves the main SPA shell (index.html)
 async fn serve_spa_route() -> Response<Body> {
-    handle_template_file("dest/index.html", "no-cache, must-revalidate").await
+    handle_template_file("client/index.html", "no-cache, must-revalidate").await
 }
 
-// Hashed SPA route handler (long-term cache)
-async fn serve_hashed_spa_route() -> Response<Body> {
-    handle_template_file("dest/index.html", "public, max-age=31536000, immutable").await
-}
 
 
 
@@ -1464,17 +1437,37 @@ async fn discovered_esp32_devices_handler(
                 let discovery = app_state.esp32_discovery.lock().await;
                 discovery.get_discovered_devices().await
             };
+            
+            tracing::info!("ESP32 Discovery API called - found {} devices", discovered_devices.len());
 
             let devices_json: Vec<Value> = discovered_devices
                 .into_iter()
-                .map(|(device_id, config)| {
-                    json!({
+                .map(|(device_id, discovered_device)| {
+                    tracing::info!("Processing discovered device: {} with mDNS data: {:?}", 
+                        device_id, discovered_device.mdns_data.is_some());
+                    
+                    let mut device_json = json!({
                         "deviceId": device_id,
-                        "deviceIp": config.ip_address.to_string(),
-                        "tcpPort": config.tcp_port,
-                        "udpPort": config.udp_port,
+                        "deviceIp": discovered_device.device_config.ip_address.to_string(),
+                        "tcpPort": discovered_device.device_config.tcp_port,
+                        "udpPort": discovered_device.device_config.udp_port,
                         "status": "discovered"
-                    })
+                    });
+                    
+                    // Add MAC address from mDNS data if available
+                    if let Some(ref mdns_data) = discovered_device.mdns_data {
+                        tracing::info!("Found mDNS data with {} TXT records", mdns_data.txt_records.len());
+                        if let Some(mac_address) = mdns_data.txt_records.get("mac") {
+                            tracing::info!("Adding MAC address to JSON: {}", mac_address);
+                            device_json["macAddress"] = json!(mac_address);
+                        } else {
+                            tracing::warn!("No 'mac' key found in TXT records: {:?}", mdns_data.txt_records.keys().collect::<Vec<_>>());
+                        }
+                    } else {
+                        tracing::warn!("No mDNS data found for device: {}", device_id);
+                    }
+                    
+                    device_json
                 })
                 .collect();
 

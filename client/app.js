@@ -12,7 +12,7 @@ const pages = {
         title: 'Login',
         template: 'login.html',
         defaultPath: 'login.html',
-        scripts: [],
+        scripts: ['login.js'],
         styles: [],
         requiresAuth: false
     },

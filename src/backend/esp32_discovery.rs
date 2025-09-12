@@ -22,13 +22,14 @@ pub struct DiscoveredEsp32Device {
     pub device_config: Esp32DeviceConfig,
     pub discovered_at: chrono::DateTime<chrono::Utc>,
     pub udp_port: u16,
+    pub mdns_data: Option<MdnsEsp32Device>,
 }
 
 /// ESP32 discovery service that integrates with WebSocket system
 pub struct Esp32Discovery {
     udp_searcher: UdpSearcher,
     mdns_discovery: Option<MdnsDiscovery>,
-    discovered_devices: Arc<RwLock<HashMap<String, Esp32DeviceConfig>>>,
+    discovered_devices: Arc<RwLock<HashMap<String, DiscoveredEsp32Device>>>,
     device_store: Arc<DeviceEventStore>,
     is_running: bool,
 }
@@ -98,7 +99,13 @@ impl Esp32Discovery {
                 // Store device synchronously first
                 {
                     if let Ok(mut devices) = discovered_devices_clone.try_write() {
-                        devices.insert(device_id_clone.clone(), device_config_clone.clone());
+                        let discovered_device = DiscoveredEsp32Device {
+                            device_config: device_config_clone.clone(),
+                            discovered_at,
+                            udp_port: mdns_device.port,
+                            mdns_data: Some(mdns_device.clone()),
+                        };
+                        devices.insert(device_id_clone.clone(), discovered_device);
                         tracing::info!("ESP32 device stored in HashMap: {}", device_id_clone);
                     } else {
                         tracing::warn!("Could not acquire write lock for discovered devices");
@@ -123,6 +130,9 @@ impl Esp32Discovery {
                     };
                     
                     rt.block_on(async move {
+                        // Extract MAC address from mDNS data
+                        let mac_address = mdns_device.txt_records.get("mac").cloned();
+                        
                         // Broadcast discovery event to all WebSocket clients
                         let discovery_event = DeviceEvent::esp32_device_discovered(
                             device_id_spawn.clone(),
@@ -130,6 +140,7 @@ impl Esp32Discovery {
                             device_config_spawn.tcp_port,
                             device_config_spawn.udp_port,
                             discovered_at.to_rfc3339(),
+                            mac_address,
                         );
                         
                         match device_store_spawn.broadcast_event("system", discovery_event, "system").await {
@@ -179,6 +190,7 @@ impl Esp32Discovery {
                     device_config.tcp_port,
                     device_config.udp_port,
                     discovered_at.to_rfc3339(),
+                    None, // UDP discovery doesn't provide MAC address
                 );
                 
                 device_store.broadcast_event("system", discovery_event, "system").await.unwrap_or_else(|e| {
@@ -210,7 +222,7 @@ impl Esp32Discovery {
     }
     
     /// Get all discovered devices
-    pub async fn get_discovered_devices(&self) -> HashMap<String, Esp32DeviceConfig> {
+    pub async fn get_discovered_devices(&self) -> HashMap<String, DiscoveredEsp32Device> {
         self.discovered_devices.read().await.clone()
     }
     
