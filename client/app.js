@@ -4,7 +4,7 @@ const pages = {
         title: 'Home',
         template: 'index.html',
         defaultPath: 'index.html',
-        scripts: [],
+        scripts: ['index.js'],
         styles: [],
         requiresAuth: true
     },
@@ -20,7 +20,7 @@ const pages = {
         title: 'Registrierung',
         template: 'register.html',
         defaultPath: 'register.html',
-        scripts: [],
+        scripts: ['register.js'],
         styles: [],
         requiresAuth: false
     },
@@ -60,7 +60,7 @@ const pages = {
         title: 'Debug',
         template: 'debug.html',
         defaultPath: 'debug.html',
-        scripts: [],
+        scripts: ['debug.js'],
         styles: [],
         requiresAuth: false
     },
@@ -84,7 +84,15 @@ const pages = {
         title: 'Dokumentation',
         template: 'docs.html',
         defaultPath: 'docs.html',
-        scripts: [],
+        scripts: ['docs.js'],
+        styles: [],
+        requiresAuth: true
+    },
+    'admin': {
+        title: 'Administrator',
+        template: 'admin.html',
+        defaultPath: 'admin.html',
+        scripts: ['admin.js'],
         styles: [],
         requiresAuth: true
     }
@@ -217,6 +225,8 @@ async function renderPage() {
         pageName = 'drawer_page';
     } else if (path === 'debug') {
         pageName = 'debug';
+    } else if (path === 'admin') {
+        pageName = 'admin';
     }
     
     // Handle canvas detail pages
