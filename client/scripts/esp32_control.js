@@ -1,7 +1,10 @@
-// Global state
-let websocket = null;
-let esp32Devices = new Map();
-let currentUser = null;
+(function() {
+    'use strict';
+    
+    // Local state for this script execution
+    let esp32Websocket = null;
+    let esp32Devices = new Map();
+    let currentUser = null;
 
 // Get device ID from URL parameter
 function getDeviceIdFromUrl() {
@@ -12,11 +15,11 @@ function getDeviceIdFromUrl() {
     return null;
 }
 
-// Initialize page
-document.addEventListener('DOMContentLoaded', async function() {
+// Initialize page immediately (SPA context)
+(async function() {
     await initializeAuth();
     await initializeWebSocket();
-});
+})();
 
 async function initializeAuth() {
     try {
@@ -26,7 +29,7 @@ async function initializeAuth() {
         
         if (response.ok) {
             currentUser = await response.json();
-            document.getElementById('user-display-name').textContent = currentUser.display_name;
+            // User info is now handled by shared navigation in app.js
         } else {
             window.location.href = '/login.html';
         }
@@ -41,24 +44,24 @@ async function initializeWebSocket() {
     const wsUrl = `${protocol}//${window.location.host}/channel`;
     
     try {
-        websocket = new WebSocket(wsUrl);
+        esp32Websocket = new WebSocket(wsUrl);
         
-        websocket.onopen = function() {
+        esp32Websocket.onopen = function() {
             console.log('WebSocket connected');
             // Request list of ESP32 devices
             requestDeviceList();
         };
         
-        websocket.onmessage = function(event) {
+        esp32Websocket.onmessage = function(event) {
             handleWebSocketMessage(JSON.parse(event.data));
         };
         
-        websocket.onclose = function() {
+        esp32Websocket.onclose = function() {
             console.log('WebSocket disconnected');
             setTimeout(initializeWebSocket, 3000); // Reconnect after 3s
         };
         
-        websocket.onerror = function(error) {
+        esp32Websocket.onerror = function(error) {
             console.error('WebSocket error:', error);
         };
         
@@ -74,21 +77,70 @@ async function initializeWebSocket() {
     }
 }
 
-function requestDeviceList() {
-    // Check if we have a specific device ID from URL
-    const urlDeviceId = getDeviceIdFromUrl();
-    if (urlDeviceId) {
-        console.log('Loading specific device from URL:', urlDeviceId);
-        registerForDevice(urlDeviceId);
+async function requestDeviceList() {
+    // Check if we have a specific device identifier from URL (could be MAC or deviceId)
+    const urlDeviceIdentifier = getDeviceIdFromUrl();
+    if (urlDeviceIdentifier) {
+        console.log('Loading specific device from URL:', urlDeviceIdentifier);
+
+        // Check if this is a MAC address or deviceId by querying the discovered devices
+        try {
+            const actualDeviceId = await resolveDeviceIdentifier(urlDeviceIdentifier);
+            if (actualDeviceId) {
+                registerForDevice(actualDeviceId);
+            } else {
+                showDeviceNotFound(urlDeviceIdentifier);
+            }
+        } catch (error) {
+            console.error('Error resolving device identifier:', error);
+            showNoDeviceIdError();
+        }
     } else {
-        // Fallback to test device or request all devices
-        registerForDevice('test-esp32-001');
+        // No device identifier in URL - show error message
+        showNoDeviceIdError();
+    }
+}
+
+// Resolve MAC address to deviceId by checking discovered devices
+async function resolveDeviceIdentifier(identifier) {
+    try {
+        const response = await fetch('/api/esp32/discovered', {
+            method: 'GET',
+            credentials: 'include'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const devices = data.devices || [];
+
+            // First check if identifier is already a deviceId
+            const directMatch = devices.find(device => device.deviceId === identifier);
+            if (directMatch) {
+                return identifier;
+            }
+
+            // Then check if identifier is a MAC address
+            const macMatch = devices.find(device => device.macAddress === identifier);
+            if (macMatch) {
+                console.log('Resolved MAC address', identifier, 'to deviceId:', macMatch.deviceId);
+                return macMatch.deviceId;
+            }
+
+            console.warn('No device found for identifier:', identifier);
+            return null;
+        } else {
+            console.error('Failed to fetch discovered devices:', response.status);
+            return null;
+        }
+    } catch (error) {
+        console.error('Error resolving device identifier:', error);
+        return null;
     }
 }
 
 function registerForDevice(deviceId) {
-    if (websocket && websocket.readyState === WebSocket.OPEN) {
-        websocket.send(JSON.stringify({
+    if (esp32Websocket && esp32Websocket.readyState === WebSocket.OPEN) {
+        esp32Websocket.send(JSON.stringify({
             command: 'registerForDevice',
             deviceId: deviceId
         }));
@@ -358,6 +410,41 @@ function showNoDevicesState() {
     document.getElementById('no-devices-state').style.display = 'block';
 }
 
+function showNoDeviceIdError() {
+    document.getElementById('loading-state').style.display = 'none';
+    const noDevicesEl = document.getElementById('no-devices-state');
+    noDevicesEl.innerHTML = `
+        <div class="alert alert-danger">
+            <h4><i class="bi bi-exclamation-triangle"></i> No ESP32 Device Selected</h4>
+            <p>No ESP32 device ID found in the URL. This page requires a specific device to connect to.</p>
+            <p>Please select an ESP32 device from the main page.</p>
+            <a href="/" class="btn btn-primary spa-link">
+                <i class="bi bi-house"></i> Go to Home Page
+            </a>
+        </div>
+    `;
+    noDevicesEl.style.display = 'block';
+}
+
+function showDeviceNotFound(identifier) {
+    document.getElementById('loading-state').style.display = 'none';
+    const noDevicesEl = document.getElementById('no-devices-state');
+    noDevicesEl.innerHTML = `
+        <div class="alert alert-warning">
+            <h4><i class="bi bi-exclamation-triangle"></i> ESP32 Device Not Found</h4>
+            <p>No ESP32 device found with identifier "${identifier}".</p>
+            <p>The device may be offline or not yet discovered.</p>
+            <button class="btn btn-primary" onclick="refreshDevices()">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+            <a href="/" class="btn btn-secondary ms-2 spa-link">
+                <i class="bi bi-house"></i> Back to Home
+            </a>
+        </div>
+    `;
+    noDevicesEl.style.display = 'block';
+}
+
 function showSpecificDeviceNotFound(deviceId) {
     document.getElementById('loading-state').style.display = 'none';
     const noDevicesEl = document.getElementById('no-devices-state');
@@ -479,8 +566,8 @@ function updateDeviceUsers(deviceId) {
 // Event handlers
 function sendStartOption(deviceId) {
     const selectEl = document.getElementById(`${deviceId}-start-select`);
-    if (selectEl && selectEl.value && websocket) {
-        websocket.send(JSON.stringify({
+    if (selectEl && selectEl.value && esp32Websocket) {
+        esp32Websocket.send(JSON.stringify({
             command: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
@@ -494,8 +581,8 @@ function sendStartOption(deviceId) {
 }
 
 function sendReset(deviceId) {
-    if (websocket) {
-        websocket.send(JSON.stringify({
+    if (esp32Websocket) {
+        esp32Websocket.send(JSON.stringify({
             command: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
@@ -510,9 +597,9 @@ function sendReset(deviceId) {
 
 function sendVariable(deviceId, variableName) {
     const inputEl = document.querySelector(`#${deviceId}-variables input[onkeypress*="${variableName}"]`);
-    if (inputEl && websocket) {
+    if (inputEl && esp32Websocket) {
         const value = parseInt(inputEl.value) || 0;
-        websocket.send(JSON.stringify({
+        esp32Websocket.send(JSON.stringify({
             command: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
@@ -550,3 +637,5 @@ window.addEventListener('resize', function() {
         showDevicesContainer();
     }
 });
+
+})(); // End IIFE

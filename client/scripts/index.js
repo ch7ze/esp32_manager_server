@@ -1,10 +1,7 @@
 // Execute immediately since DOM is already loaded in SPA context
 (function() {
-    const logoutBtn = document.getElementById('logout-btn');
-    const userInfo = document.getElementById('user-info');
-    
-    // Load user information, ESP32 devices, and canvas list
-    loadUserInfo();
+    // Load ESP32 devices and canvas list (user info is now handled by shared navigation)
+    // loadUserInfo(); // Removed - now handled by app.js shared navigation
     loadEsp32DevicesList();
     loadCanvasList();
     
@@ -17,74 +14,7 @@
     // WebSocket Integration for live ESP32 updates
     setupWebSocketForESP32Discovery();
     
-    async function loadUserInfo() {
-        try {
-            const response = await fetch('/api/user-info', {
-                method: 'GET',
-                credentials: 'include'
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                if (data.success && data.display_name) {
-                    userInfo.textContent = `Sie sind als ${data.display_name} eingeloggt`;
-                } else {
-                    userInfo.textContent = 'Sie sind eingeloggt';
-                }
-                
-                // A 5.3: Canvas-Berechtigungen in Console ausgeben
-                if (data.success && data.canvas_permissions) {
-                    console.log('=== A 5.3: Canvas Permissions Data Structure ===');
-                    console.log('Canvas permissions from JWT (after login/refresh):', data.canvas_permissions);
-                    console.log('Structure: Liste von Canvas-IDs mit Berechtigungen (R, W, V, M, O)');
-                    
-                    // Formatierte Ausgabe für bessere Lesbarkeit
-                    Object.entries(data.canvas_permissions).forEach(([canvasId, permission]) => {
-                        const permissionNames = {
-                            'R': 'Read-Only',
-                            'W': 'Write', 
-                            'V': 'Voice (moderated write)',
-                            'M': 'Moderator',
-                            'O': 'Owner'
-                        };
-                        console.log(`  Canvas: ${canvasId} -> Permission: ${permission} (${permissionNames[permission] || 'Unknown'})`);
-                    });
-                    console.log('=== Ende Canvas Permissions ===');
-                }
-            } else {
-                userInfo.textContent = 'Sie sind eingeloggt';
-            }
-        } catch (error) {
-            console.error('Error loading user info:', error);
-            userInfo.textContent = 'Sie sind eingeloggt';
-        }
-    }
-    
-    logoutBtn.addEventListener('click', async function() {
-        try {
-            const response = await fetch('/api/logout', {
-                method: 'POST',
-                credentials: 'include'
-            });
-            
-            // Always redirect to login, regardless of response
-            // This handles cases where cookies might be stale
-            if (window.navigateTo) {
-                window.navigateTo('/login');
-            } else {
-                window.location.href = '/login';
-            }
-            
-        } catch (error) {
-            console.error('Logout error:', error);
-            // Still redirect on error
-            if (window.navigateTo) {
-                window.navigateTo('/login');
-            } else {
-                window.location.href = '/login';
-            }
-        }
-    });
+    // User info and logout are now handled by shared navigation in app.js
 
     // Drawing functionality will be initialized on canvas detail pages only
     
@@ -157,16 +87,17 @@
                         <span><strong>TCP Port:</strong> ${device.tcpPort}</span>
                         <span><strong>UDP Port:</strong> ${device.udpPort}</span>
                         <span><strong>MAC:</strong> ${device.macAddress || 'UNDEFINED'}</span>
-                        <span class="esp32-device-status ${device.status}">${device.status}</span>
                     </div>
                     <div class="esp32-actions">
-                        <a href="/devices/${device.deviceId}" class="action-button edit-button spa-link">Öffnen</a>
+                        <a href="/devices/${device.macAddress || device.deviceId}" class="action-button edit-button spa-link">Öffnen</a>
                     </div>
                 </div>
             `;
         });
         
+        console.log('Setting ESP32 device list HTML...');
         esp32ListElement.innerHTML = html;
+        console.log('ESP32 device list HTML set. Device count:', devicesList.length);
     }
     
     function setupEsp32Discovery() {

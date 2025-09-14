@@ -155,39 +155,19 @@ async function isAuthenticated() {
 
 // Function to update global navigation based on authentication status
 function updateGlobalNavigation(authenticated) {
-    const mainNav = document.getElementById('main-nav');
-    if (!mainNav) return;
+    const loginLink = document.querySelector('a[href="login.html"]');
+    const registerLink = document.querySelector('a[href="register.html"]');
     
-    if (authenticated) {
-        // Show navigation for authenticated users
-        mainNav.innerHTML = `
-            <a href="/" class="spa-link home-link">Home</a>
-            <a href="/hallo" class="spa-link">Hello</a>
-            <a href="/docs" class="spa-link">Dokumentation</a>
-            <button id="global-logout-btn" class="logout-button">Logout</button>
-        `;
-        
-        // Add logout functionality
-        const logoutBtn = document.getElementById('global-logout-btn');
-        if (logoutBtn) {
-            logoutBtn.addEventListener('click', async function() {
-                try {
-                    await fetch('/api/logout', {
-                        method: 'POST',
-                        credentials: 'include'
-                    });
-                } catch (error) {
-                    console.error('Logout error:', error);
-                }
-                navigateTo('/login');
-            });
+    if (loginLink && registerLink) {
+        if (authenticated) {
+            // Hide login and register links when authenticated
+            loginLink.style.display = 'none';
+            registerLink.style.display = 'none';
+        } else {
+            // Show login and register links when not authenticated
+            loginLink.style.display = '';
+            registerLink.style.display = '';
         }
-    } else {
-        // Show navigation for non-authenticated users
-        mainNav.innerHTML = `
-            <a href="/login" class="spa-link">Login</a>
-            <a href="/register" class="spa-link">Register</a>
-        `;
     }
 }
 
@@ -234,7 +214,7 @@ async function renderPage() {
         pageName = 'canvas_detail';
     }
     
-    // Handle device detail pages
+    // Handle device detail pages - redirect to ESP32 control
     if (url.pathname.startsWith('/devices/')) {
         pageName = 'device_detail';
     }

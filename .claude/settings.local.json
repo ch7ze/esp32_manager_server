@@ -12,7 +12,9 @@
       "Bash(cargo:*)",
       "WebFetch(domain:localhost)",
       "Bash(curl:*)",
-      "Bash(git ls-tree:*)"
+      "Bash(git ls-tree:*)",
+      "Bash(dir)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []

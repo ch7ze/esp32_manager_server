@@ -292,8 +292,13 @@ async fn handle_register_for_device(
     registered_devices: &mut Vec<String>,
 ) -> Result<(), String> {
     // Check if user has permission to access this device (requires at least Read permission)
-    let has_permission = db.user_has_device_permission(&device_id, user_id, "R").await
-        .map_err(|e| format!("Database error checking permissions: {}", e))?;
+    // Allow access to "system" device for all authenticated users (for ESP32 discovery)
+    let has_permission = if device_id == "system" {
+        true  // Allow all authenticated users to access system events
+    } else {
+        db.user_has_device_permission(&device_id, user_id, "R").await
+            .map_err(|e| format!("Database error checking permissions: {}", e))?
+    };
     
     if !has_permission {
         return Err(format!("User {} does not have permission to access device {}", user_id, device_id));

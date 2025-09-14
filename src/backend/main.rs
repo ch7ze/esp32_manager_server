@@ -330,10 +330,10 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         .route("/docs.html", get(serve_spa_route));
 
 
-    // Serve static files directly from 'client' directory
+    // Serve static files directly from 'client' directory with development-friendly caching
     app = app.nest_service("/templates", ServeDir::new("client/templates"));
-    app = app.nest_service("/scripts", ServeDir::new("client/scripts"));
-    app = app.nest_service("/styles", ServeDir::new("client/styles"));
+    app = app.route("/scripts/*path", get(serve_script_file));
+    app = app.route("/styles/*path", get(serve_style_file));
     
     // Note: /docs is now handled as SPA route, markdown API available at /api/docs
 
@@ -341,10 +341,10 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
     // Root path serves SPA
     app = app.route("/", get(serve_spa_route));
 
-    // Serve remaining static files from client
+    // Serve remaining static files from client with development-friendly caching
     app = app
-        .route("/index.css", get(|| serve_static_file("client/index.css")))
-        .route("/app.js", get(|| serve_static_file("client/app.js")));
+        .route("/index.css", get(|| serve_dev_static_file("client/index.css", "text/css", "max-age=0, must-revalidate")))
+        .route("/app.js", get(|| serve_dev_static_file("client/app.js", "text/javascript", "max-age=0, must-revalidate")));
 
     // SPA routes for specific paths
     app = app
@@ -389,7 +389,39 @@ async fn api_users() -> Json<Value> {
 
 // SPA route handler - always serves the main SPA shell (index.html)
 async fn serve_spa_route() -> Response<Body> {
+    // HTML sollte nicht gecacht werden, damit SPA-Updates funktionieren
     handle_template_file("client/index.html", "no-cache, must-revalidate").await
+}
+
+// Handler für JavaScript-Dateien mit entwicklungsfreundlichem Caching
+async fn serve_script_file(axum::extract::Path(path): axum::extract::Path<String>) -> Response<Body> {
+    let file_path = format!("client/scripts/{}", path);
+    serve_dev_static_file(&file_path, "text/javascript", "max-age=0, must-revalidate").await
+}
+
+// Handler für CSS-Dateien mit entwicklungsfreundlichem Caching
+async fn serve_style_file(axum::extract::Path(path): axum::extract::Path<String>) -> Response<Body> {
+    let file_path = format!("client/styles/{}", path);
+    serve_dev_static_file(&file_path, "text/css", "max-age=0, must-revalidate").await
+}
+
+// Allgemeine Funktion für statische Dateien mit entwicklungsfreundlichem Caching
+async fn serve_dev_static_file(file_path: &str, content_type: &str, cache_control: &str) -> Response<Body> {
+    match std::fs::read_to_string(file_path) {
+        Ok(contents) => {
+            Response::builder()
+                .header("content-type", content_type)
+                .header("cache-control", cache_control)
+                .body(Body::from(contents))
+                .unwrap()
+        }
+        Err(_) => {
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("File not found"))
+                .unwrap()
+        }
+    }
 }
 
 
