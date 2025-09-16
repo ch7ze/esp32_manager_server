@@ -4,11 +4,11 @@ use crate::esp32_types::{
     Esp32Command, Esp32Event, Esp32DeviceConfig, ConnectionState, Esp32Result, Esp32Error, Esp32Variable
 };
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::time::{timeout, sleep};
 use tracing::{info, warn, error, debug};
@@ -22,7 +22,6 @@ use serde_json::Value;
 pub struct Esp32Connection {
     config: Esp32DeviceConfig,
     tcp_stream: Arc<Mutex<Option<TcpStream>>>,
-    udp_socket: Arc<Mutex<Option<UdpSocket>>>,
     connection_state: Arc<RwLock<ConnectionState>>,
     event_sender: mpsc::UnboundedSender<Esp32Event>,
     tcp_buffer: Arc<Mutex<String>>,
@@ -35,7 +34,6 @@ impl Esp32Connection {
         Self {
             config,
             tcp_stream: Arc::new(Mutex::new(None)),
-            udp_socket: Arc::new(Mutex::new(None)),
             connection_state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
             event_sender,
             tcp_buffer: Arc::new(Mutex::new(String::new())),
@@ -59,10 +57,8 @@ impl Esp32Connection {
             *state = ConnectionState::Connecting;
         }
         
-        // Setup UDP listener first
-        self.setup_udp_listener().await?;
-        
-        // Then establish TCP connection
+        // Establish TCP connection (UDP is now handled centrally)
+        // No individual UDP listener needed anymore
         self.connect_tcp().await?;
         
         // Start background tasks
@@ -102,10 +98,7 @@ impl Esp32Connection {
             }
         }
         
-        {
-            let mut udp = self.udp_socket.lock().await;
-            *udp = None;
-        }
+        // UDP is now handled centrally
         
         // Update state
         {
@@ -246,63 +239,12 @@ impl Esp32Connection {
     }
     
     // ========================================================================
-    // UDP LISTENER SETUP
+    // UTILITY METHODS
     // ========================================================================
-    
-    /// Setup UDP socket for receiving broadcasts from ESP32
-    async fn setup_udp_listener(&self) -> Esp32Result<()> {
-        let udp_addr = SocketAddr::new(self.config.ip_address, self.config.udp_port);
-        debug!("Setting up UDP listener on {}", udp_addr);
-        
-        let socket = UdpSocket::bind(udp_addr)
-            .await
-            .map_err(|e| Esp32Error::ConnectionFailed(format!("UDP bind failed: {}", e)))?;
-        
-        {
-            let mut udp = self.udp_socket.lock().await;
-            *udp = Some(socket);
-        }
-        
-        // Start UDP listener task
-        self.start_udp_listener_task().await;
-        
-        debug!("UDP listener setup complete on {}", udp_addr);
-        Ok(())
-    }
-    
-    /// Start background task for UDP message handling
-    async fn start_udp_listener_task(&self) {
-        let udp_socket = Arc::clone(&self.udp_socket);
-        let event_sender = self.event_sender.clone();
-        let device_id = self.config.device_id.clone();
-        
-        tokio::spawn(async move {
-            let mut buffer = [0u8; 1024];
-            
-            loop {
-                let udp = udp_socket.lock().await;
-                if let Some(socket) = udp.as_ref() {
-                    match timeout(Duration::from_millis(100), socket.recv_from(&mut buffer)).await {
-                        Ok(Ok((bytes_read, from_addr))) => {
-                            let message = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
-                            debug!("Received UDP broadcast from {}: {}", from_addr, message);
-                            
-                            // Parse for variable updates
-                            handle_udp_message(&message, from_addr, &event_sender).await;
-                        }
-                        Ok(Err(e)) => {
-                            error!("UDP receive error for device {}: {}", device_id, e);
-                            sleep(Duration::from_secs(1)).await;
-                        }
-                        Err(_) => {
-                            // Timeout, continue
-                        }
-                    }
-                } else {
-                    sleep(Duration::from_millis(100)).await;
-                }
-            }
-        });
+
+    /// Get event sender for central UDP routing
+    pub fn get_event_sender(&self) -> Option<&mpsc::UnboundedSender<Esp32Event>> {
+        Some(&self.event_sender)
     }
 }
 
@@ -394,7 +336,10 @@ async fn handle_tcp_message(json_str: &str, event_sender: &mpsc::UnboundedSender
 }
 
 /// Handle incoming UDP message from ESP32
-async fn handle_udp_message(message: &str, from_addr: SocketAddr, event_sender: &mpsc::UnboundedSender<Esp32Event>) {
+pub async fn handle_udp_message(message: &str, from_addr: SocketAddr, event_sender: &mpsc::UnboundedSender<Esp32Event>) {
+    // Console output is now handled by central UDP listener
+    debug!("Processing UDP message from {}: {}", from_addr, message);
+
     // Send raw UDP broadcast event
     let broadcast_event = Esp32Event::udp_broadcast(message.to_string(), from_addr);
     let _ = event_sender.send(broadcast_event);

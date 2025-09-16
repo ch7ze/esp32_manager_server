@@ -87,8 +87,10 @@ async function requestDeviceList() {
         try {
             const actualDeviceId = await resolveDeviceIdentifier(urlDeviceIdentifier);
             if (actualDeviceId) {
+                console.log('Successfully resolved to deviceId:', actualDeviceId);
                 registerForDevice(actualDeviceId);
             } else {
+                console.log('Failed to resolve device identifier:', urlDeviceIdentifier);
                 showDeviceNotFound(urlDeviceIdentifier);
             }
         } catch (error) {
@@ -113,20 +115,32 @@ async function resolveDeviceIdentifier(identifier) {
             const data = await response.json();
             const devices = data.devices || [];
 
+            console.log('resolveDeviceIdentifier: Looking for identifier:', identifier);
+            console.log('resolveDeviceIdentifier: Available devices:', devices);
+
             // First check if identifier is already a deviceId
             const directMatch = devices.find(device => device.deviceId === identifier);
             if (directMatch) {
+                console.log('resolveDeviceIdentifier: Found direct deviceId match:', directMatch);
                 return identifier;
             }
 
             // Then check if identifier is a MAC address
+            console.log('resolveDeviceIdentifier: Checking MAC addresses...');
+            devices.forEach(device => {
+                console.log(`resolveDeviceIdentifier: Device ${device.deviceId} has MAC: "${device.macAddress}" (comparing with "${identifier}")`);
+            });
+
             const macMatch = devices.find(device => device.macAddress === identifier);
             if (macMatch) {
-                console.log('Resolved MAC address', identifier, 'to deviceId:', macMatch.deviceId);
-                return macMatch.deviceId;
+                console.log('Found MAC address match, device ID should now be MAC address:', identifier);
+                // Since we changed the system to use MAC as device ID, return the identifier directly
+                return identifier;
             }
 
             console.warn('No device found for identifier:', identifier);
+            console.warn('Available device IDs:', devices.map(d => d.deviceId));
+            console.warn('Available MAC addresses:', devices.map(d => d.macAddress));
             return null;
         } else {
             console.error('Failed to fetch discovered devices:', response.status);
@@ -139,11 +153,15 @@ async function resolveDeviceIdentifier(identifier) {
 }
 
 function registerForDevice(deviceId) {
+    console.log('Attempting to register for device:', deviceId);
     if (esp32Websocket && esp32Websocket.readyState === WebSocket.OPEN) {
+        console.log('WebSocket is open, sending registration request');
         esp32Websocket.send(JSON.stringify({
-            command: 'registerForDevice',
+            type: 'registerForDevice',
             deviceId: deviceId
         }));
+    } else {
+        console.error('WebSocket not ready, readyState:', esp32Websocket?.readyState);
     }
 }
 
@@ -568,7 +586,7 @@ function sendStartOption(deviceId) {
     const selectEl = document.getElementById(`${deviceId}-start-select`);
     if (selectEl && selectEl.value && esp32Websocket) {
         esp32Websocket.send(JSON.stringify({
-            command: 'deviceEvent',
+            type: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
                 event: 'esp32Command',
@@ -583,7 +601,7 @@ function sendStartOption(deviceId) {
 function sendReset(deviceId) {
     if (esp32Websocket) {
         esp32Websocket.send(JSON.stringify({
-            command: 'deviceEvent',
+            type: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
                 event: 'esp32Command',
@@ -600,7 +618,7 @@ function sendVariable(deviceId, variableName) {
     if (inputEl && esp32Websocket) {
         const value = parseInt(inputEl.value) || 0;
         esp32Websocket.send(JSON.stringify({
-            command: 'deviceEvent',
+            type: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
                 event: 'esp32Command',

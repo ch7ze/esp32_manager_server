@@ -8,7 +8,6 @@ pub mod file_utils;
 pub mod esp32_types;
 pub mod esp32_connection;
 pub mod esp32_manager;
-pub mod udp_searcher;
 pub mod esp32_discovery;
 
 // Re-export important types and functions

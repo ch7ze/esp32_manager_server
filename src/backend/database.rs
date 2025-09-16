@@ -38,10 +38,9 @@ pub struct DatabaseUser {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ESP32Device {
-    pub id: String,
+    pub mac_address: String, // Primary key - moved to first position
     pub name: String,
     pub owner_id: String,
-    pub mac_address: String,
     pub ip_address: Option<String>,
     pub status: DeviceStatus,
     pub maintenance_mode: bool,
@@ -88,10 +87,9 @@ impl ESP32Device {
     pub fn new(name: String, owner_id: String, mac_address: String) -> Self {
         let now = Utc::now();
         Self {
-            id: format!("esp32-{}", Uuid::new_v4()),
+            mac_address, // Primary key
             name,
             owner_id,
-            mac_address,
             ip_address: None,
             status: DeviceStatus::Offline,
             maintenance_mode: false,
@@ -157,10 +155,9 @@ impl DatabaseManager {
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS esp32_devices (
-                id TEXT PRIMARY KEY,
+                mac_address TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 owner_id TEXT NOT NULL,
-                mac_address TEXT UNIQUE NOT NULL,
                 ip_address TEXT,
                 status TEXT NOT NULL DEFAULT 'Offline',
                 maintenance_mode BOOLEAN NOT NULL DEFAULT FALSE,
@@ -458,12 +455,11 @@ impl DatabaseManager {
         };
         
         sqlx::query(
-            "INSERT INTO esp32_devices (id, name, owner_id, mac_address, ip_address, status, maintenance_mode, firmware_version, last_seen, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO esp32_devices (mac_address, name, owner_id, ip_address, status, maintenance_mode, firmware_version, last_seen, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        .bind(&device.id)
+        .bind(&device.mac_address)
         .bind(&device.name)
         .bind(&device.owner_id)
-        .bind(&device.mac_address)
         .bind(&device.ip_address)
         .bind(status_str)
         .bind(device.maintenance_mode)
@@ -474,13 +470,13 @@ impl DatabaseManager {
         .await?;
 
         // Owner-Berechtigung hinzufügen
-        self.set_device_permission(&device.id, &device.owner_id, "O").await?;
+        self.set_device_permission(&device.mac_address, &device.owner_id, "O").await?;
 
         Ok(())
     }
 
     pub async fn get_esp32_device_by_id(&self, device_id: &str) -> Result<Option<ESP32Device>, Box<dyn std::error::Error>> {
-        let row = sqlx::query("SELECT * FROM esp32_devices WHERE id = ?")
+        let row = sqlx::query("SELECT * FROM esp32_devices WHERE mac_address = ?")
             .bind(device_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -503,10 +499,9 @@ impl DatabaseManager {
                 };
                 
                 Ok(Some(ESP32Device {
-                    id: row.get("id"),
+                    mac_address: row.get("mac_address"),
                     name: row.get("name"),
                     owner_id: row.get("owner_id"),
-                    mac_address: row.get("mac_address"),
                     ip_address: row.get("ip_address"),
                     status,
                     maintenance_mode: row.get("maintenance_mode"),
@@ -551,10 +546,9 @@ impl DatabaseManager {
             };
             
             let device = ESP32Device {
-                id: row.get("id"),
+                mac_address: row.get("mac_address"),
                 name: row.get("name"),
                 owner_id: row.get("owner_id"),
-                mac_address: row.get("mac_address"),
                 ip_address: row.get("ip_address"),
                 status,
                 maintenance_mode: row.get("maintenance_mode"),
@@ -572,7 +566,7 @@ impl DatabaseManager {
 
     pub async fn update_esp32_device(&self, device_id: &str, name: Option<&str>, maintenance_mode: Option<bool>) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(name) = name {
-            sqlx::query("UPDATE esp32_devices SET name = ? WHERE id = ?")
+            sqlx::query("UPDATE esp32_devices SET name = ? WHERE mac_address = ?")
                 .bind(name)
                 .bind(device_id)
                 .execute(&self.pool)
@@ -580,7 +574,7 @@ impl DatabaseManager {
         }
 
         if let Some(maintenance_mode) = maintenance_mode {
-            sqlx::query("UPDATE esp32_devices SET maintenance_mode = ? WHERE id = ?")
+            sqlx::query("UPDATE esp32_devices SET maintenance_mode = ? WHERE mac_address = ?")
                 .bind(maintenance_mode)
                 .bind(device_id)
                 .execute(&self.pool)
@@ -601,7 +595,7 @@ impl DatabaseManager {
         
         let now = Utc::now().to_rfc3339();
         
-        sqlx::query("UPDATE esp32_devices SET status = ?, ip_address = ?, firmware_version = ?, last_seen = ? WHERE id = ?")
+        sqlx::query("UPDATE esp32_devices SET status = ?, ip_address = ?, firmware_version = ?, last_seen = ? WHERE mac_address = ?")
             .bind(status_str)
             .bind(ip_address)
             .bind(firmware_version)
@@ -621,7 +615,7 @@ impl DatabaseManager {
             .await?;
 
         // Dann Device löschen
-        sqlx::query("DELETE FROM esp32_devices WHERE id = ?")
+        sqlx::query("DELETE FROM esp32_devices WHERE mac_address = ?")
             .bind(device_id)
             .execute(&self.pool)
             .await?;

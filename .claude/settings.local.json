@@ -14,7 +14,8 @@
       "Bash(curl:*)",
       "Bash(git ls-tree:*)",
       "Bash(dir)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(node:*)"
     ],
     "deny": [],
     "ask": []

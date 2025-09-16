@@ -11,7 +11,7 @@ use serde_json;
 
 /// WebSocket messages sent from Client to Server
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "command")]
+#[serde(tag = "type")]
 pub enum ClientMessage {
     #[serde(rename = "registerForDevice")]
     RegisterForDevice { 

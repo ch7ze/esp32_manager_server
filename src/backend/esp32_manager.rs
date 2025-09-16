@@ -1,18 +1,20 @@
 // ESP32 device manager - handles multiple ESP32 connections and integrates with device store
 
-use crate::esp32_connection::Esp32Connection;
+use crate::esp32_connection::{Esp32Connection, handle_udp_message};
 use crate::esp32_types::{
     Esp32Command, Esp32Event, Esp32DeviceConfig, ConnectionState, Esp32Result, Esp32Error
 };
 use crate::device_store::{SharedDeviceStore, DeviceEventStore};
-use crate::events::{DeviceEvent, ServerMessage};
+use crate::events::DeviceEvent;
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::net::UdpSocket;
+use tokio::time::{sleep, timeout};
 use tracing::{info, warn, error, debug};
-use serde_json::json;
 
 // ============================================================================
 // ESP32 DEVICE MANAGER
@@ -31,6 +33,10 @@ pub struct Esp32Manager {
     event_sender: mpsc::UnboundedSender<Esp32ManagerEvent>,
     /// Event receiver for processing
     event_receiver: Arc<Mutex<mpsc::UnboundedReceiver<Esp32ManagerEvent>>>,
+    /// Central UDP listener for all ESP32 devices
+    central_udp_socket: Arc<Mutex<Option<UdpSocket>>>,
+    /// Map of IP -> device_id for UDP message routing
+    ip_to_device_id: Arc<RwLock<HashMap<IpAddr, String>>>,
 }
 
 /// Internal events for ESP32 manager
@@ -44,23 +50,30 @@ impl Esp32Manager {
     /// Create new ESP32 manager
     pub fn new(device_store: SharedDeviceStore) -> Self {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        
+
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             device_configs: Arc::new(RwLock::new(HashMap::new())),
             device_store,
             event_sender,
             event_receiver: Arc::new(Mutex::new(event_receiver)),
+            central_udp_socket: Arc::new(Mutex::new(None)),
+            ip_to_device_id: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
     /// Start the ESP32 manager background tasks
     pub async fn start(&self) {
         info!("Starting ESP32 Manager");
-        
+
+        // Start central UDP listener immediately
+        if let Err(e) = self.start_central_udp_listener().await {
+            error!("Failed to start central UDP listener: {}", e);
+        }
+
         // Start event processing task
         self.start_event_processor().await;
-        
+
         info!("ESP32 Manager started");
     }
     
@@ -116,11 +129,22 @@ impl Esp32Manager {
     /// Connect to ESP32 device
     pub async fn connect_device(&self, device_id: &str) -> Esp32Result<()> {
         info!("Connecting to ESP32 device: {}", device_id);
-        
+
         let connections = self.connections.read().await;
         if let Some(connection_arc) = connections.get(device_id) {
             let mut connection = connection_arc.lock().await;
             connection.connect().await?;
+
+            // Register device for central UDP routing
+            let config = {
+                let configs = self.device_configs.read().await;
+                configs.get(device_id).cloned()
+            };
+
+            if let Some(config) = config {
+                self.register_esp32_for_udp(device_id.to_string(), config.ip_address).await;
+            }
+
             info!("Successfully connected to ESP32 device: {}", device_id);
             Ok(())
         } else {
@@ -131,10 +155,21 @@ impl Esp32Manager {
     /// Disconnect from ESP32 device
     pub async fn disconnect_device(&self, device_id: &str) -> Esp32Result<()> {
         info!("Disconnecting from ESP32 device: {}", device_id);
-        
+
         let connections = self.connections.read().await;
         if let Some(connection_arc) = connections.get(device_id) {
             let mut connection = connection_arc.lock().await;
+
+            // Unregister from UDP routing first
+            let config = {
+                let configs = self.device_configs.read().await;
+                configs.get(device_id).cloned()
+            };
+
+            if let Some(config) = config {
+                self.unregister_esp32_from_udp(&config.ip_address).await;
+            }
+
             connection.disconnect().await?;
             info!("Successfully disconnected from ESP32 device: {}", device_id);
             Ok(())
@@ -348,6 +383,99 @@ impl Esp32Manager {
         ).await?;
         
         Ok(())
+    }
+
+    // ========================================================================
+    // CENTRAL UDP LISTENER
+    // ========================================================================
+
+    /// Start central UDP listener for all ESP32 devices
+    async fn start_central_udp_listener(&self) -> Esp32Result<()> {
+        const UDP_PORT: u16 = 3232;
+        let addr = SocketAddr::from(([0, 0, 0, 0], UDP_PORT));
+
+        let socket = UdpSocket::bind(addr)
+            .await
+            .map_err(|e| Esp32Error::ConnectionFailed(
+                format!("Central UDP bind failed on {}: {}", addr, e)
+            ))?;
+
+        info!("Central UDP listener started on {}", addr);
+
+        // Store socket
+        {
+            let mut udp_socket = self.central_udp_socket.lock().await;
+            *udp_socket = Some(socket);
+        }
+
+        // Start listener task
+        let socket = Arc::clone(&self.central_udp_socket);
+        let ip_to_device_id = Arc::clone(&self.ip_to_device_id);
+        let connections = Arc::clone(&self.connections);
+
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 1024];
+            info!("Central UDP listener task started");
+
+            loop {
+                let socket_guard = socket.lock().await;
+                if let Some(udp_socket) = socket_guard.as_ref() {
+                    match timeout(Duration::from_millis(100), udp_socket.recv_from(&mut buffer)).await {
+                        Ok(Ok((bytes_read, from_addr))) => {
+                            let message = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+
+                            // Always print to terminal
+                            println!("UDP Message from {}: {}", from_addr, message);
+                            info!("UDP Message from {}: {}", from_addr, message);
+
+                            // Route message to specific ESP32 connection if registered
+                            let device_map = ip_to_device_id.read().await;
+                            if let Some(device_id) = device_map.get(&from_addr.ip()) {
+                                let connections_guard = connections.read().await;
+                                if let Some(connection) = connections_guard.get(device_id) {
+                                    let conn = connection.lock().await;
+                                    if let Some(sender) = conn.get_event_sender() {
+                                        // Process UDP message using existing handler
+                                        handle_udp_message(&message, from_addr, sender).await;
+                                        debug!("UDP message processed for device {}", device_id);
+                                    }
+                                } else {
+                                    debug!("No connection found for device {}", device_id);
+                                }
+                            } else {
+                                debug!("No device registered for IP {}", from_addr.ip());
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            error!("Central UDP receive error: {}", e);
+                            sleep(Duration::from_secs(1)).await;
+                        }
+                        Err(_) => {
+                            // Timeout, continue
+                        }
+                    }
+                } else {
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Register ESP32 device for UDP message routing
+    pub async fn register_esp32_for_udp(&self, device_id: String, ip: IpAddr) {
+        let mut device_map = self.ip_to_device_id.write().await;
+        device_map.insert(ip, device_id.clone());
+        info!("ESP32 {} registered for UDP routing on IP {}", device_id, ip);
+    }
+
+    /// Unregister ESP32 device from UDP message routing
+    pub async fn unregister_esp32_from_udp(&self, ip: &IpAddr) {
+        let mut device_map = self.ip_to_device_id.write().await;
+        if let Some(device_id) = device_map.remove(ip) {
+            info!("ESP32 {} unregistered from UDP routing", device_id);
+        }
     }
 }
 

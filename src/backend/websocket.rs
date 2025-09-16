@@ -134,6 +134,7 @@ async fn handle_websocket_connection(
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
+                info!("WebSocket message received from client {}: {}", client_id, text);
                 match handle_client_message(
                     &text, 
                     &device_store, 
@@ -234,19 +235,23 @@ async fn handle_client_message(
     }
     
     // Parse as ClientMessage for actual canvas operations
-    debug!("Parsing ClientMessage JSON: {}", message_text);
+    info!("Parsing ClientMessage JSON: {}", message_text);
     let client_message: ClientMessage = serde_json::from_str(message_text)
         .map_err(|e| {
             error!("Failed to parse ClientMessage JSON: {}", e);
             error!("Raw JSON: {}", message_text);
             format!("Invalid ClientMessage JSON: {}", e)
         })?;
+
+    info!("Successfully parsed ClientMessage: {:?}", client_message);
     
     match client_message {
         ClientMessage::RegisterForDevice { device_id } => {
+            info!("Processing RegisterForDevice request for device_id: {}", device_id);
             handle_register_for_device(
                 device_id,
                 device_store,
+                esp32_manager,
                 db,
                 user_id,
                 display_name,
@@ -284,6 +289,7 @@ async fn handle_client_message(
 async fn handle_register_for_device(
     device_id: String,
     device_store: &SharedDeviceStore,
+    esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
     db: &Arc<DatabaseManager>,
     user_id: &str,
     display_name: &str,
@@ -291,10 +297,16 @@ async fn handle_register_for_device(
     tx: &mpsc::UnboundedSender<ServerMessage>,
     registered_devices: &mut Vec<String>,
 ) -> Result<(), String> {
+    info!("handle_register_for_device called - device_id: {}, user_id: {}, client_id: {}", device_id, user_id, client_id);
     // Check if user has permission to access this device (requires at least Read permission)
     // Allow access to "system" device for all authenticated users (for ESP32 discovery)
+    // Also allow access to discovered ESP32 devices (identified by device_id starting with "esp32-" or MAC address format)
     let has_permission = if device_id == "system" {
         true  // Allow all authenticated users to access system events
+    } else if device_id.starts_with("esp32-") {
+        true  // Allow all authenticated users to access discovered ESP32 devices
+    } else if is_mac_address_format(&device_id) {
+        true  // Allow all authenticated users to access ESP32 devices identified by MAC address
     } else {
         db.user_has_device_permission(&device_id, user_id, "R").await
             .map_err(|e| format!("Database error checking permissions: {}", e))?
@@ -321,6 +333,24 @@ async fn handle_register_for_device(
     if !registered_devices.contains(&device_id) {
         registered_devices.push(device_id.clone());
     }
+
+    // If this is an ESP32 device (MAC address format), try to connect it
+    if is_mac_address_format(&device_id) {
+        info!("Attempting to connect ESP32 device: {}", device_id);
+
+        // First, try to add the device from discovery data
+        // This will fail silently if device is already added
+        if let Err(e) = esp32_manager.connect_device(&device_id).await {
+            info!("ESP32 device {} not yet added to manager, will try to add from discovery: {}", device_id, e);
+
+            // For now, try to create a default device configuration based on the MAC address
+            // This assumes the device was discovered via the frontend and is available
+            // In a production system, you'd integrate more tightly with the discovery service
+            warn!("ESP32 device {} not found in manager - manual connection needed", device_id);
+        } else {
+            info!("Successfully connected ESP32 device: {}", device_id);
+        }
+    }
     
     // Send existing events to client for replay
     if !existing_events.is_empty() {
@@ -336,7 +366,17 @@ async fn handle_register_for_device(
         info!("Sent {} existing events to client {} for device {}", 
               event_count, client_id, device_id);
     } else {
-        debug!("No existing events to send to client {} for device {}", client_id, device_id);
+        // Send empty events list to confirm successful registration
+        let response = ServerMessage::device_events(
+            device_id.clone(),
+            vec![]
+        );
+
+        tx.send(response)
+            .map_err(|e| format!("Failed to send registration confirmation to client: {}", e))?;
+
+        info!("Sent registration confirmation to client {} for device {} (no existing events)",
+              client_id, device_id);
     }
     
     Ok(())
@@ -435,15 +475,42 @@ async fn extract_jwt_from_cookies(cookie_jar: &CookieJar) -> Result<Claims, Stri
 fn generate_client_id(email: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     email.hash(&mut hasher);
     let user_hash = hasher.finish();
-    
+
     // Add UUID for unique tab identification while keeping user hash for consistency
     let unique_id = uuid::Uuid::new_v4().to_string()[..8].to_string(); // Short UUID
-    
+
     format!("client-{:x}-{}", user_hash, unique_id)
+}
+
+/// Check if a device_id is in MAC address format (XX:XX:XX:XX:XX:XX)
+/// Used to identify discovered ESP32 devices that use MAC address as device_id
+fn is_mac_address_format(device_id: &str) -> bool {
+    // Check if it matches MAC address pattern: XX:XX:XX:XX:XX:XX
+    // where X is a hexadecimal digit
+    if device_id.len() != 17 {
+        return false;
+    }
+
+    let parts: Vec<&str> = device_id.split(':').collect();
+    if parts.len() != 6 {
+        return false;
+    }
+
+    // Check each part is exactly 2 hex digits
+    for part in parts {
+        if part.len() != 2 {
+            return false;
+        }
+        if !part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+
+    true
 }
 
 // ============================================================================

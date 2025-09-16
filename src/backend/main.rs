@@ -41,7 +41,6 @@ mod websocket;   // websocket.rs - WebSocket handler for multiuser
 mod esp32_types; // esp32_types.rs - ESP32 communication types
 mod esp32_connection; // esp32_connection.rs - ESP32 TCP/UDP connection handling
 mod esp32_manager; // esp32_manager.rs - ESP32 device management
-mod udp_searcher; // udp_searcher.rs - UDP port scanning for ESP32 discovery
 mod mdns_discovery; // mdns_discovery.rs - mDNS-based ESP32 discovery
 mod esp32_discovery; // esp32_discovery.rs - ESP32 device discovery service
 
@@ -141,7 +140,7 @@ async fn main() {
     
     // Start ESP32 Discovery Service
     tracing::info!("Starting ESP32 Discovery Service...");
-    let esp32_discovery = Arc::new(tokio::sync::Mutex::new(esp32_discovery::Esp32Discovery::new(device_store.clone())));
+    let esp32_discovery = Arc::new(tokio::sync::Mutex::new(esp32_discovery::Esp32Discovery::with_manager(device_store.clone(), Some(esp32_manager.clone()))));
     let discovery_service = esp32_discovery.clone();
     tokio::spawn(async move {
         let mut discovery = discovery_service.lock().await;
@@ -905,7 +904,7 @@ async fn list_devices_handler(
         Ok(device_list) => {
             device_list.into_iter().map(|(device, permission)| {
                 json!({
-                    "id": device.id,
+                    "id": device.mac_address,
                     "name": device.name,
                     "mac_address": device.mac_address,
                     "ip_address": device.ip_address,
@@ -986,7 +985,7 @@ async fn create_device_handler(
             "success": true,
             "message": "Canvas created successfully",
             "device": {
-                "id": device.id,
+                "id": device.mac_address,
                 "name": device.name,
                 "mac_address": device.mac_address,
                 "ip_address": device.ip_address,
@@ -1062,7 +1061,7 @@ async fn get_device_handler(
     Ok(Json(json!({
         "success": true,
         "canvas": {
-            "id": canvas.id,
+            "id": canvas.mac_address,
             "name": canvas.name,
             "maintenance_mode": canvas.maintenance_mode,
             "owner_id": canvas.owner_id,
@@ -1163,7 +1162,7 @@ async fn update_device_handler(
             "success": true,
             "message": "Canvas updated successfully",
             "canvas": {
-                "id": updated_canvas.id,
+                "id": updated_canvas.mac_address,
                 "name": updated_canvas.name,
                 "maintenance_mode": updated_canvas.maintenance_mode,
                 "owner_id": updated_canvas.owner_id,

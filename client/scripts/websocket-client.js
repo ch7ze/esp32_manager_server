@@ -338,7 +338,7 @@ class WebSocketClient {
     // Register for canvas events
     registerForCanvas(canvasId) {
         return this.send({
-            command: 'registerForCanvas',
+            type: 'registerForCanvas',
             canvasId: canvasId
         });
     }
@@ -347,7 +347,7 @@ class WebSocketClient {
     unregisterForCanvas(canvasId) {
         // Use fallback approach since server doesn't support acknowledgments yet
         return this.sendWithFallback({
-            command: 'unregisterForCanvas',
+            type: 'unregisterForCanvas',
             canvasId: canvasId
         }, 1000); // 1 second delay for server processing
     }
@@ -355,7 +355,7 @@ class WebSocketClient {
     // Send canvas events to server
     sendCanvasEvents(canvasId, events) {
         return this.send({
-            command: 'canvasEvent',
+            type: 'canvasEvent',
             canvasId: canvasId,
             eventsForCanvas: events
         });
@@ -366,7 +366,7 @@ class WebSocketClient {
     // atomicRegisterWithReplay(canvasId) {
     //     console.log('WebSocket: Sending atomic register request for canvas:', canvasId);
     //     return this.send({
-    //         command: 'atomicRegisterWithReplay',
+    //         type: 'atomicRegisterWithReplay',
     //         canvasId: canvasId
     //     });
     // }

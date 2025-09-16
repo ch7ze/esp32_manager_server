@@ -119,7 +119,7 @@
                     console.log('ESP32 Discovery WebSocket connected');
                     // Register for system events to receive ESP32 discovery
                     websocket.send(JSON.stringify({
-                        command: 'registerForDevice',
+                        type: 'registerForDevice',
                         deviceId: 'system'
                     }));
                 };

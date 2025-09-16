@@ -80,6 +80,14 @@ const pages = {
         styles: [],
         requiresAuth: true
     },
+    'esp32_control': {
+        title: 'ESP32 Control',
+        template: 'esp32_control.html',
+        defaultPath: '/devices/:id',
+        scripts: ['esp32_control.js'],
+        styles: [],
+        requiresAuth: true
+    },
     'docs': {
         title: 'Dokumentation',
         template: 'docs.html',
@@ -216,7 +224,7 @@ async function renderPage() {
     
     // Handle device detail pages - redirect to ESP32 control
     if (url.pathname.startsWith('/devices/')) {
-        pageName = 'device_detail';
+        pageName = 'esp32_control';
     }
     
     // Debug logging
@@ -400,7 +408,7 @@ document.addEventListener('click', function(e) {
   if (link) {
     e.preventDefault();
     // Handle async navigation with error handling using original async function
-    _navigateToAsync(link.href).catch(error => {
+    _navigateToAsync(link.getAttribute('href')).catch(error => {
       console.error('Navigation failed:', error);
       // Fallback: still try to render page even if cleanup failed
       renderPage();
