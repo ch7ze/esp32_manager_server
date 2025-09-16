@@ -110,27 +110,8 @@ impl Esp32Manager {
         let event_tx = self.create_device_event_sender(device_id.clone());
         crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("EVENT_SENDER_CREATED: {}", device_id));
 
-        // Send a test event directly to Manager to test if Manager Event Processor works
-        let test_esp32_event = crate::esp32_types::Esp32Event::variable_update("test_var".to_string(), "test_value".to_string());
-        let test_manager_event = Esp32ManagerEvent::DeviceEvent(device_id.clone(), test_esp32_event);
-        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("SENDING_DIRECT_TEST_EVENT_TO_MANAGER: {}", device_id));
-        if let Err(e) = self.event_sender.send(test_manager_event) {
-            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("DIRECT_TEST_EVENT_TO_MANAGER_FAILED: {} - {}", device_id, e));
-        } else {
-            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("DIRECT_TEST_EVENT_TO_MANAGER_SUCCESS: {}", device_id));
-        }
-
         crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CREATING_ESP32_CONNECTION: {}", device_id));
-        let connection = Esp32Connection::new(config, event_tx.clone());
-
-        // Send a test event to the Event-Forwarding-Task to verify it can receive events
-        let test_event_for_task = crate::esp32_types::Esp32Event::variable_update("task_test_var".to_string(), "task_test_value".to_string());
-        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("SENDING_TEST_EVENT_TO_FORWARDING_TASK: {}", device_id));
-        if let Err(e) = event_tx.send(test_event_for_task) {
-            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("TEST_EVENT_TO_FORWARDING_TASK_FAILED: {} - {}", device_id, e));
-        } else {
-            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("TEST_EVENT_TO_FORWARDING_TASK_SUCCESS: {}", device_id));
-        }
+        let connection = Esp32Connection::new(config, event_tx);
 
         {
             let mut connections = self.connections.write().await;
