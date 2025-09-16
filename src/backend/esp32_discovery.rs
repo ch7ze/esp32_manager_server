@@ -89,8 +89,8 @@ impl Esp32Discovery {
                 let device_config = Esp32DeviceConfig::new(
                     device_id.clone(),
                     ip,
-                    23, // Default TCP port
-                    mdns_device.port,
+                    3232, // ESP32 TCP port (same as UDP port)
+                    3232, // ESP32 UDP port
                 );
                 
                 let discovered_at = chrono::Utc::now();

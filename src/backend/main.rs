@@ -43,6 +43,7 @@ mod esp32_connection; // esp32_connection.rs - ESP32 TCP/UDP connection handling
 mod esp32_manager; // esp32_manager.rs - ESP32 device management
 mod mdns_discovery; // mdns_discovery.rs - mDNS-based ESP32 discovery
 mod esp32_discovery; // esp32_discovery.rs - ESP32 device discovery service
+mod debug_logger;   // debug_logger.rs - Debug event logging
 
 // Import all authentication functions from auth.rs
 // These are used for Login/Register/Logout on the website
@@ -109,6 +110,9 @@ async fn main() {
 
     tracing::info!("Starting Drawing App Backend Server");
 
+    // Clear debug log file for fresh start
+    debug_logger::DebugLogger::clear_log();
+
 
     // Initialize SQLite database
     tracing::info!("Initializing SQLite database...");
@@ -153,9 +157,11 @@ async fn main() {
     
     // Example: Add a test ESP32 device configuration for testing
     let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 43, 75));
-    let test_device = esp32_types::Esp32DeviceConfig::esp32_default(
+    let test_device = esp32_types::Esp32DeviceConfig::new(
         "test-esp32-001".to_string(),
         ip,
+        3232, // ESP32 TCP port
+        3232, // ESP32 UDP port
     );
     if let Err(e) = esp32_manager.add_device(test_device).await {
         tracing::warn!("Failed to add test ESP32 device: {}", e);
@@ -215,6 +221,7 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         device_store: device_store.clone(),
         db: db.clone(),
         esp32_manager: esp32_manager.clone(),
+        esp32_discovery: esp32_discovery.clone(),
     };
 
     // ========================================

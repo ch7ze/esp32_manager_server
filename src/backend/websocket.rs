@@ -32,6 +32,7 @@ pub struct WebSocketState {
     pub device_store: SharedDeviceStore,
     pub db: Arc<DatabaseManager>,
     pub esp32_manager: Arc<crate::esp32_manager::Esp32Manager>,
+    pub esp32_discovery: Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
 }
 
 // ============================================================================
@@ -136,13 +137,14 @@ async fn handle_websocket_connection(
             Ok(Message::Text(text)) => {
                 info!("WebSocket message received from client {}: {}", client_id, text);
                 match handle_client_message(
-                    &text, 
-                    &device_store, 
+                    &text,
+                    &device_store,
                     &db,
                     &state.esp32_manager,
+                    &state.esp32_discovery,
                     &user_id,
                     &display_name,
-                    &client_id, 
+                    &client_id,
                     &tx,
                     &mut registered_devices
                 ).await {
@@ -206,6 +208,7 @@ async fn handle_client_message(
     device_store: &SharedDeviceStore,
     db: &Arc<DatabaseManager>,
     esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
+    esp32_discovery: &Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
     user_id: &str,
     display_name: &str,
     client_id: &str,
@@ -252,6 +255,7 @@ async fn handle_client_message(
                 device_id,
                 device_store,
                 esp32_manager,
+                esp32_discovery,
                 db,
                 user_id,
                 display_name,
@@ -290,6 +294,7 @@ async fn handle_register_for_device(
     device_id: String,
     device_store: &SharedDeviceStore,
     esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
+    esp32_discovery: &Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
     db: &Arc<DatabaseManager>,
     user_id: &str,
     display_name: &str,
@@ -334,21 +339,65 @@ async fn handle_register_for_device(
         registered_devices.push(device_id.clone());
     }
 
-    // If this is an ESP32 device (MAC address format), try to connect it
+    // If this is an ESP32 device (MAC address format), try to add and connect it
     if is_mac_address_format(&device_id) {
-        info!("Attempting to connect ESP32 device: {}", device_id);
+        info!("Attempting to add and connect ESP32 device: {}", device_id);
 
-        // First, try to add the device from discovery data
-        // This will fail silently if device is already added
-        if let Err(e) = esp32_manager.connect_device(&device_id).await {
-            info!("ESP32 device {} not yet added to manager, will try to add from discovery: {}", device_id, e);
+        // First check if device is already added to manager
+        let device_exists = esp32_manager.get_device_config(&device_id).await.is_some();
 
-            // For now, try to create a default device configuration based on the MAC address
-            // This assumes the device was discovered via the frontend and is available
-            // In a production system, you'd integrate more tightly with the discovery service
-            warn!("ESP32 device {} not found in manager - manual connection needed", device_id);
+        if !device_exists {
+            // Try to get device configuration from discovery data
+            info!("ESP32 device {} not in manager, trying to find it in discovery data", device_id);
+
+            // Look up the device in discovery data
+            let discovery_config = {
+                let discovery = esp32_discovery.lock().await;
+                let discovered_devices = discovery.get_discovered_devices().await;
+                discovered_devices.get(&device_id).map(|d| d.device_config.clone())
+            };
+
+            let config = match discovery_config {
+                Some(discovered_config) => {
+                    info!("Found ESP32 device {} in discovery data: {}:{}",
+                          device_id, discovered_config.ip_address, discovered_config.tcp_port);
+                    discovered_config
+                }
+                None => {
+                    info!("ESP32 device {} not found in discovery data, using default config", device_id);
+                    // Fallback to default configuration
+                    crate::esp32_types::Esp32DeviceConfig::new(
+                        device_id.clone(),
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 100)), // Default fallback
+                        3232, // ESP32 TCP port
+                        3232, // ESP32 UDP port
+                    )
+                }
+            };
+
+            // Add the device to the manager
+            match esp32_manager.add_device(config).await {
+                Ok(()) => {
+                    info!("Successfully added ESP32 device {} to manager", device_id);
+                }
+                Err(e) => {
+                    warn!("Failed to add ESP32 device {} to manager: {}", device_id, e);
+                    // Don't return error here - the device might still work if manually configured
+                }
+            }
         } else {
-            info!("Successfully connected ESP32 device: {}", device_id);
+            info!("ESP32 device {} already exists in manager", device_id);
+        }
+
+        // Now try to connect the device
+        match esp32_manager.connect_device(&device_id).await {
+            Ok(()) => {
+                info!("Successfully connected ESP32 device: {}", device_id);
+            }
+            Err(e) => {
+                warn!("Failed to connect ESP32 device {}: {}. Device will show as disconnected until manually connected.", device_id, e);
+                // Don't fail the registration - user should still be able to see the device
+            }
         }
     }
     
@@ -377,6 +426,7 @@ async fn handle_register_for_device(
 
         info!("Sent registration confirmation to client {} for device {} (no existing events)",
               client_id, device_id);
+        info!("FRONTEND DEBUG: Client {} registered for device {} - frontend should now receive device events to update connection status", client_id, device_id);
     }
     
     Ok(())

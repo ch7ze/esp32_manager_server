@@ -179,7 +179,7 @@ impl DatabaseManager {
                 user_id TEXT NOT NULL,
                 permission TEXT NOT NULL,
                 PRIMARY KEY (device_id, user_id),
-                FOREIGN KEY (device_id) REFERENCES esp32_devices (id),
+                FOREIGN KEY (device_id) REFERENCES esp32_devices (mac_address),
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
             "#
@@ -517,10 +517,10 @@ impl DatabaseManager {
     pub async fn list_user_devices(&self, user_id: &str) -> Result<Vec<(ESP32Device, String)>, Box<dyn std::error::Error>> {
         let rows = sqlx::query(
             r#"
-            SELECT d.*, dp.permission 
-            FROM esp32_devices d 
-            INNER JOIN esp32_device_permissions dp ON d.id = dp.device_id 
-            WHERE dp.user_id = ? 
+            SELECT d.*, dp.permission
+            FROM esp32_devices d
+            INNER JOIN esp32_device_permissions dp ON d.mac_address = dp.device_id
+            WHERE dp.user_id = ?
             ORDER BY d.created_at DESC
             "#
         )

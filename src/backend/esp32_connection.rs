@@ -70,12 +70,29 @@ impl Esp32Connection {
         
         // Send connection status event
         let event = Esp32Event::connection_status(
-            true, 
-            self.config.ip_address, 
-            self.config.tcp_port, 
+            true,
+            self.config.ip_address,
+            self.config.tcp_port,
             self.config.udp_port
         );
-        let _ = self.event_sender.send(event);
+        info!("ESP32CONNECTION DEBUG: About to send connection status event (connected=true) for device {}", self.config.device_id);
+        info!("ESP32CONNECTION DEBUG: Event sender channel status - is_closed: {}", self.event_sender.is_closed());
+
+        let is_closed = self.event_sender.is_closed();
+        match self.event_sender.send(event) {
+            Ok(()) => {
+                info!("ESP32CONNECTION DEBUG: Connection status event sent successfully for device {}", self.config.device_id);
+                info!("ESP32CONNECTION DEBUG: Event should now flow: ESP32Connection -> EventForwardingTask -> ESP32Manager -> DeviceStore -> WebSocket -> Frontend");
+                crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, true, None);
+            }
+            Err(e) => {
+                error!("ESP32CONNECTION DEBUG: FAILED to send connection status event for device {}: {}", self.config.device_id, e);
+                error!("ESP32CONNECTION DEBUG: Event sender is_closed: {}", self.event_sender.is_closed());
+                error!("ESP32CONNECTION DEBUG: This means the Event Forwarding Task receiver has been dropped!");
+                error!("ESP32CONNECTION DEBUG: This explains why frontend shows 'Disconnected' - event channel is closed!");
+                crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, false, Some(&e.to_string()));
+            }
+        }
         
         info!("Successfully connected to ESP32 device {}", self.config.device_id);
         Ok(())
@@ -108,12 +125,17 @@ impl Esp32Connection {
         
         // Send connection status event
         let event = Esp32Event::connection_status(
-            false, 
-            self.config.ip_address, 
-            self.config.tcp_port, 
+            false,
+            self.config.ip_address,
+            self.config.tcp_port,
             self.config.udp_port
         );
-        let _ = self.event_sender.send(event);
+        info!("Sending connection status event (connected=false) for device {}", self.config.device_id);
+        if let Err(e) = self.event_sender.send(event) {
+            error!("Failed to send disconnect status event for device {}: {}", self.config.device_id, e);
+        } else {
+            info!("Disconnect status event sent successfully for device {}", self.config.device_id);
+        }
         
         info!("Disconnected from ESP32 device {}", self.config.device_id);
         Ok(())

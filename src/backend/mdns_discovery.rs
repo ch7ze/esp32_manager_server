@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{info, debug, error};
+use tracing::{info, trace, error};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 
 /// Discovered ESP32 device information from mDNS
@@ -69,20 +69,26 @@ impl MdnsDiscovery {
         
         tokio::spawn(async move {
             info!("Starting mDNS discovery for ESP32 devices...");
-            
+            crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", "STARTING_MDNS_DISCOVERY");
+
             // Browse for Arduino OTA services
             let receiver = match mdns_daemon.browse("_arduino._tcp.local.") {
-                Ok(receiver) => receiver,
+                Ok(receiver) => {
+                    crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", "ARDUINO_BROWSE_SUCCESS");
+                    receiver
+                },
                 Err(e) => {
                     error!("Failed to start mDNS browse: {}", e);
+                    crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("ARDUINO_BROWSE_FAILED: {}", e));
                     return;
                 }
             };
-            
+
             // Also browse for HTTP services (some ESP32s might use this)
             let http_receiver = mdns_daemon.browse("_http._tcp.local.").ok();
-            
+
             info!("mDNS discovery started, listening for ESP32 devices...");
+            crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", "MDNS_LISTENING_FOR_DEVICES");
             
             loop {
                 tokio::select! {
@@ -100,10 +106,11 @@ impl MdnsDiscovery {
                         }
                     } => {
                         if let Some((service_type, event)) = event {
+                            crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("RECEIVED_SERVICE_EVENT: {} - {:?}", service_type, event));
                             Self::handle_service_event(
-                                event, 
+                                event,
                                 service_type,
-                                Arc::clone(&discovered_devices), 
+                                Arc::clone(&discovered_devices),
                                 Arc::clone(&callback)
                             ).await;
                         }
@@ -122,10 +129,11 @@ impl MdnsDiscovery {
                         }
                     } => {
                         if let Some((service_type, event)) = event {
+                            crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("RECEIVED_SERVICE_EVENT: {} - {:?}", service_type, event));
                             Self::handle_service_event(
-                                event, 
+                                event,
                                 service_type,
-                                Arc::clone(&discovered_devices), 
+                                Arc::clone(&discovered_devices),
                                 Arc::clone(&callback)
                             ).await;
                         }
@@ -176,24 +184,29 @@ impl MdnsDiscovery {
                     .cloned()
                     .collect();
                 let port = info.get_port();
-                
+
+                crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("SERVICE_RESOLVED: {} ({}:{}) - {} addresses", hostname, hostname, port, addresses.len()));
+
                 // Parse TXT records
                 let mut txt_records = HashMap::new();
                 let properties = info.get_properties();
-                debug!("Parsing TXT records for {}: {} properties found", hostname, properties.len());
+                trace!("Parsing TXT records for {}: {} properties found", hostname, properties.len());
+                crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("PARSING_TXT_RECORDS: {} - {} properties", hostname, properties.len()));
+
                 for property in properties.iter() {
                     let key = property.key();
                     if let Some(value) = property.val() {
                         if let Ok(value_str) = std::str::from_utf8(value) {
-                            debug!("TXT Record: {} = {}", key, value_str);
+                            trace!("TXT Record: {} = {}", key, value_str);
                             txt_records.insert(key.to_string(), value_str.to_string());
                         }
                     }
                 }
-                
+
                 // Filter for ESP32 devices (check if hostname or TXT records indicate ESP32)
                 let is_esp32 = Self::is_esp32_device(&hostname, &txt_records, service_type);
-                
+                crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("IS_ESP32_CHECK: {} - result: {}", hostname, is_esp32));
+
                 if is_esp32 {
                     let device = MdnsEsp32Device {
                         hostname: hostname.clone(),
@@ -203,29 +216,41 @@ impl MdnsDiscovery {
                         service_name: format!("_{}._{}.local.", service_type, "tcp"),
                     };
                     
-                    debug!("Discovered ESP32 device: {} at {:?}:{}", hostname, addresses, port);
-                    
-                    // Add to cache
+                    // Add to cache only if it's new. Log info only when a new device is inserted.
+                    let mut was_new = false;
                     {
                         let mut devices = discovered_devices.write().await;
-                        devices.insert(hostname.clone(), device.clone());
+                        if !devices.contains_key(&hostname) {
+                            devices.insert(hostname.clone(), device.clone());
+                            was_new = true;
+                        }
                     }
-                    
-                    // Call callback
-                    callback(device);
+
+                    if was_new {
+                        info!("New ESP32 device discovered: {} at {:?}:{}", hostname, addresses, port);
+                        crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("NEW_ESP32_DISCOVERED: {} at {:?}:{}", hostname, addresses, port));
+                        // Call callback for new device
+                        crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("CALLING_DEVICE_CALLBACK: {}", hostname));
+                        callback(device);
+                        crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("DEVICE_CALLBACK_COMPLETED: {}", hostname));
+                    } else {
+                        // For existing devices, only trace (no noisy logs)
+                        crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("EXISTING_ESP32_UPDATED: {}", hostname));
+                        trace!("Updated/refresh ESP32 device seen: {}", hostname);
+                    }
                 } else {
-                    debug!("Ignoring non-ESP32 device: {} (service: {})", hostname, service_type);
+                    trace!("Ignoring non-ESP32 device: {} (service: {})", hostname, service_type);
                 }
             }
             ServiceEvent::ServiceRemoved(typ, name) => {
-                debug!("Service removed: {} {}", typ, name);
+                trace!("Service removed: {} {}", typ, name);
                 // Optionally remove from cache based on name
                 let mut devices = discovered_devices.write().await;
                 devices.retain(|_, device| device.service_name != format!("{}.{}", name, typ));
             }
             _ => {
                 // Handle other events if needed
-                debug!("Other mDNS event: {:?}", event);
+                trace!("Other mDNS event: {:?}", event);
             }
         }
     }

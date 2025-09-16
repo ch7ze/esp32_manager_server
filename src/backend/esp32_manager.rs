@@ -31,8 +31,8 @@ pub struct Esp32Manager {
     device_store: SharedDeviceStore,
     /// Event sender for internal communication
     event_sender: mpsc::UnboundedSender<Esp32ManagerEvent>,
-    /// Event receiver for processing
-    event_receiver: Arc<Mutex<mpsc::UnboundedReceiver<Esp32ManagerEvent>>>,
+    /// Event receiver for processing (Option because it's moved to the processor task)
+    event_receiver: Arc<Mutex<Option<mpsc::UnboundedReceiver<Esp32ManagerEvent>>>>,
     /// Central UDP listener for all ESP32 devices
     central_udp_socket: Arc<Mutex<Option<UdpSocket>>>,
     /// Map of IP -> device_id for UDP message routing
@@ -56,7 +56,7 @@ impl Esp32Manager {
             device_configs: Arc::new(RwLock::new(HashMap::new())),
             device_store,
             event_sender,
-            event_receiver: Arc::new(Mutex::new(event_receiver)),
+            event_receiver: Arc::new(Mutex::new(Some(event_receiver))),
             central_udp_socket: Arc::new(Mutex::new(None)),
             ip_to_device_id: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -80,25 +80,65 @@ impl Esp32Manager {
     /// Add a new ESP32 device configuration
     pub async fn add_device(&self, config: Esp32DeviceConfig) -> Esp32Result<()> {
         let device_id = config.device_id.clone();
-        info!("Adding ESP32 device: {} ({}:{})", 
+        info!("Adding ESP32 device: {} ({}:{})",
                device_id, config.ip_address, config.tcp_port);
-        
+        crate::debug_logger::DebugLogger::log_device_add(&device_id);
+
+        // Check if device already exists
+        {
+            let connections = self.connections.read().await;
+            if connections.contains_key(&device_id) {
+                info!("ESP32 device {} already exists, updating configuration only", device_id);
+                crate::debug_logger::DebugLogger::log_device_already_exists(&device_id);
+
+                // Update configuration but keep existing connection
+                let mut configs = self.device_configs.write().await;
+                configs.insert(device_id.clone(), config.clone());
+
+                return Ok(());
+            }
+        }
+
         // Store configuration
         {
             let mut configs = self.device_configs.write().await;
             configs.insert(device_id.clone(), config.clone());
         }
-        
+
         // Create connection but don't connect yet
+        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CREATING_EVENT_SENDER: {}", device_id));
         let event_tx = self.create_device_event_sender(device_id.clone());
-        let connection = Esp32Connection::new(config, event_tx);
-        
+        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("EVENT_SENDER_CREATED: {}", device_id));
+
+        // Send a test event directly to Manager to test if Manager Event Processor works
+        let test_esp32_event = crate::esp32_types::Esp32Event::variable_update("test_var".to_string(), "test_value".to_string());
+        let test_manager_event = Esp32ManagerEvent::DeviceEvent(device_id.clone(), test_esp32_event);
+        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("SENDING_DIRECT_TEST_EVENT_TO_MANAGER: {}", device_id));
+        if let Err(e) = self.event_sender.send(test_manager_event) {
+            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("DIRECT_TEST_EVENT_TO_MANAGER_FAILED: {} - {}", device_id, e));
+        } else {
+            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("DIRECT_TEST_EVENT_TO_MANAGER_SUCCESS: {}", device_id));
+        }
+
+        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CREATING_ESP32_CONNECTION: {}", device_id));
+        let connection = Esp32Connection::new(config, event_tx.clone());
+
+        // Send a test event to the Event-Forwarding-Task to verify it can receive events
+        let test_event_for_task = crate::esp32_types::Esp32Event::variable_update("task_test_var".to_string(), "task_test_value".to_string());
+        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("SENDING_TEST_EVENT_TO_FORWARDING_TASK: {}", device_id));
+        if let Err(e) = event_tx.send(test_event_for_task) {
+            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("TEST_EVENT_TO_FORWARDING_TASK_FAILED: {} - {}", device_id, e));
+        } else {
+            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("TEST_EVENT_TO_FORWARDING_TASK_SUCCESS: {}", device_id));
+        }
+
         {
             let mut connections = self.connections.write().await;
             connections.insert(device_id.clone(), Arc::new(Mutex::new(connection)));
         }
-        
+
         info!("ESP32 device {} added successfully", device_id);
+        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ESP32_DEVICE_ADDED_SUCCESS: {}", device_id));
         Ok(())
     }
     
@@ -128,12 +168,29 @@ impl Esp32Manager {
     
     /// Connect to ESP32 device
     pub async fn connect_device(&self, device_id: &str) -> Esp32Result<()> {
-        info!("Connecting to ESP32 device: {}", device_id);
+        info!("DEVICE CONNECTION DEBUG: Starting connection process for device: {}", device_id);
+        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CONNECT_DEVICE_START: {}", device_id));
 
         let connections = self.connections.read().await;
         if let Some(connection_arc) = connections.get(device_id) {
+            info!("DEVICE CONNECTION DEBUG: Found connection for device: {}", device_id);
+            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CONNECTION_FOUND: {}", device_id));
+
             let mut connection = connection_arc.lock().await;
-            connection.connect().await?;
+            info!("DEVICE CONNECTION DEBUG: Attempting TCP connection for device: {}", device_id);
+            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ATTEMPTING_TCP_CONNECTION: {}", device_id));
+
+            match connection.connect().await {
+                Ok(()) => {
+                    info!("DEVICE CONNECTION DEBUG: TCP connection established for device: {}", device_id);
+                    crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("TCP_CONNECTION_SUCCESS: {}", device_id));
+                },
+                Err(e) => {
+                    error!("DEVICE CONNECTION DEBUG: TCP connection failed for device: {} - Error: {}", device_id, e);
+                    crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("TCP_CONNECTION_FAILED: {} - Error: {}", device_id, e));
+                    return Err(e);
+                }
+            }
 
             // Register device for central UDP routing
             let config = {
@@ -142,12 +199,16 @@ impl Esp32Manager {
             };
 
             if let Some(config) = config {
+                crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("REGISTERING_UDP_ROUTING: {} -> {}", device_id, config.ip_address));
                 self.register_esp32_for_udp(device_id.to_string(), config.ip_address).await;
             }
 
-            info!("Successfully connected to ESP32 device: {}", device_id);
+            info!("DEVICE CONNECTION DEBUG: Successfully connected to ESP32 device: {}", device_id);
+            info!("DEVICE CONNECTION DEBUG: Connection status events should now be sent to frontend for device: {}", device_id);
+            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CONNECT_DEVICE_SUCCESS: {}", device_id));
             Ok(())
         } else {
+            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("DEVICE_NOT_FOUND: {}", device_id));
             Err(Esp32Error::DeviceNotFound(device_id.to_string()))
         }
     }
@@ -309,9 +370,84 @@ impl Esp32Manager {
         
         // Forward device events to manager
         tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let _ = manager_sender.send(Esp32ManagerEvent::DeviceEvent(device_id.clone(), event));
+            info!("EVENT FORWARDING DEBUG: Started event forwarding task for device {}", device_id);
+            info!("EVENT FORWARDING DEBUG: Task spawned, waiting for events from device {}", device_id);
+            crate::debug_logger::DebugLogger::log_event_forwarding_task_start(&device_id);
+            let mut event_count = 0;
+
+            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("LOOP_START for device {}", device_id));
+            info!("EVENT FORWARDING DEBUG: About to enter main event loop for device {}", device_id);
+
+            // Check manager sender status
+            let manager_sender_closed = manager_sender.is_closed();
+            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("MANAGER_SENDER_STATUS for device {} - is_closed: {}", device_id, manager_sender_closed));
+
+            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("ENTERING_MAIN_LOOP for device {}", device_id));
+
+            loop {
+                info!("EVENT FORWARDING DEBUG: Device {} waiting for next event (processed so far: {})", device_id, event_count);
+                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("LOOP_ITERATION for device {} - event_count: {}", device_id, event_count));
+
+                info!("EVENT FORWARDING DEBUG: Device {} calling rx.recv().await", device_id);
+                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("CALLING_RECV for device {}", device_id));
+
+                // Add timeout to detect hanging recv()
+                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("CALLING_RECV_WITH_TIMEOUT for device {}", device_id));
+                let recv_result = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await;
+
+                let final_recv_result = match recv_result {
+                    Ok(inner_result) => {
+                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_COMPLETED for device {} - result: {:?}", device_id, inner_result.is_some()));
+                        inner_result
+                    }
+                    Err(_timeout) => {
+                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_TIMEOUT for device {} - breaking loop", device_id));
+                        break;
+                    }
+                };
+
+                match final_recv_result {
+                    Some(event) => {
+                        event_count += 1;
+                        info!("EVENT FORWARDING DEBUG: Received event #{} from device {}: {:?}", event_count, device_id, event);
+                        crate::debug_logger::DebugLogger::log_event_forwarding_task_receive(&device_id, event_count, &format!("{:?}", event));
+
+                        info!("EVENT FORWARDING DEBUG: Attempting to forward event #{} from device {} to manager", event_count, device_id);
+                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("ATTEMPTING_SEND to manager for device {} - event #{}", device_id, event_count));
+                        match manager_sender.send(Esp32ManagerEvent::DeviceEvent(device_id.clone(), event)) {
+                            Ok(()) => {
+                                info!("EVENT FORWARDING DEBUG: Successfully forwarded event #{} from device {} to manager", event_count, device_id);
+                                crate::debug_logger::DebugLogger::log_event_forwarding_task_send_success(&device_id, event_count);
+                            }
+                            Err(e) => {
+                                error!("EVENT FORWARDING DEBUG: FAILED to forward event #{} from device {} to manager: {}", event_count, device_id, e);
+                                error!("EVENT FORWARDING DEBUG: Manager channel appears to be closed - this is why events don't reach frontend!");
+                                error!("EVENT FORWARDING DEBUG: Event forwarding task will exit for device {} after {} events", device_id, event_count);
+                                error!("EVENT FORWARDING DEBUG: Manager sender error details: {}", e);
+                                crate::debug_logger::DebugLogger::log_event_forwarding_task_send_fail(&device_id, event_count, &e.to_string());
+                                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("BREAK_ON_SEND_ERROR for device {}", device_id));
+                                break;
+                            }
+                        }
+                    }
+                    None => {
+                        warn!("EVENT FORWARDING DEBUG: Receiver channel closed for device {} after {} events", device_id, event_count);
+                        warn!("EVENT FORWARDING DEBUG: This means the ESP32Connection event_sender was dropped!");
+                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_RETURNED_NONE for device {}", device_id));
+                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("BREAK_ON_CHANNEL_CLOSED for device {}", device_id));
+                        break;
+                    }
+                }
             }
+
+            if event_count == 0 {
+                error!("EVENT FORWARDING DEBUG: Event forwarding task for device {} ended WITHOUT processing any events - channel was closed immediately!", device_id);
+                error!("EVENT FORWARDING DEBUG: This indicates the ESP32Connection event_sender was dropped before any events were sent!");
+            } else {
+                warn!("EVENT FORWARDING DEBUG: Event forwarding task ended for device {} after processing {} events", device_id, event_count);
+            }
+            warn!("EVENT FORWARDING DEBUG: Event forwarding task for device {} is now TERMINATED", device_id);
+            crate::debug_logger::DebugLogger::log_event_forwarding_task_end(&device_id, event_count);
         });
         
         tx
@@ -321,23 +457,72 @@ impl Esp32Manager {
     async fn start_event_processor(&self) {
         let event_receiver = Arc::clone(&self.event_receiver);
         let device_store = Arc::clone(&self.device_store);
-        
+
+        info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Starting ESP32Manager event processor");
+        crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "STARTING");
         tokio::spawn(async move {
-            let mut receiver = event_receiver.lock().await;
-            
-            while let Some(event) = receiver.recv().await {
-                match event {
-                    Esp32ManagerEvent::DeviceEvent(device_id, esp32_event) => {
-                        if let Err(e) = Self::handle_esp32_event(&device_store, &device_id, esp32_event).await {
-                            error!("Failed to handle ESP32 event for device {}: {}", device_id, e);
+            info!("ESP32MANAGER EVENT PROCESSOR DEBUG: ESP32Manager event processor task started");
+            crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "TASK_STARTED");
+            let mut event_count = 0;
+
+            info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Taking receiver ownership");
+            crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "TAKING_RECEIVER_OWNERSHIP");
+            let mut receiver = {
+                let mut receiver_option = event_receiver.lock().await;
+                receiver_option.take().expect("Event receiver should only be taken once")
+            };
+            info!("ESP32MANAGER EVENT PROCESSOR DEBUG: ESP32Manager event processor has receiver ownership");
+            crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "RECEIVER_OWNERSHIP_ACQUIRED");
+
+            loop {
+                info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Waiting for next event (processed so far: {})", event_count);
+                crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", &format!("WAITING_FOR_EVENT - count: {}", event_count));
+
+                let recv_result = receiver.recv().await;
+                crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", &format!("RECV_RESULT - is_some: {}", recv_result.is_some()));
+
+                match recv_result {
+                    Some(event) => {
+                        event_count += 1;
+                        info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Received event #{}: {:?}", event_count, event);
+
+                        match event {
+                            Esp32ManagerEvent::DeviceEvent(device_id, esp32_event) => {
+                                info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Processing device event #{} for device {}: {:?}", event_count, device_id, esp32_event);
+
+                                match Self::handle_esp32_event(&device_store, &device_id, esp32_event).await {
+                                    Ok(()) => {
+                                        info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Successfully processed event #{} for device {}", event_count, device_id);
+                                    }
+                                    Err(e) => {
+                                        error!("ESP32MANAGER EVENT PROCESSOR DEBUG: Failed to handle ESP32 event #{} for device {}: {}", event_count, device_id, e);
+                                        error!("ESP32MANAGER EVENT PROCESSOR DEBUG: This could cause the event processor to become unstable!");
+                                    }
+                                }
+                            }
+                            Esp32ManagerEvent::ConnectionStateChanged(device_id, state) => {
+                                info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Processing connection state change #{} for device {}: {:?}", event_count, device_id, state);
+                                // TODO: Notify connected clients about state change
+                            }
                         }
                     }
-                    Esp32ManagerEvent::ConnectionStateChanged(device_id, state) => {
-                        info!("ESP32 device {} connection state changed: {:?}", device_id, state);
-                        // TODO: Notify connected clients about state change
+                    None => {
+                        warn!("ESP32MANAGER EVENT PROCESSOR DEBUG: Receiver channel closed after {} events", event_count);
+                        warn!("ESP32MANAGER EVENT PROCESSOR DEBUG: This means all event senders have been dropped!");
+                        crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", &format!("RECV_RETURNED_NONE - count: {}", event_count));
+                        crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "BREAKING_FROM_LOOP");
+                        break;
                     }
                 }
             }
+
+            if event_count == 0 {
+                error!("ESP32MANAGER EVENT PROCESSOR DEBUG: Event processor ended WITHOUT processing any events!");
+                error!("ESP32MANAGER EVENT PROCESSOR DEBUG: This indicates the event processor was terminated immediately after startup!");
+            } else {
+                error!("ESP32MANAGER EVENT PROCESSOR DEBUG: Event processor ended after processing {} events!", event_count);
+            }
+            error!("ESP32MANAGER EVENT PROCESSOR DEBUG: ESP32Manager event processor task is now TERMINATED!");
         });
     }
     
@@ -367,6 +552,13 @@ impl Esp32Manager {
                 DeviceEvent::esp32_udp_broadcast(device_id.to_string(), message, from_ip, from_port)
             }
             Esp32Event::ConnectionStatus { connected, device_ip, tcp_port, udp_port } => {
+                info!("ESP32 EVENT PROCESSING DEBUG: Processing connection status event for device {}: connected={}, ip={}, tcp_port={}, udp_port={}",
+                      device_id, connected, device_ip, tcp_port, udp_port);
+                if connected {
+                    info!("ESP32 EVENT PROCESSING DEBUG: Device {} is now CONNECTED - this should update frontend to show 'Connected'", device_id);
+                } else {
+                    info!("ESP32 EVENT PROCESSING DEBUG: Device {} is now DISCONNECTED - this should update frontend to show 'Disconnected'", device_id);
+                }
                 DeviceEvent::esp32_connection_status(device_id.to_string(), connected, device_ip, tcp_port, udp_port)
             }
             Esp32Event::DeviceInfo { device_id: _, device_name, firmware_version, uptime } => {
@@ -492,11 +684,11 @@ pub fn create_esp32_manager(device_store: SharedDeviceStore) -> Arc<Esp32Manager
 impl Esp32DeviceConfig {
     /// Create config for ESP32 with default ports
     pub fn esp32_default(device_id: String, ip: IpAddr) -> Self {
-        Self::new(device_id, ip, 23, 1234) // Common ESP32 ports
+        Self::new(device_id, ip, 3232, 3232) // ESP32 uses port 3232 for both TCP and UDP
     }
-    
-    /// Create config for ESP32-S3 with default ports  
+
+    /// Create config for ESP32-S3 with default ports
     pub fn esp32_s3_default(device_id: String, ip: IpAddr) -> Self {
-        Self::new(device_id, ip, 23, 1235) // Different UDP port for S3
+        Self::new(device_id, ip, 3232, 3232) // ESP32-S3 also uses port 3232
     }
 }
