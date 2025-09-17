@@ -31,6 +31,9 @@ pub struct Esp32Connection {
 impl Esp32Connection {
     /// Create a new ESP32 connection manager
     pub fn new(config: Esp32DeviceConfig, event_sender: mpsc::UnboundedSender<Esp32Event>) -> Self {
+        info!("ESP32CONNECTION CREATION DEBUG: Creating new ESP32Connection for device {}", config.device_id);
+        crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("NEW_CONNECTION_CREATED: {} - sender_closed: {}", config.device_id, event_sender.is_closed()));
+
         Self {
             config,
             tcp_stream: Arc::new(Mutex::new(None)),
@@ -375,6 +378,18 @@ pub async fn handle_udp_message(message: &str, from_addr: SocketAddr, event_send
                 value.as_str().trim().to_string(),
             );
             let _ = event_sender.send(variable_event);
+        }
+    }
+}
+
+impl Drop for Esp32Connection {
+    fn drop(&mut self) {
+        error!("ESP32CONNECTION DROP DEBUG: ESP32Connection for device {} is being DROPPED! This will close the event_sender!", self.config.device_id);
+        crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("CONNECTION_DROPPED: {}", self.config.device_id));
+
+        // Send shutdown signal if we have one
+        if let Some(shutdown_tx) = &self.shutdown_sender {
+            let _ = shutdown_tx.send(());
         }
     }
 }

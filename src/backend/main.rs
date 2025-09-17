@@ -168,6 +168,20 @@ async fn main() {
     } else {
         tracing::info!("Added test ESP32 device: test-esp32-001 (192.168.43.75)");
     }
+
+    // Add test device with colons to see if that causes the Event-Forwarding-Task termination issue
+    let ip_colon_test = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 43, 76));
+    let test_device_with_colons = esp32_types::Esp32DeviceConfig::new(
+        "test:colon:device".to_string(),
+        ip_colon_test,
+        3232, // ESP32 TCP port
+        3232, // ESP32 UDP port
+    );
+    if let Err(e) = esp32_manager.add_device(test_device_with_colons).await {
+        tracing::warn!("Failed to add test device with colons: {}", e);
+    } else {
+        tracing::info!("Added test device with colons: test:colon:device (192.168.43.76)");
+    }
     
     // Start WebSocket cleanup task
     let cleanup_store = device_store.clone();

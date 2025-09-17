@@ -15,7 +15,8 @@
       "Bash(git ls-tree:*)",
       "Bash(dir)",
       "Bash(dir:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(del debug_events.log)"
     ],
     "deny": [],
     "ask": []
