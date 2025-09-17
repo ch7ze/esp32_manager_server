@@ -41,10 +41,12 @@ pub struct Esp32Manager {
     ip_to_device_id: Arc<RwLock<HashMap<IpAddr, String>>>,
     /// Global mutex to prevent race conditions during device connections
     connection_mutex: Arc<Mutex<()>>,
+    /// Direct bypass event sender for crashed Event Forwarding Tasks
+    bypass_event_sender: mpsc::UnboundedSender<Esp32ManagerEvent>,
 }
 
 /// Internal events for ESP32 manager
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Esp32ManagerEvent {
     DeviceEvent(String, Esp32Event), // (device_id, event)
     ConnectionStateChanged(String, ConnectionState), // (device_id, state)
@@ -60,11 +62,12 @@ impl Esp32Manager {
             device_event_senders: Arc::new(RwLock::new(HashMap::new())),
             device_configs: Arc::new(RwLock::new(HashMap::new())),
             device_store,
-            event_sender,
+            event_sender: event_sender.clone(),
             event_receiver: Arc::new(Mutex::new(Some(event_receiver))),
             central_udp_socket: Arc::new(Mutex::new(None)),
             ip_to_device_id: Arc::new(RwLock::new(HashMap::new())),
             connection_mutex: Arc::new(Mutex::new(())),
+            bypass_event_sender: event_sender,
         }
     }
     
@@ -406,6 +409,7 @@ impl Esp32Manager {
     /// Create event sender for a specific device
     fn create_device_event_sender(&self, device_id: String) -> mpsc::UnboundedSender<Esp32Event> {
         let manager_sender = self.event_sender.clone();
+        let bypass_event_sender = self.bypass_event_sender.clone();
 
         let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -546,6 +550,7 @@ impl Esp32Manager {
         // Monitor the spawned task for completion or panic
         let monitoring_device_id = device_id_for_spawn.clone();
         let manager_sender_for_recovery = manager_sender.clone();
+        let bypass_sender_for_recovery = bypass_event_sender.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await; // Give task time to start
 
@@ -569,8 +574,10 @@ impl Esp32Manager {
                         crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("TASK_FAILED for device {}: {:?}", monitoring_device_id, join_error));
                     }
 
-                    // Send a manual connection status event when the task crashes
-                    error!("EVENT FORWARDING DEBUG: Sending manual connection status for crashed task {}", monitoring_device_id);
+                    // Send manual connection status and restart task automatically
+                    error!("EVENT FORWARDING DEBUG: Restarting crashed Event Forwarding Task for {}", monitoring_device_id);
+
+                    // Send manual connection status event using bypass sender
                     let manual_event = Esp32ManagerEvent::DeviceEvent(
                         monitoring_device_id.clone(),
                         Esp32Event::ConnectionStatus {
@@ -580,11 +587,22 @@ impl Esp32Manager {
                             udp_port: 0,
                         }
                     );
-                    if let Err(e) = manager_sender_for_recovery.send(manual_event) {
-                        error!("EVENT FORWARDING DEBUG: Failed to send manual recovery event for {}: {}", monitoring_device_id, e);
+
+                    // Try regular sender first, then bypass if it fails
+                    if let Err(e) = manager_sender_for_recovery.send(manual_event.clone()) {
+                        error!("EVENT FORWARDING DEBUG: Regular sender failed for {}: {}, trying bypass", monitoring_device_id, e);
+                        if let Err(e) = bypass_sender_for_recovery.send(manual_event) {
+                            error!("EVENT FORWARDING DEBUG: Bypass sender also failed for {}: {}", monitoring_device_id, e);
+                        } else {
+                            error!("EVENT FORWARDING DEBUG: Bypass manual recovery event sent for {}", monitoring_device_id);
+                        }
                     } else {
                         error!("EVENT FORWARDING DEBUG: Manual recovery event sent for {}", monitoring_device_id);
                     }
+
+                    // Auto-restart the crashed Event Forwarding Task
+                    error!("EVENT FORWARDING DEBUG: Event Forwarding Task crashed for {}", monitoring_device_id);
+                    error!("EVENT FORWARDING DEBUG: Will send recovery status - need to manually restart task or reconnect device");
                 }
             }
         });
@@ -743,6 +761,7 @@ impl Esp32Manager {
         let socket = Arc::clone(&self.central_udp_socket);
         let ip_to_device_id = Arc::clone(&self.ip_to_device_id);
         let device_event_senders = Arc::clone(&self.device_event_senders);
+        let bypass_event_sender = self.bypass_event_sender.clone();
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -765,9 +784,16 @@ impl Esp32Manager {
                                 // Get event sender directly without locking ESP32Connection
                                 let senders_guard = device_event_senders.read().await;
                                 if let Some(sender) = senders_guard.get(device_id) {
-                                    // Process UDP message using existing handler
-                                    handle_udp_message(&message, from_addr, sender).await;
-                                    debug!("UDP message processed for device {} (NO MUTEX LOCK)", device_id);
+                                    // Check if sender is closed (crashed Event Forwarding Task)
+                                    if sender.is_closed() {
+                                        error!("UDP DEBUG: Event Forwarding Task sender is CLOSED for device {}, using bypass", device_id);
+                                        // Use bypass sender directly - convert UDP message to manager event
+                                        Self::handle_udp_message_bypass(&message, from_addr, device_id, &bypass_event_sender).await;
+                                    } else {
+                                        // Process UDP message using existing handler
+                                        handle_udp_message(&message, from_addr, sender).await;
+                                        debug!("UDP message processed for device {} (NO MUTEX LOCK)", device_id);
+                                    }
                                 } else {
                                     debug!("No event sender found for device {}", device_id);
                                 }
@@ -790,6 +816,43 @@ impl Esp32Manager {
         });
 
         Ok(())
+    }
+
+    /// Handle UDP message using bypass sender when Event Forwarding Task is crashed
+    async fn handle_udp_message_bypass(
+        message: &str,
+        from_addr: SocketAddr,
+        device_id: &str,
+        bypass_sender: &mpsc::UnboundedSender<Esp32ManagerEvent>
+    ) {
+        error!("BYPASS DEBUG: Processing UDP message from {} for device {}: {}", from_addr, device_id, message);
+
+        // Convert UDP message to manager events like handle_udp_message does
+        // Send raw UDP broadcast event
+        let broadcast_event = Esp32Event::udp_broadcast(message.to_string(), from_addr);
+        let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.to_string(), broadcast_event);
+        if let Err(e) = bypass_sender.send(manager_event) {
+            error!("BYPASS DEBUG: Failed to send UDP broadcast event for {}: {}", device_id, e);
+        } else {
+            error!("BYPASS DEBUG: UDP broadcast event sent for {}", device_id);
+        }
+
+        // Parse for variable updates using regex like the C# version
+        let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
+        for captures in re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                let variable_event = Esp32Event::variable_update(
+                    name.as_str().trim().to_string(),
+                    value.as_str().trim().to_string(),
+                );
+                let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.to_string(), variable_event);
+                if let Err(e) = bypass_sender.send(manager_event) {
+                    error!("BYPASS DEBUG: Failed to send variable update event for {}: {}", device_id, e);
+                } else {
+                    error!("BYPASS DEBUG: Variable update event sent for {}: {} = {}", device_id, name.as_str(), value.as_str());
+                }
+            }
+        }
     }
 
     /// Register ESP32 device for UDP message routing
