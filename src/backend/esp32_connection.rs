@@ -82,18 +82,23 @@ impl Esp32Connection {
         info!("ESP32CONNECTION DEBUG: Event sender channel status - is_closed: {}", self.event_sender.is_closed());
 
         let is_closed = self.event_sender.is_closed();
-        match self.event_sender.send(event) {
-            Ok(()) => {
-                info!("ESP32CONNECTION DEBUG: Connection status event sent successfully for device {}", self.config.device_id);
-                info!("ESP32CONNECTION DEBUG: Event should now flow: ESP32Connection -> EventForwardingTask -> ESP32Manager -> DeviceStore -> WebSocket -> Frontend");
-                crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, true, None);
-            }
-            Err(e) => {
-                error!("ESP32CONNECTION DEBUG: FAILED to send connection status event for device {}: {}", self.config.device_id, e);
-                error!("ESP32CONNECTION DEBUG: Event sender is_closed: {}", self.event_sender.is_closed());
-                error!("ESP32CONNECTION DEBUG: This means the Event Forwarding Task receiver has been dropped!");
-                error!("ESP32CONNECTION DEBUG: This explains why frontend shows 'Disconnected' - event channel is closed!");
-                crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, false, Some(&e.to_string()));
+        if is_closed {
+            warn!("ESP32CONNECTION DEBUG: Event sender is closed for device {}, skipping connection status event (bypass mode active)", self.config.device_id);
+            warn!("ESP32CONNECTION DEBUG: This is expected when using bypass mode - events go directly through manager");
+        } else {
+            match self.event_sender.send(event) {
+                Ok(()) => {
+                    info!("ESP32CONNECTION DEBUG: Connection status event sent successfully for device {}", self.config.device_id);
+                    info!("ESP32CONNECTION DEBUG: Event should now flow: ESP32Connection -> EventForwardingTask -> ESP32Manager -> DeviceStore -> WebSocket -> Frontend");
+                    crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, true, None);
+                }
+                Err(e) => {
+                    error!("ESP32CONNECTION DEBUG: FAILED to send connection status event for device {}: {}", self.config.device_id, e);
+                    error!("ESP32CONNECTION DEBUG: Event sender is_closed: {}", self.event_sender.is_closed());
+                    error!("ESP32CONNECTION DEBUG: This means the Event Forwarding Task receiver has been dropped!");
+                    error!("ESP32CONNECTION DEBUG: This explains why frontend shows 'Disconnected' - event channel is closed!");
+                    crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, false, Some(&e.to_string()));
+                }
             }
         }
         

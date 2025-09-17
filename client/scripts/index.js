@@ -89,7 +89,7 @@
                         <span><strong>MAC:</strong> ${device.macAddress || 'UNDEFINED'}</span>
                     </div>
                     <div class="esp32-actions">
-                        <a href="/devices/${device.macAddress || device.deviceId}" class="action-button edit-button spa-link">Öffnen</a>
+                        <a href="/devices/${device.deviceId}" class="action-button edit-button spa-link">Öffnen</a>
                     </div>
                 </div>
             `;
@@ -252,7 +252,7 @@
         let actionButtons = '';
         if (canView) {
             const buttonText = canEdit ? 'Öffnen' : 'Anzeigen';
-            actionButtons += `<a href="/canvas/${canvas.id}" class="action-button edit-button spa-link">${buttonText}</a>`;
+            actionButtons += `<a href="/devices/${canvas.id}" class="action-button edit-button spa-link">${buttonText}</a>`;
         }
         if (canModerate) {
             const toggleText = canvas.is_moderated ? 'Demoderation' : 'Moderieren';

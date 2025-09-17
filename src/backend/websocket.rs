@@ -310,7 +310,7 @@ async fn handle_register_for_device(
         true  // Allow all authenticated users to access system events
     } else if device_id.starts_with("esp32-") {
         true  // Allow all authenticated users to access discovered ESP32 devices
-    } else if is_mac_address_format(&device_id) {
+    } else if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
         true  // Allow all authenticated users to access ESP32 devices identified by MAC address
     } else {
         db.user_has_device_permission(&device_id, user_id, "R").await
@@ -340,7 +340,7 @@ async fn handle_register_for_device(
     }
 
     // If this is an ESP32 device (MAC address format), try to add and connect it
-    if is_mac_address_format(&device_id) {
+    if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
         info!("Attempting to add and connect ESP32 device: {}", device_id);
 
         // First check if device is already added to manager
@@ -546,6 +546,45 @@ fn is_mac_address_format(device_id: &str) -> bool {
     }
 
     let parts: Vec<&str> = device_id.split(':').collect();
+    if parts.len() != 6 {
+        return false;
+    }
+
+    // Check each part is exactly 2 hex digits
+    for part in parts {
+        if part.len() != 2 {
+            return false;
+        }
+        if !part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Konvertiert MAC-Adresse von Doppelpunkt zu Bindestrich für Datenbankschlüssel
+/// Beispiel: "AA:BB:CC:DD:EE:FF" -> "AA-BB-CC-DD-EE-FF"
+fn mac_to_key(mac_address: &str) -> String {
+    mac_address.replace(':', "-")
+}
+
+/// Konvertiert Datenbankschlüssel zurück zu MAC-Adresse für Anzeige
+/// Beispiel: "AA-BB-CC-DD-EE-FF" -> "AA:BB:CC:DD:EE:FF"
+fn key_to_mac(key: &str) -> String {
+    key.replace('-', ":")
+}
+
+/// Check if a device_id is in MAC key format (XX-XX-XX-XX-XX-XX)
+/// Used to identify ESP32 devices that use MAC address with dashes as device_id
+fn is_mac_key_format(device_id: &str) -> bool {
+    // Check if it matches MAC key pattern: XX-XX-XX-XX-XX-XX
+    // where X is a hexadecimal digit
+    if device_id.len() != 17 {
+        return false;
+    }
+
+    let parts: Vec<&str> = device_id.split('-').collect();
     if parts.len() != 6 {
         return false;
     }

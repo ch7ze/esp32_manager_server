@@ -925,9 +925,9 @@ async fn list_devices_handler(
         Ok(device_list) => {
             device_list.into_iter().map(|(device, permission)| {
                 json!({
-                    "id": device.mac_address,
+                    "id": device.mac_address.clone(),
                     "name": device.name,
-                    "mac_address": device.mac_address,
+                    "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
                     "ip_address": device.ip_address,
                     "status": device.status,
                     "maintenance_mode": device.maintenance_mode,
@@ -985,11 +985,14 @@ async fn create_device_handler(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     }
 
+    // Convert MAC address to key format (replace : with -)
+    let mac_key = req.mac_address.trim().replace(':', "-");
+
     // Create new ESP32 device
     let device = database::ESP32Device::new(
         req.name.trim().to_string(),
         claims.user_id.clone(),
-        req.mac_address.trim().to_string(),
+        mac_key,
     );
 
     // Save device to database
@@ -1006,9 +1009,9 @@ async fn create_device_handler(
             "success": true,
             "message": "Canvas created successfully",
             "device": {
-                "id": device.mac_address,
+                "id": device.mac_address.clone(),
                 "name": device.name,
-                "mac_address": device.mac_address,
+                "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
                 "ip_address": device.ip_address,
                 "status": device.status,
                 "maintenance_mode": device.maintenance_mode,
@@ -1183,11 +1186,12 @@ async fn update_device_handler(
             "success": true,
             "message": "Canvas updated successfully",
             "canvas": {
-                "id": updated_canvas.mac_address,
+                "id": updated_canvas.mac_address.clone(),
                 "name": updated_canvas.name,
                 "maintenance_mode": updated_canvas.maintenance_mode,
                 "owner_id": updated_canvas.owner_id,
-                "created_at": updated_canvas.created_at.to_rfc3339()
+                "created_at": updated_canvas.created_at.to_rfc3339(),
+                "mac_address": updated_canvas.mac_address.replace('-', ":")  // Show with colons for display
             }
         }).to_string()))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)

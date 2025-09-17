@@ -81,7 +81,7 @@ impl Esp32Discovery {
                 
                 // Use MAC address as device ID instead of hostname
                 let device_id = mdns_device.txt_records.get("mac")
-                    .cloned()
+                    .map(|mac| mac.replace(':', "-"))  // Konvertiere MAC zu Key-Format mit Bindestrichen
                     .unwrap_or_else(|| format!("esp32-{}", mdns_device.hostname.replace(".local", "").trim_end_matches('.')));
                 let ip = mdns_device.ip_addresses.first().copied()
                     .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 100)));
@@ -140,9 +140,9 @@ impl Esp32Discovery {
                     };
                     
                     rt.block_on(async move {
-                        // Extract MAC address from mDNS data
+                        // Extract MAC address from mDNS data (original format with colons for display)
                         let mac_address = mdns_device.txt_records.get("mac").cloned();
-                        
+
                         // Broadcast discovery event to all WebSocket clients
                         let discovery_event = DeviceEvent::esp32_device_discovered(
                             device_id_spawn.clone(),
