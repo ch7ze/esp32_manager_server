@@ -39,7 +39,7 @@ pub struct WebSocketState {
 // WEBSOCKET UPGRADE HANDLER
 // ============================================================================
 
-/// WebSocket upgrade handler with JWT authentication
+/// WebSocket upgrade handler with optional JWT authentication
 /// Route: GET /channel/
 pub async fn websocket_handler(
     ws: WebSocketUpgrade,
@@ -52,29 +52,34 @@ pub async fn websocket_handler(
     // Check if this is a proper WebSocket upgrade request
     info!("Headers: Connection upgrade request");
     
-    // JWT Token authentication for WebSocket
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => {
-            warn!("WebSocket: No auth token found");
-            return Err((StatusCode::UNAUTHORIZED, "Authentication required".to_string()));
-        }
-    };
+    // JWT Token authentication for WebSocket (optional)
+    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
     
-    // Validate JWT token
-    let claims = match crate::auth::validate_jwt(token) {
-        Ok(claims) => {
-            info!("WebSocket authenticated user: {} ({})", claims.display_name, claims.email);
-            claims
-        },
-        Err(e) => {
-            warn!("WebSocket: Invalid JWT token: {:?}", e);
-            return Err((StatusCode::UNAUTHORIZED, "Invalid authentication token".to_string()));
+    // Validate JWT token (optional)
+    let claims = match token {
+        Some(token_value) => {
+            match crate::auth::validate_jwt(token_value) {
+                Ok(claims) => {
+                    info!("WebSocket authenticated user: {} ({})", claims.display_name, claims.email);
+                    Some(claims)
+                },
+                Err(e) => {
+                    warn!("WebSocket: Invalid JWT token: {:?}, continuing as guest", e);
+                    None
+                }
+            }
+        }
+        None => {
+            info!("WebSocket: No auth token found, continuing as guest");
+            None
         }
     };
     
     // Generate unique client ID for this connection
-    let client_id = generate_client_id(&claims.email);
+    let client_id = match &claims {
+        Some(c) => generate_client_id(&c.email),
+        None => generate_client_id("guest"),
+    };
     
     // Upgrade to WebSocket connection
     let response = ws.on_upgrade(move |socket| {
@@ -92,15 +97,25 @@ pub async fn websocket_handler(
 async fn handle_websocket_connection(
     socket: WebSocket,
     state: WebSocketState,
-    jwt_claims: Claims,
+    jwt_claims: Option<Claims>,
     client_id: String,
     addr: SocketAddr,
 ) {
+    let user_info = match &jwt_claims {
+        Some(claims) => format!("{} ({})", claims.email, claims.display_name),
+        None => "guest user".to_string(),
+    };
     info!("WebSocket connection established for client {} (user: {}, addr: {})", 
-          client_id, jwt_claims.email, addr);
+          client_id, user_info, addr);
     
-    let user_id = jwt_claims.user_id.clone();
-    let display_name = jwt_claims.display_name.clone();
+    let user_id = match &jwt_claims {
+        Some(claims) => claims.user_id.clone(),
+        None => "guest".to_string(),
+    };
+    let display_name = match &jwt_claims {
+        Some(claims) => claims.display_name.clone(),
+        None => "Guest User".to_string(),
+    };
     let (mut sender, mut receiver) = socket.split();
     
     // Create channel for sending messages to this client

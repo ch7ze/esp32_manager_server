@@ -31,11 +31,25 @@ async function initializeAuth() {
             currentUser = await response.json();
             // User info is now handled by shared navigation in app.js
         } else {
-            window.location.href = '/login.html';
+            // Authentication is optional, continue as guest user
+            currentUser = {
+                success: true,
+                authenticated: false,
+                user_id: "guest",
+                display_name: "Guest User",
+                canvas_permissions: {}
+            };
         }
     } catch (error) {
-        console.error('Auth initialization failed:', error);
-        window.location.href = '/login.html';
+        console.error('Auth initialization failed, continuing as guest:', error);
+        // Authentication is optional, continue as guest user
+        currentUser = {
+            success: true,
+            authenticated: false,
+            user_id: "guest",
+            display_name: "Guest User",
+            canvas_permissions: {}
+        };
     }
 }
 
@@ -645,8 +659,8 @@ function refreshDevices() {
 
 function logout() {
     fetch('/api/logout', { method: 'POST', credentials: 'include' })
-        .then(() => window.location.href = '/login.html')
-        .catch(() => window.location.href = '/login.html');
+        .then(() => window.location.href = '/')
+        .catch(() => window.location.href = '/');
 }
 
 // Handle window resize for responsive layout

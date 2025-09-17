@@ -564,6 +564,52 @@ impl DatabaseManager {
         Ok(device_list)
     }
 
+    pub async fn list_all_devices(&self) -> Result<Vec<ESP32Device>, Box<dyn std::error::Error>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT *
+            FROM esp32_devices
+            ORDER BY created_at DESC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut device_list = Vec::new();
+        for row in rows {
+            let created_at_str: String = row.get("created_at");
+            let created_at = DateTime::parse_from_rfc3339(&created_at_str)?.with_timezone(&Utc);
+            let last_seen_str: String = row.get("last_seen");
+            let last_seen = DateTime::parse_from_rfc3339(&last_seen_str)?.with_timezone(&Utc);
+            
+            let status_str: String = row.get("status");
+            let status = match status_str.as_str() {
+                "Online" => DeviceStatus::Online,
+                "Offline" => DeviceStatus::Offline,
+                "Error" => DeviceStatus::Error,
+                "Updating" => DeviceStatus::Updating,
+                "Maintenance" => DeviceStatus::Maintenance,
+                _ => DeviceStatus::Offline,
+            };
+            
+            let device = ESP32Device {
+                mac_address: row.get("mac_address"),
+                name: row.get("name"),
+                owner_id: row.get("owner_id"),
+                ip_address: row.get("ip_address"),
+                status,
+                maintenance_mode: row.get("maintenance_mode"),
+                firmware_version: row.get("firmware_version"),
+                last_seen,
+                created_at,
+            };
+            
+            device_list.push(device);
+        }
+
+        Ok(device_list)
+    }
+
     pub async fn update_esp32_device(&self, device_id: &str, name: Option<&str>, maintenance_mode: Option<bool>) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(name) = name {
             sqlx::query("UPDATE esp32_devices SET name = ? WHERE mac_address = ?")

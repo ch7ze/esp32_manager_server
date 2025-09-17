@@ -617,12 +617,12 @@
             });
             if (response.ok) {
                 const data = await response.json();
-                return data.success ? data.user_id : null;
+                return data.success ? data.user_id : 'guest';
             }
         } catch (error) {
             console.error('Error getting current user ID:', error);
         }
-        return null;
+        return 'guest'; // Default to guest user if no authentication
     }
 
     // Zeigt die Benutzerliste an (ohne aktuellen Benutzer)

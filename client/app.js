@@ -6,7 +6,7 @@ const pages = {
         defaultPath: 'index.html',
         scripts: ['index.js'],
         styles: [],
-        requiresAuth: true
+        requiresAuth: false
     },
     'login': {
         title: 'Login',
@@ -30,7 +30,7 @@ const pages = {
         defaultPath: 'hallo.html',
         scripts: [],
         styles: [],
-        requiresAuth: true
+        requiresAuth: false
     },
     'about': {
         title: 'About',
@@ -38,7 +38,7 @@ const pages = {
         defaultPath: 'about.html',
         scripts: [],
         styles: [],
-        requiresAuth: true
+        requiresAuth: false
     },
     'drawing_board': {
         title: 'Drawing Board',
@@ -46,7 +46,7 @@ const pages = {
         defaultPath: 'drawing_board.html',
         scripts: ['drawing_board.js'],
         styles: ['drawing_board.css'],
-        requiresAuth: true
+        requiresAuth: false
     },
     'drawer_page': {
         title: 'Drawer',
@@ -54,7 +54,7 @@ const pages = {
         defaultPath: 'drawer_page.html',
         scripts: ['websocket-client.js', 'canvas-websocket-bridge.js', 'event-system.js', 'color-state.js', 'drawer-state.js', 'drawer_page.js', 'drawer/event-wrapper.js'],
         styles: ['drawer_page.css'],
-        requiresAuth: true
+        requiresAuth: false
     },
     'debug': {
         title: 'Debug',
@@ -70,7 +70,7 @@ const pages = {
         defaultPath: '/canvas/:id',
         scripts: ['websocket-client.js', 'canvas-websocket-bridge.js', 'event-system.js', 'color-state.js', 'drawer-state.js', 'drawer_page.js', 'drawer/event-wrapper.js'],
         styles: ['drawer_page.css'],
-        requiresAuth: true
+        requiresAuth: false
     },
     'device_detail': {
         title: 'ESP32 Device',
@@ -78,7 +78,7 @@ const pages = {
         defaultPath: '/devices/:id',
         scripts: ['esp32_control.js'],
         styles: [],
-        requiresAuth: true
+        requiresAuth: false
     },
     'esp32_control': {
         title: 'ESP32 Control',
@@ -86,7 +86,7 @@ const pages = {
         defaultPath: '/devices/:id',
         scripts: ['esp32_control.js'],
         styles: [],
-        requiresAuth: true
+        requiresAuth: false
     },
     'docs': {
         title: 'Dokumentation',
@@ -94,7 +94,7 @@ const pages = {
         defaultPath: 'docs.html',
         scripts: ['docs.js'],
         styles: [],
-        requiresAuth: true
+        requiresAuth: false
     },
     'admin': {
         title: 'Administrator',
@@ -102,7 +102,7 @@ const pages = {
         defaultPath: 'admin.html',
         scripts: ['admin.js'],
         styles: [],
-        requiresAuth: true
+        requiresAuth: false
     }
 };
 
@@ -254,17 +254,9 @@ async function renderPage() {
     // Check authentication requirements
     const authenticated = await isAuthenticated();
     
-    if (finalPageInfo.requiresAuth && !authenticated) {
-        // Redirect to login page if authentication is required but user is not authenticated
-        navigateTo('/login');
-        return;
-    }
-    
-    // If user is authenticated but trying to access login/register, redirect to home
-    if (!finalPageInfo.requiresAuth && authenticated && (pageName === 'login' || pageName === 'register')) {
-        navigateTo('/');
-        return;
-    }
+    // Since all pages are now accessible without authentication,
+    // we no longer redirect to login. Users can access all functionality
+    // as guest users.
     
     // Set document title
     document.title = finalPageInfo.title;

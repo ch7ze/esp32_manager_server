@@ -779,41 +779,65 @@ async fn logout_handler() -> Response<Body> {
 }
 
 async fn validate_token_handler(cookie_jar: CookieJar) -> StatusCode {
-    // Try to get JWT from cookie
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return StatusCode::UNAUTHORIZED,
-    };
-
-    // Validate JWT
-    match validate_jwt(token) {
-        Ok(_) => StatusCode::OK,
-        Err(_) => StatusCode::UNAUTHORIZED,
+    // Always return OK since authentication is now optional
+    // The frontend can continue to use this endpoint to check authentication
+    // but it will always succeed allowing access without login
+    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+    
+    match token {
+        Some(token_value) => {
+            // If there is a token, validate it
+            match validate_jwt(token_value) {
+                Ok(_) => StatusCode::OK,
+                Err(_) => StatusCode::OK, // Even invalid tokens are OK now (guest access)
+            }
+        }
+        None => StatusCode::OK, // No token is also OK (guest access)
     }
 }
 
-// GET /api/user-info - Returns user information from JWT
+// GET /api/user-info - Returns user information from JWT (optional auth)
 // Website feature: Display name display in frontend
 async fn user_info_handler(cookie_jar: CookieJar) -> Result<Json<Value>, StatusCode> {
-    // Extract JWT token from cookie
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
-    };
+    // Extract JWT token from cookie (optional)
+    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
 
-    // Validate JWT and extract claims
-    let claims = match validate_jwt(token) {
-        Ok(claims) => claims,
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    // Return user information (A 5.3: Add canvas permissions)
-    Ok(Json(json!({
-        "success": true,
-        "user_id": claims.user_id,
-        "display_name": claims.display_name,
-        "canvas_permissions": claims.device_permissions
-    })))
+    match token {
+        Some(token_value) => {
+            // If token exists, validate and return user info
+            match validate_jwt(token_value) {
+                Ok(claims) => {
+                    Ok(Json(json!({
+                        "success": true,
+                        "authenticated": true,
+                        "user_id": claims.user_id,
+                        "display_name": claims.display_name,
+                        "canvas_permissions": claims.device_permissions
+                    })))
+                }
+                Err(_) => {
+                    // Invalid token, return guest user
+                    Ok(Json(json!({
+                        "success": true,
+                        "authenticated": false,
+                        "user_id": "guest",
+                        "display_name": "Guest User",
+                        "canvas_permissions": {}
+                    })))
+                }
+            }
+        }
+        None => {
+            // No token, return guest user
+            Ok(Json(json!({
+                "success": true,
+                "authenticated": false,
+                "user_id": "guest",
+                "display_name": "Guest User",
+                "canvas_permissions": {}
+            })))
+        }
+    }
 }
 
 // POST /api/profile/display-name - Change display name
@@ -904,44 +928,77 @@ async fn update_display_name_handler(
 // A 5.4: CANVAS MANAGEMENT HANDLERS - API for canvas management with permissions
 // ============================================================================
 
-// GET /api/devices - List all devices of logged-in user
+// GET /api/devices - List all devices (optional auth)
 async fn list_devices_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
 ) -> Result<Json<Value>, StatusCode> {
-    // Validate JWT token
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    let claims = match validate_jwt(token) {
-        Ok(claims) => claims,
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    // Load user's devices from database
-    let device_list = match app_state.db.list_user_devices(&claims.user_id).await {
-        Ok(device_list) => {
-            device_list.into_iter().map(|(device, permission)| {
-                json!({
-                    "id": device.mac_address.clone(),
-                    "name": device.name,
-                    "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
-                    "ip_address": device.ip_address,
-                    "status": device.status,
-                    "maintenance_mode": device.maintenance_mode,
-                    "firmware_version": device.firmware_version,
-                    "owner_id": device.owner_id,
-                    "last_seen": device.last_seen.to_rfc3339(),
-                    "created_at": device.created_at.to_rfc3339(),
-                    "your_permission": permission
-                })
-            }).collect::<Vec<Value>>()
+    // Validate JWT token (optional)
+    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+    
+    let user_id = match token {
+        Some(token_value) => {
+            match validate_jwt(token_value) {
+                Ok(claims) => Some(claims.user_id),
+                Err(_) => None,
+            }
         }
-        Err(e) => {
-            tracing::error!("Database error during device list: {:?}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        None => None,
+    };
+
+    // Load devices from database
+    let device_list = match &user_id {
+        Some(uid) => {
+            // If authenticated, show user's devices with permissions
+            match app_state.db.list_user_devices(uid).await {
+                Ok(device_list) => {
+                    device_list.into_iter().map(|(device, permission)| {
+                        json!({
+                            "id": device.mac_address.clone(),
+                            "name": device.name,
+                            "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
+                            "ip_address": device.ip_address,
+                            "status": device.status,
+                            "maintenance_mode": device.maintenance_mode,
+                            "firmware_version": device.firmware_version,
+                            "owner_id": device.owner_id,
+                            "last_seen": device.last_seen.to_rfc3339(),
+                            "created_at": device.created_at.to_rfc3339(),
+                            "your_permission": permission
+                        })
+                    }).collect::<Vec<Value>>()
+                }
+                Err(e) => {
+                    tracing::error!("Database error during device list: {:?}", e);
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
+        }
+        None => {
+            // If not authenticated, show all devices with guest permission
+            match app_state.db.list_all_devices().await {
+                Ok(device_list) => {
+                    device_list.into_iter().map(|device| {
+                        json!({
+                            "id": device.mac_address.clone(),
+                            "name": device.name,
+                            "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
+                            "ip_address": device.ip_address,
+                            "status": device.status,
+                            "maintenance_mode": device.maintenance_mode,
+                            "firmware_version": device.firmware_version,
+                            "owner_id": device.owner_id,
+                            "last_seen": device.last_seen.to_rfc3339(),
+                            "created_at": device.created_at.to_rfc3339(),
+                            "your_permission": "GUEST"
+                        })
+                    }).collect::<Vec<Value>>()
+                }
+                Err(e) => {
+                    tracing::error!("Database error during device list: {:?}", e);
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
         }
     };
 
@@ -951,21 +1008,23 @@ async fn list_devices_handler(
     })))
 }
 
-// POST /api/devices - Create new ESP32 device
+// POST /api/devices - Create new ESP32 device (optional auth)
 async fn create_device_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
     Json(req): Json<CreateDeviceRequest>,
 ) -> Result<Response<Body>, StatusCode> {
-    // Validate JWT token
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    let claims = match validate_jwt(token) {
-        Ok(claims) => claims,
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
+    // Validate JWT token (optional)
+    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+    
+    let owner_id = match token {
+        Some(token_value) => {
+            match validate_jwt(token_value) {
+                Ok(claims) => claims.user_id,
+                Err(_) => "guest".to_string(),
+            }
+        }
+        None => "guest".to_string(),
     };
 
     // Validate device name and MAC address
@@ -991,7 +1050,7 @@ async fn create_device_handler(
     // Create new ESP32 device
     let device = database::ESP32Device::new(
         req.name.trim().to_string(),
-        claims.user_id.clone(),
+        owner_id.clone(),
         mac_key,
     );
 
@@ -1001,7 +1060,8 @@ async fn create_device_handler(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    tracing::info!("ESP32 device created: {} by user {}", device.name, claims.email);
+    let user_info = if owner_id == "guest" { "guest user".to_string() } else { owner_id.clone() };
+    tracing::info!("ESP32 device created: {} by user {}", device.name, user_info);
 
     Response::builder()
         .header("content-type", "application/json")
@@ -1025,21 +1085,23 @@ async fn create_device_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-// GET /api/devices/:id - Details of an ESP32 device
+// GET /api/devices/:id - Details of an ESP32 device (optional auth)
 async fn get_device_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
     Path(canvas_id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    // JWT Token validieren
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    let claims = match validate_jwt(token) {
-        Ok(claims) => claims,
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
+    // JWT Token validieren (optional)
+    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+    
+    let user_id = match token {
+        Some(token_value) => {
+            match validate_jwt(token_value) {
+                Ok(claims) => Some(claims.user_id),
+                Err(_) => None,
+            }
+        }
+        None => None,
     };
 
     // Canvas aus Datenbank laden
@@ -1052,34 +1114,34 @@ async fn get_device_handler(
         }
     };
 
-    // Berechtigung prüfen
-    let has_read_permission = match app_state.db.user_has_device_permission(&canvas_id, &claims.user_id, "R").await {
-        Ok(has_permission) => has_permission,
-        Err(e) => {
-            tracing::error!("Database error checking permissions: {:?}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    // User-Berechtigung laden (falls authenticated)
+    let user_permission = match &user_id {
+        Some(uid) => {
+            match app_state.db.get_user_device_permission(&canvas_id, uid).await {
+                Ok(Some(permission)) => permission,
+                Ok(None) => "NONE".to_string(),
+                Err(e) => {
+                    tracing::error!("Database error loading user permission: {:?}", e);
+                    "NONE".to_string()
+                }
+            }
         }
+        None => "GUEST".to_string(), // Guest user has guest permission
     };
 
-    if !has_read_permission {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    // User-Berechtigung laden
-    let user_permission = match app_state.db.get_user_device_permission(&canvas_id, &claims.user_id).await {
-        Ok(Some(permission)) => permission,
-        Ok(None) => "NONE".to_string(),
-        Err(e) => {
-            tracing::error!("Database error loading user permission: {:?}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    // Load all permissions (only for moderators or guest gets all)
+    let all_permissions = match &user_id {
+        Some(uid) => {
+            if app_state.db.user_has_device_permission(&canvas_id, uid, "M").await.unwrap_or(false) {
+                Some(app_state.db.get_device_permissions(&canvas_id).await.unwrap_or_default())
+            } else {
+                None
+            }
         }
-    };
-
-    // Load all permissions (only for moderators)
-    let all_permissions = if app_state.db.user_has_device_permission(&canvas_id, &claims.user_id, "M").await.unwrap_or(false) {
-        Some(app_state.db.get_device_permissions(&canvas_id).await.unwrap_or_default())
-    } else {
-        None
+        None => {
+            // Guest users can see all permissions for transparency
+            Some(app_state.db.get_device_permissions(&canvas_id).await.unwrap_or_default())
+        }
     };
 
     Ok(Json(json!({
@@ -1096,22 +1158,24 @@ async fn get_device_handler(
     })))
 }
 
-// POST /api/devices/:id - Device-Eigenschaften ändern (Name, Wartungsmodus)
+// POST /api/devices/:id - Device-Eigenschaften ändern (Name, Wartungsmodus) (optional auth)
 async fn update_device_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
     Path(canvas_id): Path<String>,
     Json(req): Json<UpdateDeviceRequest>,
 ) -> Result<Response<Body>, StatusCode> {
-    // JWT Token validieren
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    let claims = match validate_jwt(token) {
-        Ok(claims) => claims,
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
+    // JWT Token validieren (optional)
+    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+    
+    let user_email = match token {
+        Some(token_value) => {
+            match validate_jwt(token_value) {
+                Ok(claims) => Some(claims.email),
+                Err(_) => None,
+            }
+        }
+        None => None,
     };
 
     // Canvas aus Datenbank laden
@@ -1124,28 +1188,8 @@ async fn update_device_handler(
         }
     };
 
-    // Berechtigung prüfen
-    let needs_moderator = req.maintenance_mode.is_some();
-    let _required_permission = if needs_moderator { "M" } else { "O" };
-    
-    // Owner can always moderate, moderators can also moderate
-    let has_permission = match app_state.db.user_has_device_permission(&canvas_id, &claims.user_id, "M").await {
-        Ok(has_perm) => has_perm,
-        Err(e) => {
-            tracing::error!("Database error checking M permission: {:?}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    } || match app_state.db.user_has_device_permission(&canvas_id, &claims.user_id, "O").await {
-        Ok(has_permission) => has_permission,
-        Err(e) => {
-            tracing::error!("Database error checking permissions: {:?}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
-    if !has_permission {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    // Guest users have full permissions for device management
+    // (Authentication is optional, so no permission checks needed)
 
     // Validate name if provided
     if let Some(name) = &req.name {
@@ -1178,7 +1222,8 @@ async fn update_device_handler(
         }
     };
 
-    tracing::info!("Canvas updated: {} by user {}", updated_canvas.name, claims.email);
+    let user_info = user_email.unwrap_or_else(|| "guest".to_string());
+    tracing::info!("Canvas updated: {} by user {}", updated_canvas.name, user_info);
 
     Response::builder()
         .header("content-type", "application/json")
@@ -1204,15 +1249,17 @@ async fn update_esp32_device_permissions_handler(
     Path(canvas_id): Path<String>,
     Json(req): Json<UpdatePermissionRequest>,
 ) -> Result<Response<Body>, StatusCode> {
-    // Validate JWT token
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    let claims = match validate_jwt(token) {
-        Ok(claims) => claims,
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
+    // Validate JWT token (optional)
+    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+    
+    let user_id = match token {
+        Some(token_value) => {
+            match validate_jwt(token_value) {
+                Ok(claims) => Some(claims.user_id),
+                Err(_) => None,
+            }
+        }
+        None => None,
     };
 
     // Permission validieren
@@ -1230,21 +1277,27 @@ async fn update_esp32_device_permissions_handler(
         }
     };
 
-    // Check if user can grant permissions
-    let user_permission = match app_state.db.get_user_device_permission(&canvas_id, &claims.user_id).await {
-        Ok(Some(permission)) => permission,
-        Ok(None) => return Err(StatusCode::FORBIDDEN),
-        Err(e) => {
-            tracing::error!("Database error checking user permission: {:?}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+    // For guest users, allow all permission operations
+    let can_grant = match &user_id {
+        Some(uid) => {
+            // Check if user can grant permissions
+            let user_permission = match app_state.db.get_user_device_permission(&canvas_id, uid).await {
+                Ok(Some(permission)) => permission,
+                Ok(None) => return Err(StatusCode::FORBIDDEN),
+                Err(e) => {
+                    tracing::error!("Database error checking user permission: {:?}", e);
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            };
 
-    // Check permission to grant
-    let can_grant = match user_permission.as_str() {
-        "O" => true, // Owner can grant all permissions
-        "M" => ["R", "W", "V"].contains(&req.permission.as_str()), // Moderator can grant up to V
-        _ => false,
+            // Check permission to grant
+            match user_permission.as_str() {
+                "O" => true, // Owner can grant all permissions
+                "M" => ["R", "W", "V"].contains(&req.permission.as_str()), // Moderator can grant up to V
+                _ => false,
+            }
+        }
+        None => true, // Guest users can grant all permissions
     };
 
     if !can_grant && req.permission != "REMOVE" {
@@ -1272,8 +1325,9 @@ async fn update_esp32_device_permissions_handler(
         }
     };
 
+    let user_info = user_id.unwrap_or_else(|| "guest".to_string());
     tracing::info!("Canvas permission updated: {} {} for canvas {} by {}", 
-                   req.user_id, req.permission, canvas_id, claims.email);
+                   req.user_id, req.permission, canvas_id, user_info);
 
     Response::builder()
         .header("content-type", "application/json")
@@ -1285,23 +1339,17 @@ async fn update_esp32_device_permissions_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-// POST /api/canvas-permissions/:id - Vereinfachter Permission Handler
+// POST /api/canvas-permissions/:id - Vereinfachter Permission Handler (optional auth)
 async fn simple_permissions_handler(
     State(app_state): State<AppState>,
     Path(canvas_id): Path<String>,
     cookie_jar: CookieJar,
     Json(req): Json<UpdatePermissionRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    // JWT Token validieren
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    let _claims = match validate_jwt(token) {
-        Ok(claims) => claims,
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
-    };
+    // JWT Token validieren (optional)
+    let _token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+    
+    // Authentication is optional, so no validation needed
 
     // Validate permission
     if req.permission != "REMOVE" && !["R", "W", "V", "M", "O"].contains(&req.permission.as_str()) {
@@ -1382,22 +1430,16 @@ async fn delete_device_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-// GET /api/users/search - Search for users for permission management
+// GET /api/users/search - Search for users for permission management (optional auth)
 async fn search_users_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, StatusCode> {
-    // Validate JWT token
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
-    };
-
-    let _claims = match validate_jwt(token) {
-        Ok(claims) => claims,
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
-    };
+    // Validate JWT token (optional)
+    let _token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+    
+    // Authentication is optional, so no validation needed
 
     // Suchterm aus Query-Parameter extrahieren
     let query = params.get("q").cloned().unwrap_or_default();
