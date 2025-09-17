@@ -684,21 +684,6 @@ impl Esp32Manager {
     }
     
     /// Handle ESP32 event by converting it to DeviceEvent and storing it
-    /// Convert hyphen-formatted device ID back to colon format for WebSocket broadcasting
-    fn convert_device_id_for_broadcast(device_id: &str) -> String {
-        // Check if it's a hyphen-formatted MAC address (XX-XX-XX-XX-XX-XX)
-        if device_id.len() == 17 {
-            let parts: Vec<&str> = device_id.split('-').collect();
-            if parts.len() == 6 && parts.iter().all(|part| part.len() == 2 && part.chars().all(|c| c.is_ascii_hexdigit())) {
-                // Convert hyphen format back to colon format for WebSocket broadcasting
-                // because clients were originally registered with colon format
-                return device_id.replace('-', ":");
-            }
-        }
-        // Return original device_id if not a hyphen-formatted MAC
-        device_id.to_string()
-    }
-
     async fn handle_esp32_event(
         device_store: &DeviceEventStore,
         device_id: &str,
@@ -706,26 +691,25 @@ impl Esp32Manager {
     ) -> Result<(), String> {
         debug!("Processing ESP32 event for device {}: {:?}", device_id, esp32_event);
 
-        // Convert hyphen device ID to colon format for WebSocket broadcasting
-        let broadcast_device_id = Self::convert_device_id_for_broadcast(device_id);
-        debug!("BROADCAST DEBUG: Converting device ID '{}' to '{}' for WebSocket broadcasting", device_id, broadcast_device_id);
+        // Use device_id as-is (with hyphens for MAC addresses) for consistent key usage
+        debug!("Using device ID '{}' for WebSocket broadcasting", device_id);
 
-        // Convert ESP32 event to DeviceEvent using broadcast device ID
+        // Convert ESP32 event to DeviceEvent using device_id
         let device_event = match esp32_event {
             Esp32Event::VariableUpdate { name, value } => {
-                DeviceEvent::esp32_variable_update(broadcast_device_id.clone(), name, value)
+                DeviceEvent::esp32_variable_update(device_id.to_string(), name, value)
             }
             Esp32Event::StartOptions { options } => {
-                DeviceEvent::esp32_start_options(broadcast_device_id.clone(), options)
+                DeviceEvent::esp32_start_options(device_id.to_string(), options)
             }
             Esp32Event::ChangeableVariables { variables } => {
                 let vars_json: Vec<serde_json::Value> = variables.into_iter().map(|v| {
                     serde_json::json!({ "name": v.name, "value": v.value })
                 }).collect();
-                DeviceEvent::esp32_changeable_variables(broadcast_device_id.clone(), vars_json)
+                DeviceEvent::esp32_changeable_variables(device_id.to_string(), vars_json)
             }
             Esp32Event::UdpBroadcast { message, from_ip, from_port } => {
-                DeviceEvent::esp32_udp_broadcast(broadcast_device_id.clone(), message, from_ip, from_port)
+                DeviceEvent::esp32_udp_broadcast(device_id.to_string(), message, from_ip, from_port)
             }
             Esp32Event::ConnectionStatus { connected, device_ip, tcp_port, udp_port } => {
                 info!("ESP32 EVENT PROCESSING DEBUG: Processing connection status event for device {}: connected={}, ip={}, tcp_port={}, udp_port={}",
@@ -735,17 +719,17 @@ impl Esp32Manager {
                 } else {
                     info!("ESP32 EVENT PROCESSING DEBUG: Device {} is now DISCONNECTED - this should update frontend to show 'Disconnected'", device_id);
                 }
-                DeviceEvent::esp32_connection_status(broadcast_device_id.clone(), connected, device_ip, tcp_port, udp_port)
+                DeviceEvent::esp32_connection_status(device_id.to_string(), connected, device_ip, tcp_port, udp_port)
             }
             Esp32Event::DeviceInfo { device_id: _, device_name, firmware_version, uptime } => {
-                DeviceEvent::esp32_device_info(broadcast_device_id.clone(), device_name, firmware_version, uptime)
+                DeviceEvent::esp32_device_info(device_id.to_string(), device_name, firmware_version, uptime)
             }
         };
         
         // Add event to device store (this will broadcast to all connected WebSocket clients)
-        // Use the converted device ID for WebSocket broadcasting
+        // Use device_id consistently (with hyphens for MAC addresses)
         device_store.add_event(
-            broadcast_device_id,
+            device_id.to_string(),
             device_event,
             "ESP32_SYSTEM".to_string(), // System user for ESP32 events
             "ESP32_INTERNAL".to_string(), // Internal client ID
@@ -841,14 +825,13 @@ impl Esp32Manager {
     ) {
         error!("BYPASS DEBUG: Processing UDP message from {} for device {}: {}", from_addr, device_id, message);
 
-        // Convert device ID for WebSocket broadcasting (hyphens to colons)
-        let broadcast_device_id = Self::convert_device_id_for_broadcast(device_id);
-        error!("BYPASS DEBUG: Using device ID for broadcast: {} (original: {})", broadcast_device_id, device_id);
+        // Use device_id consistently (with hyphens for MAC addresses)
+        error!("BYPASS DEBUG: Using device ID for broadcast: {}", device_id);
 
         // Convert UDP message to manager events like handle_udp_message does
         // Send raw UDP broadcast event
         let broadcast_event = Esp32Event::udp_broadcast(message.to_string(), from_addr);
-        let manager_event = Esp32ManagerEvent::DeviceEvent(broadcast_device_id.clone(), broadcast_event);
+        let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.to_string(), broadcast_event);
         if let Err(e) = bypass_sender.send(manager_event) {
             error!("BYPASS DEBUG: Failed to send UDP broadcast event for {}: {}", device_id, e);
         } else {
@@ -863,7 +846,7 @@ impl Esp32Manager {
                     name.as_str().trim().to_string(),
                     value.as_str().trim().to_string(),
                 );
-                let manager_event = Esp32ManagerEvent::DeviceEvent(broadcast_device_id.clone(), variable_event);
+                let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.to_string(), variable_event);
                 if let Err(e) = bypass_sender.send(manager_event) {
                     error!("BYPASS DEBUG: Failed to send variable update event for {}: {}", device_id, e);
                 } else {
