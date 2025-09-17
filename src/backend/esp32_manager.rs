@@ -242,7 +242,7 @@ impl Esp32Manager {
                 configs.get(device_id).cloned()
             };
 
-            if let Some(config) = config {
+            if let Some(ref config) = config {
                 crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("REGISTERING_UDP_ROUTING: {} -> {}", device_id, config.ip_address));
                 self.register_esp32_for_udp(device_id.to_string(), config.ip_address).await;
             }
@@ -250,6 +250,30 @@ impl Esp32Manager {
             info!("DEVICE CONNECTION DEBUG: Successfully connected to ESP32 device: {}", device_id);
             info!("DEVICE CONNECTION DEBUG: Connection status events should now be sent to frontend for device: {}", device_id);
             crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CONNECT_DEVICE_SUCCESS: {}", device_id));
+
+            // WORKAROUND: Send connection status event directly through manager
+            // This ensures frontend gets notified even if ESP32Connection event sender is closed
+            if let Some(config) = config {
+                let device_event = crate::events::DeviceEvent::esp32_connection_status(
+                    device_id.to_string(),
+                    true, // connected
+                    config.ip_address.to_string(),
+                    config.tcp_port,
+                    config.udp_port,
+                );
+
+                if let Err(e) = self.device_store.add_event(
+                    device_id.to_string(),
+                    device_event,
+                    "ESP32_MANAGER".to_string(),
+                    "SYSTEM_CONNECTION".to_string(),
+                ).await {
+                    error!("ESP32MANAGER DEBUG: Failed to send manual connection status event for device {}: {}", device_id, e);
+                } else {
+                    info!("ESP32MANAGER DEBUG: Manual connection status event sent successfully for device {}", device_id);
+                }
+            }
+
             Ok(())
         } else {
             crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("DEVICE_NOT_FOUND: {}", device_id));

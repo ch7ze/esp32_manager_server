@@ -16,7 +16,8 @@
       "Bash(dir)",
       "Bash(dir:*)",
       "Bash(node:*)",
-      "Bash(del debug_events.log)"
+      "Bash(del debug_events.log)",
+      "Bash(start http://localhost:3000)"
     ],
     "deny": [],
     "ask": []

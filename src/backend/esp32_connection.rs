@@ -80,11 +80,14 @@ impl Esp32Connection {
         );
         info!("ESP32CONNECTION DEBUG: About to send connection status event (connected=true) for device {}", self.config.device_id);
         info!("ESP32CONNECTION DEBUG: Event sender channel status - is_closed: {}", self.event_sender.is_closed());
+        crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("ABOUT_TO_SEND_CONNECTION_STATUS: {} - sender_closed: {}", self.config.device_id, self.event_sender.is_closed()));
 
         let is_closed = self.event_sender.is_closed();
         if is_closed {
-            warn!("ESP32CONNECTION DEBUG: Event sender is closed for device {}, skipping connection status event (bypass mode active)", self.config.device_id);
-            warn!("ESP32CONNECTION DEBUG: This is expected when using bypass mode - events go directly through manager");
+            warn!("ESP32CONNECTION DEBUG: Event sender is closed for device {}, connection status event will be skipped", self.config.device_id);
+            warn!("ESP32CONNECTION DEBUG: This explains why frontend shows 'Disconnected' - event channel is closed!");
+            warn!("ESP32CONNECTION DEBUG: The ESP32 is actually connected via TCP, but status events cannot be sent to frontend");
+            crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, false, Some("Event sender is closed"));
         } else {
             match self.event_sender.send(event) {
                 Ok(()) => {
