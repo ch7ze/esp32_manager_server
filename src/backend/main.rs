@@ -1517,63 +1517,56 @@ async fn list_users_handler(
     })))
 }
 
-// GET /api/esp32/discovered - List discovered ESP32 devices
+// GET /api/esp32/discovered - List discovered ESP32 devices (authentication optional)
 async fn discovered_esp32_devices_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
 ) -> Result<Json<Value>, StatusCode> {
-    // Validate JWT token
-    let token = match cookie_jar.get("auth_token") {
-        Some(cookie) => cookie.value(),
-        None => return Err(StatusCode::UNAUTHORIZED),
+    // Extract JWT token from cookie (optional)
+    let _token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
+
+    // Authentication is optional for ESP32 device discovery
+    // Get discovered devices from ESP32Discovery service
+    let discovered_devices = {
+        let discovery = app_state.esp32_discovery.lock().await;
+        discovery.get_discovered_devices().await
     };
 
-    match validate_jwt(token) {
-        Ok(_claims) => {
-            // Get discovered devices from ESP32Discovery service
-            let discovered_devices = {
-                let discovery = app_state.esp32_discovery.lock().await;
-                discovery.get_discovered_devices().await
-            };
-            
-            tracing::info!("ESP32 Discovery API called - found {} devices", discovered_devices.len());
+    tracing::info!("ESP32 Discovery API called - found {} devices", discovered_devices.len());
 
-            let devices_json: Vec<Value> = discovered_devices
-                .into_iter()
-                .map(|(device_id, discovered_device)| {
-                    tracing::info!("Processing discovered device: {} with mDNS data: {:?}", 
-                        device_id, discovered_device.mdns_data.is_some());
-                    
-                    let mut device_json = json!({
-                        "deviceId": device_id,
-                        "deviceIp": discovered_device.device_config.ip_address.to_string(),
-                        "tcpPort": discovered_device.device_config.tcp_port,
-                        "udpPort": discovered_device.device_config.udp_port,
-                        "status": "discovered"
-                    });
-                    
-                    // Add MAC address from mDNS data if available
-                    if let Some(ref mdns_data) = discovered_device.mdns_data {
-                        tracing::info!("Found mDNS data with {} TXT records", mdns_data.txt_records.len());
-                        if let Some(mac_address) = mdns_data.txt_records.get("mac") {
-                            tracing::info!("Adding MAC address to JSON: {}", mac_address);
-                            device_json["macAddress"] = json!(mac_address);
-                        } else {
-                            tracing::warn!("No 'mac' key found in TXT records: {:?}", mdns_data.txt_records.keys().collect::<Vec<_>>());
-                        }
-                    } else {
-                        tracing::warn!("No mDNS data found for device: {}", device_id);
-                    }
-                    
-                    device_json
-                })
-                .collect();
+    let devices_json: Vec<Value> = discovered_devices
+        .into_iter()
+        .map(|(device_id, discovered_device)| {
+            tracing::info!("Processing discovered device: {} with mDNS data: {:?}",
+                device_id, discovered_device.mdns_data.is_some());
 
-            Ok(Json(json!({
-                "success": true,
-                "devices": devices_json
-            })))
-        }
-        Err(_) => Err(StatusCode::UNAUTHORIZED),
-    }
+            let mut device_json = json!({
+                "deviceId": device_id,
+                "deviceIp": discovered_device.device_config.ip_address.to_string(),
+                "tcpPort": discovered_device.device_config.tcp_port,
+                "udpPort": discovered_device.device_config.udp_port,
+                "status": "discovered"
+            });
+
+            // Add MAC address from mDNS data if available
+            if let Some(ref mdns_data) = discovered_device.mdns_data {
+                tracing::info!("Found mDNS data with {} TXT records", mdns_data.txt_records.len());
+                if let Some(mac_address) = mdns_data.txt_records.get("mac") {
+                    tracing::info!("Adding MAC address to JSON: {}", mac_address);
+                    device_json["macAddress"] = json!(mac_address);
+                } else {
+                    tracing::warn!("No 'mac' key found in TXT records: {:?}", mdns_data.txt_records.keys().collect::<Vec<_>>());
+                }
+            } else {
+                tracing::warn!("No mDNS data found for device: {}", device_id);
+            }
+
+            device_json
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "success": true,
+        "devices": devices_json
+    })))
 }
