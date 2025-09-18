@@ -180,8 +180,12 @@ function registerForDevice(deviceId) {
 }
 
 function handleWebSocketMessage(message) {
+    console.log('ESP32 FRONTEND DEBUG: Received WebSocket message:', message);
     if (message.deviceId && message.eventsForDevice) {
+        console.log('ESP32 FRONTEND DEBUG: Processing', message.eventsForDevice.length, 'events for device', message.deviceId);
         handleDeviceEvents(message.deviceId, message.eventsForDevice);
+    } else {
+        console.log('ESP32 FRONTEND DEBUG: Message format not recognized:', message);
     }
 }
 
@@ -197,6 +201,7 @@ function handleDeviceEvents(deviceId, events) {
 }
 
 function createDeviceUI(deviceId) {
+    console.log('ESP32 FRONTEND DEBUG: createDeviceUI called for device:', deviceId);
     // Create a more readable device name
     let deviceName = deviceId;
     if (deviceId.startsWith('esp32-')) {
@@ -221,54 +226,98 @@ function createDeviceUI(deviceId) {
 }
 
 function processDeviceEvent(deviceId, event) {
+    console.log('ESP32 FRONTEND DEBUG: Processing event for device', deviceId, ':', event);
     const device = esp32Devices.get(deviceId);
-    if (!device) return;
-    
-    switch (event.event) {
+    if (!device) {
+        console.log('ESP32 FRONTEND DEBUG: Device not found:', deviceId);
+        return;
+    }
+
+    // Handle new server event format (tagged enum)
+    let eventType = null;
+    let eventData = null;
+
+    if (event.esp32ConnectionStatus) {
+        eventType = 'esp32ConnectionStatus';
+        eventData = event.esp32ConnectionStatus;
+    } else if (event.esp32UdpBroadcast) {
+        eventType = 'esp32UdpBroadcast';
+        eventData = event.esp32UdpBroadcast;
+    } else if (event.esp32VariableUpdate) {
+        eventType = 'esp32VariableUpdate';
+        eventData = event.esp32VariableUpdate;
+    } else if (event.esp32StartOptions) {
+        eventType = 'esp32StartOptions';
+        eventData = event.esp32StartOptions;
+    } else if (event.esp32ChangeableVariables) {
+        eventType = 'esp32ChangeableVariables';
+        eventData = event.esp32ChangeableVariables;
+    } else if (event.userJoined) {
+        eventType = 'userJoined';
+        eventData = event.userJoined;
+    } else if (event.userLeft) {
+        eventType = 'userLeft';
+        eventData = event.userLeft;
+    } else if (event.event) {
+        // Legacy format support
+        eventType = event.event;
+        eventData = event;
+    } else {
+        console.log('Unknown ESP32 event format:', event);
+        return;
+    }
+
+    console.log('ESP32 FRONTEND DEBUG: Event type determined:', eventType, 'with data:', eventData);
+    switch (eventType) {
         case 'esp32ConnectionStatus':
-            device.connected = event.connected;
-            updateConnectionStatus(deviceId, event.connected);
+            device.connected = eventData.connected;
+            updateConnectionStatus(deviceId, eventData.connected);
             break;
-            
+
         case 'esp32UdpBroadcast':
-            device.udpMessages.push(`[${new Date().toLocaleTimeString()}] ${event.message}`);
+            console.log('ESP32 FRONTEND DEBUG: Adding UDP message to device:', eventData.message);
+            device.udpMessages.push(`[${new Date().toLocaleTimeString()}] ${eventData.message}`);
+            console.log('ESP32 FRONTEND DEBUG: UDP messages array now has', device.udpMessages.length, 'messages');
             updateMonitorArea(deviceId, 'udp');
+            console.log('ESP32 FRONTEND DEBUG: Called updateMonitorArea for UDP');
             break;
-            
+
         case 'esp32VariableUpdate':
-            device.variables.set(event.variableName, event.variableValue);
-            updateVariableMonitor(deviceId, event.variableName, event.variableValue);
+            console.log('ESP32 FRONTEND DEBUG: Updating variable:', eventData.variableName, '=', eventData.variableValue);
+            device.variables.set(eventData.variableName, eventData.variableValue);
+            updateVariableMonitor(deviceId, eventData.variableName, eventData.variableValue);
+            console.log('ESP32 FRONTEND DEBUG: Called updateVariableMonitor');
             break;
-            
+
         case 'esp32StartOptions':
-            device.startOptions = event.options;
-            updateStartOptions(deviceId, event.options);
+            device.startOptions = eventData.options;
+            updateStartOptions(deviceId, eventData.options);
             break;
-            
+
         case 'esp32ChangeableVariables':
-            updateVariableControls(deviceId, event.variables);
+            updateVariableControls(deviceId, eventData.variables);
             break;
-            
+
         case 'userJoined':
-            if (event.userId !== 'ESP32_SYSTEM') {
+            if (eventData.userId !== 'ESP32_SYSTEM') {
                 device.users.push({
-                    userId: event.userId,
-                    displayName: event.displayName,
-                    userColor: event.userColor
+                    userId: eventData.userId,
+                    displayName: eventData.displayName,
+                    userColor: eventData.userColor
                 });
                 updateDeviceUsers(deviceId);
             }
             break;
-            
+
         case 'userLeft':
-            if (event.userId !== 'ESP32_SYSTEM') {
-                device.users = device.users.filter(u => u.userId !== event.userId);
+            if (eventData.userId !== 'ESP32_SYSTEM') {
+                device.users = device.users.filter(u => u.userId !== eventData.userId);
                 updateDeviceUsers(deviceId);
             }
             break;
-            
+
         default:
-            console.log('Unknown ESP32 event:', event);
+            console.log('Unknown ESP32 event type:', eventType, eventData);
     }
 }
 
@@ -328,7 +377,7 @@ function createDeviceTabContent(device, isActive) {
     content.className = `tab-pane fade ${isActive ? 'show active' : ''}`;
     content.id = `${device.id}-content`;
     content.setAttribute('role', 'tabpanel');
-    content.innerHTML = createDeviceContent(device);
+    content.innerHTML = createDeviceContent(device, 'tab');
     document.getElementById('deviceTabContent').appendChild(content);
 }
 
@@ -347,7 +396,7 @@ function createDeviceStackContent(device) {
             <div class="device-users" id="${device.id}-stack-users"></div>
         </div>
         <div class="p-3">
-            ${createDeviceContent(device)}
+            ${createDeviceContent(device, 'stack')}
         </div>
     `;
     document.getElementById('esp32-stack').appendChild(stackItem);
@@ -368,13 +417,14 @@ function createDeviceGridContent(device) {
             <div class="device-users" id="${device.id}-grid-users"></div>
         </div>
         <div class="p-3">
-            ${createDeviceContent(device)}
+            ${createDeviceContent(device, 'grid')}
         </div>
     `;
     document.getElementById('esp32-grid').appendChild(gridItem);
 }
 
-function createDeviceContent(device) {
+function createDeviceContent(device, suffix = '') {
+    const idPrefix = suffix ? `${device.id}-${suffix}` : device.id;
     return `
         <!-- Control Panel -->
         <div class="start-options-area">
@@ -382,14 +432,14 @@ function createDeviceContent(device) {
             <div class="row align-items-end">
                 <div class="col-md-4">
                     <label class="form-label">Start Option</label>
-                    <select class="form-select" id="${device.id}-start-select">
+                    <select class="form-select" id="${idPrefix}-start-select">
                         <option value="">Select option...</option>
                     </select>
                 </div>
                 <div class="col-md-4">
                     <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="${device.id}-auto-start">
-                        <label class="form-check-label" for="${device.id}-auto-start">Auto Start</label>
+                        <input class="form-check-input" type="checkbox" id="${idPrefix}-auto-start">
+                        <label class="form-check-label" for="${idPrefix}-auto-start">Auto Start</label>
                     </div>
                 </div>
                 <div class="col-md-4">
@@ -402,24 +452,24 @@ function createDeviceContent(device) {
                 </div>
             </div>
         </div>
-        
+
         <!-- Variable Controls -->
         <div class="variable-control">
             <h6><i class="bi bi-sliders"></i> Variable Control</h6>
-            <div id="${device.id}-variables">
+            <div id="${idPrefix}-variables">
                 <p class="text-muted">No variables available</p>
             </div>
         </div>
-        
+
         <!-- Monitors -->
         <div class="row">
             <div class="col-lg-6">
                 <h6><i class="bi bi-broadcast"></i> UDP Monitor</h6>
-                <div class="monitor-area" id="${device.id}-udp-monitor"></div>
+                <div class="monitor-area" id="${idPrefix}-udp-monitor"></div>
             </div>
             <div class="col-lg-6">
                 <h6><i class="bi bi-link-45deg"></i> Variable Monitor</h6>
-                <div class="monitor-area" id="${device.id}-variable-monitor"></div>
+                <div class="monitor-area" id="${idPrefix}-variable-monitor"></div>
             </div>
         </div>
     `;
@@ -518,21 +568,59 @@ function updateConnectionStatus(deviceId, connected) {
 }
 
 function updateMonitorArea(deviceId, type) {
+    console.log('ESP32 FRONTEND DEBUG: updateMonitorArea called for device:', deviceId, 'type:', type);
     const device = esp32Devices.get(deviceId);
-    const monitorEl = document.getElementById(`${deviceId}-udp-monitor`);
-    if (monitorEl && type === 'udp') {
-        monitorEl.innerHTML = device.udpMessages.slice(-50).join('<br>');
-        monitorEl.scrollTop = monitorEl.scrollHeight;
+
+    // Update all monitor variants (tab, stack, grid)
+    const suffixes = ['tab', 'stack', 'grid'];
+    let updated = false;
+
+    suffixes.forEach(suffix => {
+        const monitorId = `${deviceId}-${suffix}-udp-monitor`;
+        const monitorEl = document.getElementById(monitorId);
+
+        if (monitorEl && type === 'udp') {
+            console.log(`ESP32 FRONTEND DEBUG: Updating ${suffix} UDP monitor with`, device.udpMessages.length, 'messages');
+            monitorEl.innerHTML = device.udpMessages.slice(-50).join('<br>');
+            monitorEl.scrollTop = monitorEl.scrollHeight;
+            updated = true;
+        }
+    });
+
+    if (updated) {
+        console.log('ESP32 FRONTEND DEBUG: UDP monitor updated successfully');
+    } else {
+        console.log('ESP32 FRONTEND DEBUG: Cannot update UDP monitor - no elements found');
+        // Debug: List all elements with similar IDs
+        const allElements = document.querySelectorAll('[id*="monitor"]');
+        console.log('ESP32 FRONTEND DEBUG: All monitor elements found:', Array.from(allElements).map(el => el.id));
     }
 }
 
 function updateVariableMonitor(deviceId, name, value) {
-    const monitorEl = document.getElementById(`${deviceId}-variable-monitor`);
-    if (monitorEl) {
-        const timestamp = new Date().toLocaleTimeString();
-        const existingContent = monitorEl.innerHTML;
-        monitorEl.innerHTML = existingContent + `<br>[${timestamp}] ${name}: ${value}`;
-        monitorEl.scrollTop = monitorEl.scrollHeight;
+    console.log('ESP32 FRONTEND DEBUG: updateVariableMonitor called for device:', deviceId, 'variable:', name, 'value:', value);
+
+    // Update all variable monitor variants (tab, stack, grid)
+    const suffixes = ['tab', 'stack', 'grid'];
+    let updated = false;
+
+    suffixes.forEach(suffix => {
+        const monitorId = `${deviceId}-${suffix}-variable-monitor`;
+        const monitorEl = document.getElementById(monitorId);
+
+        if (monitorEl) {
+            const timestamp = new Date().toLocaleTimeString();
+            const existingContent = monitorEl.innerHTML;
+            monitorEl.innerHTML = existingContent + `<br>[${timestamp}] ${name}: ${value}`;
+            monitorEl.scrollTop = monitorEl.scrollHeight;
+            updated = true;
+        }
+    });
+
+    if (updated) {
+        console.log('ESP32 FRONTEND DEBUG: Variable monitor updated successfully');
+    } else {
+        console.log('ESP32 FRONTEND DEBUG: Cannot update variable monitor - element not found');
     }
 }
 

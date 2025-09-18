@@ -17,7 +17,14 @@
       "Bash(dir:*)",
       "Bash(node:*)",
       "Bash(del debug_events.log)",
-      "Bash(start http://localhost:3000)"
+      "Bash(start http://localhost:3000)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(tasklist)",
+      "Bash(start connect_esp32.html)",
+      "Bash(RUST_LOG=info cargo run)",
+      "Bash(start http://localhost:3000/devices/10-20-BA-42-71-E0)",
+      "Bash(powershell:*)"
     ],
     "deny": [],
     "ask": []

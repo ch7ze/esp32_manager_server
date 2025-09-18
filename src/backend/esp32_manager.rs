@@ -114,38 +114,14 @@ impl Esp32Manager {
             configs.insert(device_id.clone(), config.clone());
         }
 
-        // Create connection but don't connect yet
-        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CREATING_EVENT_SENDER: {}", device_id));
+        // Create connection with direct manager event sender - SIMPLIFIED SYSTEM
+        info!("Creating ESP32Connection for device {} with direct manager event sender", device_id);
 
-        // Test if colons in device_id cause issues
-        if device_id.contains(':') {
-            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("DEVICE_ID_CONTAINS_COLONS: {} - potential issue!", device_id));
-        } else {
-            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("DEVICE_ID_NO_COLONS: {} - should be safe", device_id));
-        }
+        // Use manager's bypass event sender directly to avoid complex forwarding layers
+        let device_event_sender = self.create_direct_device_sender(device_id.clone());
 
-        let event_tx = self.create_device_event_sender(device_id.clone());
-        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("EVENT_SENDER_CREATED: {} - closed: {}", device_id, event_tx.is_closed()));
-
-        // Store event sender separately to avoid mutex blocking
-        {
-            let mut senders = self.device_event_senders.write().await;
-            senders.insert(device_id.clone(), event_tx.clone());
-            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("EVENT_SENDER_STORED_SEPARATELY: {}", device_id));
-        }
-
-        // Validate sender before creating ESP32Connection
-        if event_tx.is_closed() {
-            error!("CRITICAL: Event sender for device {} is already closed before creating ESP32Connection!", device_id);
-            crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("PRE_CONNECTION_SENDER_CLOSED: {}", device_id));
-            return Err(Esp32Error::ConnectionFailed("Event channel already closed".to_string()));
-        }
-
-        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CREATING_ESP32_CONNECTION: {}", device_id));
-        let connection = Esp32Connection::new(config, event_tx.clone());
-
-        // Check if sender is still alive after giving it to ESP32Connection
-        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("POST_CONNECTION_SENDER_STATUS: {} - closed: {}", device_id, event_tx.is_closed()));
+        info!("Direct event sender created for device {} - closed: {}", device_id, device_event_sender.is_closed());
+        let connection = Esp32Connection::new(config, device_event_sender);
 
         {
             let mut connections = self.connections.write().await;
@@ -196,30 +172,64 @@ impl Esp32Manager {
         let _connection_guard = self.connection_mutex.lock().await;
         crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CONNECT_DEVICE_MUTEX_ACQUIRED: {}", device_id));
 
+        // First, check if we need to recreate the connection with a fresh direct sender
+        let needs_recreation = {
+            let connections = self.connections.read().await;
+            if let Some(connection_arc) = connections.get(device_id) {
+                let connection = connection_arc.lock().await;
+                let current_state = connection.get_connection_state().await;
+                match current_state {
+                    ConnectionState::Connected => {
+                        info!("DEVICE CONNECTION DEBUG: Device {} already connected - skipping", device_id);
+                        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ALREADY_CONNECTED_SKIP: {}", device_id));
+                        return Ok(());
+                    }
+                    ConnectionState::Connecting => {
+                        warn!("DEVICE CONNECTION DEBUG: Device {} already connecting - preventing race condition", device_id);
+                        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ALREADY_CONNECTING_SKIP: {}", device_id));
+                        return Err(Esp32Error::ConnectionFailed("Already connecting".to_string()));
+                    }
+                    _ => {
+                        // Check if connection exists but might have old event sender
+                        true // Always recreate to ensure fresh sender
+                    }
+                }
+            } else {
+                false // No connection exists
+            }
+        };
+
+        if needs_recreation {
+            info!("DEVICE CONNECTION DEBUG: Recreating ESP32Connection with fresh direct sender for device: {}", device_id);
+
+            // Get device config
+            let config = {
+                let configs = self.device_configs.read().await;
+                configs.get(device_id).cloned().ok_or_else(|| {
+                    Esp32Error::DeviceNotFound(format!("Device config not found for {}", device_id))
+                })?
+            };
+
+            // Create new ESP32Connection with fresh direct sender
+            let direct_sender = self.create_direct_device_sender(device_id.to_string());
+            let new_connection = Esp32Connection::new(config.clone(), direct_sender);
+            let connection_arc = Arc::new(Mutex::new(new_connection));
+
+            // Replace the connection
+            {
+                let mut connections = self.connections.write().await;
+                connections.insert(device_id.to_string(), connection_arc.clone());
+            }
+
+            info!("DEVICE CONNECTION DEBUG: ESP32Connection recreated for device: {}", device_id);
+        }
+
         let connections = self.connections.read().await;
         if let Some(connection_arc) = connections.get(device_id) {
             info!("DEVICE CONNECTION DEBUG: Found connection for device: {}", device_id);
             crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CONNECTION_FOUND: {}", device_id));
 
             let mut connection = connection_arc.lock().await;
-
-            // Check current connection state to prevent multiple simultaneous connections
-            let current_state = connection.get_connection_state().await;
-            match current_state {
-                ConnectionState::Connected => {
-                    info!("DEVICE CONNECTION DEBUG: Device {} already connected - skipping", device_id);
-                    crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ALREADY_CONNECTED_SKIP: {}", device_id));
-                    return Ok(());
-                }
-                ConnectionState::Connecting => {
-                    warn!("DEVICE CONNECTION DEBUG: Device {} already connecting - preventing race condition", device_id);
-                    crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ALREADY_CONNECTING_SKIP: {}", device_id));
-                    return Err(Esp32Error::ConnectionFailed("Already connecting".to_string()));
-                }
-                _ => {
-                    // Proceed with connection
-                }
-            }
 
             info!("DEVICE CONNECTION DEBUG: Attempting TCP connection for device: {}", device_id);
             crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ATTEMPTING_TCP_CONNECTION: {}", device_id));
@@ -633,7 +643,36 @@ impl Esp32Manager {
         
         tx
     }
-    
+
+    /// Create a direct device event sender - SIMPLIFIED VERSION
+    /// This bypasses the complex event forwarding layer and sends directly to the manager
+    fn create_direct_device_sender(&self, device_id: String) -> mpsc::UnboundedSender<Esp32Event> {
+        info!("Creating direct device sender for {}", device_id);
+
+        // Create a simple channel that wraps events with device_id and forwards to manager
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let manager_sender = self.bypass_event_sender.clone();
+
+        // Spawn a simple forwarding task that just wraps events with device_id
+        tokio::spawn(async move {
+            info!("DIRECT SENDER: Started direct forwarding task for device {}", device_id);
+
+            while let Some(event) = rx.recv().await {
+                // Wrap the event with device_id and send to manager
+                let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.clone(), event);
+
+                if let Err(e) = manager_sender.send(manager_event) {
+                    warn!("DIRECT SENDER: Failed to send event for device {}: {}", device_id, e);
+                    break;
+                }
+            }
+
+            info!("DIRECT SENDER: Direct forwarding task ended for device {}", device_id);
+        });
+
+        tx
+    }
+
     /// Start background event processor
     async fn start_event_processor(&self) {
         let event_receiver = Arc::clone(&self.event_receiver);
@@ -809,16 +848,10 @@ impl Esp32Manager {
                             // Route message to specific ESP32 connection if registered
                             let device_map = ip_to_device_id.read().await;
                             if let Some(device_id) = device_map.get(&from_addr.ip()) {
-                                // Get event sender directly without locking ESP32Connection
-                                let senders_guard = device_event_senders.read().await;
-                                if let Some(sender) = senders_guard.get(device_id) {
-                                    // Always use bypass mode for reliable UDP message processing
-                                    error!("UDP DEBUG: Using bypass mode for device {} (forced for reliability)", device_id);
-                                    // Use bypass sender directly - convert UDP message to manager event
-                                    Self::handle_udp_message_bypass(&message, from_addr, device_id, &bypass_event_sender).await;
-                                } else {
-                                    debug!("No event sender found for device {}", device_id);
-                                }
+                                // SIMPLIFIED SYSTEM: Always use bypass mode since we have direct device senders
+                                error!("UDP DEBUG: Using bypass mode for device {} (forced for reliability)", device_id);
+                                // Use bypass sender directly - convert UDP message to manager event
+                                Self::handle_udp_message_bypass(&message, from_addr, device_id, &bypass_event_sender).await;
                             } else {
                                 debug!("No device registered for IP {}", from_addr.ip());
                             }
@@ -860,6 +893,31 @@ impl Esp32Manager {
             error!("BYPASS DEBUG: Failed to send UDP broadcast event for {}: {}", device_id, e);
         } else {
             error!("BYPASS DEBUG: UDP broadcast event sent for {}", device_id);
+        }
+
+        // Try to parse as JSON for structured data (including startOptions)
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
+            // Handle startOptions array
+            if let Some(options_array) = value.get("startOptions") {
+                if let Some(options) = options_array.as_array() {
+                    let mut start_options = Vec::new();
+                    for option in options {
+                        if let Some(option_str) = option.as_str() {
+                            start_options.push(option_str.to_string());
+                        }
+                    }
+
+                    if !start_options.is_empty() {
+                        let start_options_event = Esp32Event::start_options(start_options.clone());
+                        let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.to_string(), start_options_event);
+                        if let Err(e) = bypass_sender.send(manager_event) {
+                            error!("BYPASS DEBUG: Failed to send start options event for {}: {}", device_id, e);
+                        } else {
+                            error!("BYPASS DEBUG: Start options event sent for {}: {:?}", device_id, start_options);
+                        }
+                    }
+                }
+            }
         }
 
         // Parse for variable updates using regex like the C# version

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Connect ESP32</title>
+</head>
+<body>
+    <h1>ESP32 Connection Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="log"></div>
+
+    <script>
+        const log = document.getElementById('log');
+        const status = document.getElementById('status');
+
+        function addLog(message) {
+            log.innerHTML += '<div>' + new Date().toLocaleTimeString() + ': ' + message + '</div>';
+        }
+
+        const ws = new WebSocket('ws://localhost:3000/channel');
+
+        ws.onopen = function() {
+            status.innerText = 'WebSocket Connected';
+            addLog('WebSocket connected');
+
+            // Register for the discovered ESP32 device
+            const message = {
+                "type": "registerForDevice",
+                "deviceId": "10-20-BA-42-71-E0"
+            };
+
+            addLog('Sending registration: ' + JSON.stringify(message));
+            ws.send(JSON.stringify(message));
+        };
+
+        ws.onmessage = function(event) {
+            addLog('Received: ' + event.data);
+            const data = JSON.parse(event.data);
+
+            // Look for connection status events
+            if (data.device_id === "10-20-BA-42-71-E0") {
+                if (data.events_for_device) {
+                    data.events_for_device.forEach(evt => {
+                        if (evt.type === "Esp32ConnectionStatus") {
+                            addLog('CONNECTION STATUS: ' + (evt.connected ? 'CONNECTED' : 'DISCONNECTED'));
+                            status.innerText = evt.connected ? 'ESP32 Connected!' : 'ESP32 Disconnected';
+                        }
+                    });
+                }
+            }
+        };
+
+        ws.onerror = function(error) {
+            addLog('WebSocket error: ' + error);
+            status.innerText = 'WebSocket Error';
+        };
+
+        ws.onclose = function() {
+            addLog('WebSocket closed');
+            status.innerText = 'WebSocket Closed';
+        };
+    </script>
+</body>
+</html>
