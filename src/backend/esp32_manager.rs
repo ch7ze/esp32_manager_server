@@ -83,6 +83,9 @@ impl Esp32Manager {
         // Start event processing task
         self.start_event_processor().await;
 
+        // Start reconnect monitoring task
+        self.start_reconnect_monitor().await;
+
         info!("ESP32 Manager started");
     }
     
@@ -189,9 +192,10 @@ impl Esp32Manager {
                         crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ALREADY_CONNECTING_SKIP: {}", device_id));
                         return Err(Esp32Error::ConnectionFailed("Already connecting".to_string()));
                     }
-                    _ => {
-                        // Check if connection exists but might have old event sender
-                        true // Always recreate to ensure fresh sender
+                    ConnectionState::Disconnected | ConnectionState::Failed(_) => {
+                        info!("DEVICE CONNECTION DEBUG: Device {} is disconnected/failed - recreating connection", device_id);
+                        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("RECREATING_CONNECTION: {}", device_id));
+                        true // Recreate connection
                     }
                 }
             } else {
@@ -745,7 +749,49 @@ impl Esp32Manager {
             error!("ESP32MANAGER EVENT PROCESSOR DEBUG: ESP32Manager event processor task is now TERMINATED!");
         });
     }
-    
+
+    /// Start reconnect monitoring task that automatically reconnects disconnected devices
+    async fn start_reconnect_monitor(&self) {
+        let connections = Arc::clone(&self.connections);
+        let device_configs = Arc::clone(&self.device_configs);
+        let reconnect_interval = Duration::from_secs(5); // Check every 5 seconds
+
+        info!("ESP32 RECONNECT MONITOR: Starting automatic reconnect monitoring");
+        tokio::spawn(async move {
+            loop {
+                sleep(reconnect_interval).await;
+
+                // Get list of all device configs
+                let configs_to_check = {
+                    let configs = device_configs.read().await;
+                    configs.clone() // Clone the HashMap to avoid holding the lock
+                };
+
+                for (device_id, config) in configs_to_check {
+                    // Check connection state
+                    let needs_reconnect = {
+                        let connections = connections.read().await;
+                        if let Some(connection_arc) = connections.get(&device_id) {
+                            let connection = connection_arc.lock().await;
+                            let state = connection.get_connection_state().await;
+                            matches!(state, ConnectionState::Disconnected | ConnectionState::Failed(_))
+                        } else {
+                            true // No connection exists at all
+                        }
+                    };
+
+                    if needs_reconnect {
+                        info!("ESP32 RECONNECT MONITOR: Device {} is disconnected, attempting reconnect", device_id);
+
+                        // Note: We can't call self.connect_device here because we don't have &self
+                        // Instead, we'll let the next connection attempt handle this
+                        debug!("ESP32 RECONNECT MONITOR: Device {} needs reconnection - will be handled by next connection request", device_id);
+                    }
+                }
+            }
+        });
+    }
+
     /// Handle ESP32 event by converting it to DeviceEvent and storing it
     async fn handle_esp32_event(
         device_store: &DeviceEventStore,

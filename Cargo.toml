@@ -35,6 +35,9 @@ thiserror = "1.0"
 mdns-sd = "0.11"
 socket2 = "0.5"
 
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winsock2", "ws2def"] }
+
 
 [profile.dev]
 opt-level = 0          # Keine Optimierung für schnellere Kompilierung
