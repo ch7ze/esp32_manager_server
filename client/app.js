@@ -24,52 +24,12 @@ const pages = {
         styles: [],
         requiresAuth: false
     },
-    'hallo': {
-        title: 'Hello',
-        template: 'hallo.html',
-        defaultPath: 'hallo.html',
-        scripts: [],
-        styles: [],
-        requiresAuth: false
-    },
-    'about': {
-        title: 'About',
-        template: 'about.html',
-        defaultPath: 'about.html',
-        scripts: [],
-        styles: [],
-        requiresAuth: false
-    },
-    'drawing_board': {
-        title: 'Drawing Board',
-        template: 'drawing_board.html',
-        defaultPath: 'drawing_board.html',
-        scripts: ['drawing_board.js'],
-        styles: ['drawing_board.css'],
-        requiresAuth: false
-    },
-    'drawer_page': {
-        title: 'Drawer',
-        template: 'drawer_page.html',
-        defaultPath: 'drawer_page.html',
-        scripts: ['websocket-client.js', 'canvas-websocket-bridge.js', 'event-system.js', 'color-state.js', 'drawer-state.js', 'drawer_page.js', 'drawer/event-wrapper.js'],
-        styles: ['drawer_page.css'],
-        requiresAuth: false
-    },
     'debug': {
         title: 'Debug',
         template: 'debug.html',
         defaultPath: 'debug.html',
         scripts: ['debug.js'],
         styles: [],
-        requiresAuth: false
-    },
-    'canvas_detail': {
-        title: 'Canvas',
-        template: 'canvas_detail.html',
-        defaultPath: '/canvas/:id',
-        scripts: ['websocket-client.js', 'canvas-websocket-bridge.js', 'event-system.js', 'color-state.js', 'drawer-state.js', 'drawer_page.js', 'drawer/event-wrapper.js'],
-        styles: ['drawer_page.css'],
         requiresAuth: false
     },
     'device_detail': {

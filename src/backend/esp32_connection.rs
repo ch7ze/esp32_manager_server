@@ -204,10 +204,10 @@ impl Esp32Connection {
     async fn start_tcp_listener_task(&self, mut shutdown_rx: mpsc::UnboundedReceiver<()>) {
         let tcp_stream = Arc::clone(&self.tcp_stream);
         let tcp_buffer = Arc::clone(&self.tcp_buffer);
-        let event_sender = self.event_sender.clone();
+        let _event_sender = self.event_sender.clone();
         let connection_state = Arc::clone(&self.connection_state);
         let device_id = self.config.device_id.clone();
-        let device_config = self.config.clone();
+        let _device_config = self.config.clone();
         
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];

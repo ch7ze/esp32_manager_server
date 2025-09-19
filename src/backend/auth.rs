@@ -4,8 +4,7 @@ use axum::http::HeaderValue;
 use bcrypt::{hash, verify, DEFAULT_COST};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 // JWT secret key - should be loaded from environment variable in production
@@ -228,100 +227,6 @@ pub fn create_logout_cookie() -> HeaderValue {
 // Website-Feature: A 5.4 Rechtesystem Implementation adapted for ESP32
 // ============================================================================
 
-impl ESP32Device {
-    // Erstellt ein neues ESP32 Device mit dem Owner als einzigem Benutzer
-    pub fn new(name: String, mac_address: String, owner_id: String) -> Self {
-        let device_id = format!("esp32-{}", uuid::Uuid::new_v4());
-        let mut permissions = HashMap::new();
-        permissions.insert(owner_id.clone(), "O".to_string()); // Owner-Berechtigung
-        
-        ESP32Device {
-            id: device_id,
-            name,
-            mac_address,
-            ip_address: None,
-            status: "Offline".to_string(),
-            maintenance_mode: false,
-            owner_id,
-            firmware_version: None,
-            last_seen: chrono::Utc::now().to_rfc3339(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-            permissions,
-        }
-    }
 
-    // Prüft ob ein User eine bestimmte Berechtigung für dieses ESP32 Device hat
-    pub fn has_permission(&self, user_id: &str, required_permission: &str) -> bool {
-        match self.permissions.get(user_id) {
-            Some(user_permission) => {
-                // Hierarchie der Berechtigungen prüfen
-                match required_permission {
-                    "R" => ["R", "W", "V", "M", "O"].contains(&user_permission.as_str()),
-                    "W" => {
-                        if self.maintenance_mode {
-                            // Im Wartungsmodus können nur V, M und O Befehle senden (W nicht)
-                            ["V", "M", "O"].contains(&user_permission.as_str())
-                        } else {
-                            // Normal braucht man mindestens W-Berechtigung
-                            ["W", "V", "M", "O"].contains(&user_permission.as_str())
-                        }
-                    },
-                    "V" => ["V", "M", "O"].contains(&user_permission.as_str()),
-                    "M" => ["M", "O"].contains(&user_permission.as_str()),
-                    "O" => user_permission == "O",
-                    _ => false,
-                }
-            }
-            None => false,
-        }
-    }
 
-    // Prüft ob ein User Berechtigungen vergeben darf
-    pub fn can_grant_permission(&self, user_id: &str, permission_to_grant: &str) -> bool {
-        match self.permissions.get(user_id) {
-            Some(user_permission) => {
-                match user_permission.as_str() {
-                    "O" => true, // Owner kann alle Berechtigungen vergeben
-                    "M" => ["R", "W", "V"].contains(&permission_to_grant), // Moderator kann bis V vergeben
-                    _ => false,
-                }
-            }
-            None => false,
-        }
-    }
-
-    // Aktualisiert die Berechtigung eines Users
-    pub fn update_permission(&mut self, user_id: String, permission: String) {
-        if permission == "REMOVE" {
-            self.permissions.remove(&user_id);
-        } else {
-            self.permissions.insert(user_id, permission);
-        }
-    }
-
-    // Aktualisiert den Status des ESP32 Devices
-    pub fn update_status(&mut self, status: String, ip_address: Option<String>) {
-        self.status = status;
-        self.ip_address = ip_address;
-        self.last_seen = chrono::Utc::now().to_rfc3339();
-    }
-}
-
-// Hilfsfunktion: Erstellt Device-Berechtigungen für JWT basierend auf User-ID
-pub fn get_user_device_permissions(device_store: &HashMap<String, ESP32Device>, user_id: &str) -> HashMap<String, String> {
-    let mut permissions = HashMap::new();
-    
-    for (device_id, device) in device_store {
-        if let Some(permission) = device.permissions.get(user_id) {
-            permissions.insert(device_id.clone(), permission.clone());
-        }
-    }
-    
-    permissions
-}
-
-// Validiert eine Berechtigung (R, W, V, M, O)
-pub fn is_valid_permission(permission: &str) -> bool {
-    ["R", "W", "V", "M", "O"].contains(&permission)
-}
 

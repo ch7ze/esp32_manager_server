@@ -239,51 +239,6 @@ class ColorState {
         }
     }
     
-    // Create color picker UI (if needed)
-    createColorPicker(container, options = {}) {
-        if (!container) return;
-        
-        const fillLabel = document.createElement('label');
-        fillLabel.textContent = options.fillLabel || 'Füllfarbe: ';
-        
-        const fillInput = document.createElement('input');
-        fillInput.type = 'color';
-        fillInput.id = 'fill-color';
-        fillInput.value = this.currentFillColor === 'transparent' ? '#ffffff' : this.currentFillColor;
-        fillInput.addEventListener('change', (e) => this.setFillColor(e.target.value));
-        
-        const transparentCheckbox = document.createElement('input');
-        transparentCheckbox.type = 'checkbox';
-        transparentCheckbox.id = 'transparent-fill';
-        transparentCheckbox.checked = this.currentFillColor === 'transparent';
-        transparentCheckbox.addEventListener('change', (e) => {
-            this.setFillColor(e.target.checked ? 'transparent' : fillInput.value);
-        });
-        
-        const transparentLabel = document.createElement('label');
-        transparentLabel.textContent = options.transparentLabel || ' Transparent';
-        transparentLabel.htmlFor = 'transparent-fill';
-        
-        const strokeLabel = document.createElement('label');
-        strokeLabel.textContent = options.strokeLabel || 'Randfarbe: ';
-        
-        const strokeInput = document.createElement('input');
-        strokeInput.type = 'color';
-        strokeInput.id = 'stroke-color';
-        strokeInput.value = this.currentStrokeColor;
-        strokeInput.addEventListener('change', (e) => this.setStrokeColor(e.target.value));
-        
-        // Append elements
-        container.appendChild(fillLabel);
-        container.appendChild(fillInput);
-        container.appendChild(transparentCheckbox);
-        container.appendChild(transparentLabel);
-        container.appendChild(document.createElement('br'));
-        container.appendChild(strokeLabel);
-        container.appendChild(strokeInput);
-        
-        console.log('Color picker UI created');
-    }
 }
 
 // Initialize color state when script loads

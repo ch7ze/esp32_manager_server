@@ -61,7 +61,6 @@ use auth::{
     CreateDeviceRequest, // Request for new ESP32 device
     UpdateDeviceRequest, // Request for device updates
     UpdatePermissionRequest, // Request for permission updates
-    is_valid_permission, // Validates permissions
 };
 
 // Import all file handling functions

@@ -145,12 +145,6 @@ class WebSocketClient {
                 console.log('WebSocket message received:', message);
                 console.log('DEBUG: Message type:', typeof message, 'Keys:', Object.keys(message));
                 
-                // Handle acknowledgment messages
-                if (message.messageId && message.type === 'ack') {
-                    console.log('Acknowledgment received for message ID:', message.messageId);
-                    this.handleAcknowledgment(message.messageId, message.success, message.error);
-                    return;
-                }
                 
                 if (message.canvasId && message.eventsForCanvas) {
                     console.log('DEBUG: Canvas events received for canvas:', message.canvasId, 
@@ -254,77 +248,6 @@ class WebSocketClient {
         }
     }
     
-    // Send message with acknowledgment Promise for reliable operations
-    sendWithAck(message, timeoutMs = 5000) {
-        return new Promise((resolve, reject) => {
-            if (!this.isConnected) {
-                reject(new Error('WebSocket not connected'));
-                return;
-            }
-            
-            // Generate unique message ID
-            const messageId = ++this.messageIdCounter;
-            message.messageId = messageId;
-            
-            // Set up timeout
-            const timeout = setTimeout(() => {
-                this.pendingAcks.delete(messageId);
-                reject(new Error(`Message acknowledgment timeout (${timeoutMs}ms)`));
-            }, timeoutMs);
-            
-            // Store pending acknowledgment
-            this.pendingAcks.set(messageId, { resolve, reject, timeout });
-            
-            // Send message
-            try {
-                const messageString = JSON.stringify(message);
-                this.ws.send(messageString);
-                console.log('Message sent with ack ID', messageId, ':', message);
-            } catch (error) {
-                this.pendingAcks.delete(messageId);
-                clearTimeout(timeout);
-                reject(error);
-            }
-        });
-    }
-    
-    // Fallback method for servers without acknowledgment support
-    sendWithFallback(message, delayMs = 1000) {
-        return new Promise((resolve, reject) => {
-            if (!this.isConnected) {
-                reject(new Error('WebSocket not connected'));
-                return;
-            }
-            
-            // Send message normally
-            const success = this.send(message);
-            if (!success) {
-                reject(new Error('Failed to send message'));
-                return;
-            }
-            
-            // Wait for a reasonable delay to allow server processing
-            setTimeout(() => {
-                console.log(`Fallback: Assuming message processed after ${delayMs}ms delay`);
-                resolve();
-            }, delayMs);
-        });
-    }
-    
-    // Handle acknowledgment messages from server
-    handleAcknowledgment(messageId, success, error) {
-        const pending = this.pendingAcks.get(messageId);
-        if (pending) {
-            clearTimeout(pending.timeout);
-            this.pendingAcks.delete(messageId);
-            
-            if (success) {
-                pending.resolve();
-            } else {
-                pending.reject(new Error(error || 'Server rejected message'));
-            }
-        }
-    }
     
     // Reject all pending acknowledgments (on connection error/close)
     rejectPendingAcks(reason) {

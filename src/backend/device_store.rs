@@ -232,7 +232,7 @@ impl DeviceEventStore {
     }
     
     // Get device-specific information (placeholder for ESP32 device info)
-    pub async fn get_device_info(&self, device_id: &str) -> Vec<DeviceEvent> {
+    pub async fn get_device_info(&self, _device_id: &str) -> Vec<DeviceEvent> {
         // For ESP32 devices, we might return device status, sensor data, etc.
         // For now, return empty - this can be extended for device-specific info
         Vec::new()

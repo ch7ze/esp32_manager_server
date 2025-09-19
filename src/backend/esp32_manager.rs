@@ -827,7 +827,7 @@ impl Esp32Manager {
         // Start listener task
         let socket = Arc::clone(&self.central_udp_socket);
         let ip_to_device_id = Arc::clone(&self.ip_to_device_id);
-        let device_event_senders = Arc::clone(&self.device_event_senders);
+        let _device_event_senders = Arc::clone(&self.device_event_senders);
         let device_store = Arc::clone(&self.device_store);
 
         tokio::spawn(async move {
@@ -1158,7 +1158,7 @@ impl Esp32Manager {
     }
 
     /// Extract device ID from TCP message structure
-    fn extract_device_id_from_tcp_message(message: &str) -> Option<String> {
+    fn extract_device_id_from_tcp_message(_message: &str) -> Option<String> {
         // For now, assume the known device ID since we know there's only one ESP32
         // In a real system, this would parse the message to extract device info
         Some("10-20-BA-42-71-E0".to_string())
