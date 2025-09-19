@@ -570,13 +570,50 @@ function showDevicesContainer() {
 
 function updateConnectionStatus(deviceId, connected) {
     console.log(`ESP32 DEBUG: updateConnectionStatus called for device ${deviceId} connected: ${connected}`);
-    // Update all status indicators for this device
-    const statusElements = document.querySelectorAll(`[id*="${deviceId}"] .status-dot`);
-    console.log(`ESP32 DEBUG: Found ${statusElements.length} status elements for device ${deviceId}`);
-    statusElements.forEach(el => {
+
+    // Update status dots in tab buttons
+    const tabStatusElements = document.querySelectorAll(`[id="${deviceId}-tab"] .status-dot`);
+    console.log(`ESP32 DEBUG: Found ${tabStatusElements.length} tab status dot elements for device ${deviceId}`);
+    tabStatusElements.forEach(el => {
         el.className = `status-dot ${getStatusClass(connected)}`;
-        console.log(`ESP32 DEBUG: Updated status element class to: status-dot ${getStatusClass(connected)}`);
+        console.log(`ESP32 DEBUG: Updated tab status element class to: status-dot ${getStatusClass(connected)}`);
     });
+
+    // Update connection status in tab content (if tab layout exists)
+    const tabContentElement = document.getElementById(`${deviceId}-content`);
+    if (tabContentElement) {
+        const tabContentStatus = tabContentElement.querySelector('.connection-status');
+        if (tabContentStatus) {
+            tabContentStatus.innerHTML = `<span class="status-dot ${getStatusClass(connected)}"></span> ${getStatusText(connected)}`;
+            console.log(`ESP32 DEBUG: Updated tab connection status text to: ${getStatusText(connected)}`);
+        }
+    }
+
+    // Update connection status in stack layout - find by users div ID
+    const stackUsersDiv = document.getElementById(`${deviceId}-stack-users`);
+    if (stackUsersDiv) {
+        const stackCard = stackUsersDiv.closest('.esp32-device-card');
+        if (stackCard) {
+            const stackConnectionStatus = stackCard.querySelector('.connection-status');
+            if (stackConnectionStatus) {
+                stackConnectionStatus.innerHTML = `<span class="status-dot ${getStatusClass(connected)}"></span> ${getStatusText(connected)}`;
+                console.log(`ESP32 DEBUG: Updated stack connection status text to: ${getStatusText(connected)}`);
+            }
+        }
+    }
+
+    // Update connection status in grid layout - find by users div ID
+    const gridUsersDiv = document.getElementById(`${deviceId}-grid-users`);
+    if (gridUsersDiv) {
+        const gridCard = gridUsersDiv.closest('.esp32-device-card');
+        if (gridCard) {
+            const gridConnectionStatus = gridCard.querySelector('.connection-status');
+            if (gridConnectionStatus) {
+                gridConnectionStatus.innerHTML = `<span class="status-dot ${getStatusClass(connected)}"></span> ${getStatusText(connected)}`;
+                console.log(`ESP32 DEBUG: Updated grid connection status text to: ${getStatusText(connected)}`);
+            }
+        }
+    }
 }
 
 function updateMonitorArea(deviceId, type) {
