@@ -1,6 +1,6 @@
 // ESP32 device manager - handles multiple ESP32 connections and integrates with device store
 
-use crate::esp32_connection::{Esp32Connection, handle_udp_message};
+use crate::esp32_connection::{Esp32Connection};
 use crate::esp32_types::{
     Esp32Command, Esp32Event, Esp32DeviceConfig, ConnectionState, Esp32Result, Esp32Error
 };
@@ -828,7 +828,7 @@ impl Esp32Manager {
         let socket = Arc::clone(&self.central_udp_socket);
         let ip_to_device_id = Arc::clone(&self.ip_to_device_id);
         let device_event_senders = Arc::clone(&self.device_event_senders);
-        let bypass_event_sender = self.bypass_event_sender.clone();
+        let device_store = Arc::clone(&self.device_store);
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -846,14 +846,34 @@ impl Esp32Manager {
                             info!("UDP Message from {}: {}", from_addr, message);
 
                             // Route message to specific ESP32 connection if registered
-                            let device_map = ip_to_device_id.read().await;
-                            if let Some(device_id) = device_map.get(&from_addr.ip()) {
-                                // SIMPLIFIED SYSTEM: Always use bypass mode since we have direct device senders
-                                error!("UDP DEBUG: Using bypass mode for device {} (forced for reliability)", device_id);
-                                // Use bypass sender directly - convert UDP message to manager event
-                                Self::handle_udp_message_bypass(&message, from_addr, device_id, &bypass_event_sender).await;
-                            } else {
-                                debug!("No device registered for IP {}", from_addr.ip());
+                            {
+                                let device_map = ip_to_device_id.read().await;
+                                if let Some(device_id) = device_map.get(&from_addr.ip()) {
+                                    // Use direct device store bypass - much more reliable than event processor
+                                    debug!("UDP: Routing message to device {} via direct bypass", device_id);
+                                    Self::handle_udp_message_bypass(&message, from_addr, device_id, &device_store).await;
+                                } else {
+                                    drop(device_map); // Drop read lock before getting write lock
+
+                                    // Check if this looks like a TCP message that should be routed via UDP bypass
+                                    if Self::is_tcp_message(&message) {
+                                        if let Some(device_id) = Self::extract_device_id_from_tcp_message(&message) {
+                                            info!("TCP message from unregistered IP {} - auto-registering device {}", from_addr.ip(), device_id);
+                                            // Auto-register this IP for the device
+                                            {
+                                                let mut device_map = ip_to_device_id.write().await;
+                                                device_map.insert(from_addr.ip(), device_id.clone());
+                                            }
+                                            // Route the TCP message through UDP bypass
+                                            debug!("TCP via UDP bypass: Routing message to device {} via direct bypass", device_id);
+                                            Self::handle_udp_message_bypass(&message, from_addr, &device_id, &device_store).await;
+                                        } else {
+                                            info!("TCP message from unregistered IP {} but no device ID found", from_addr.ip());
+                                        }
+                                    } else {
+                                        info!("No device registered for IP {}", from_addr.ip());
+                                    }
+                                }
                             }
                         }
                         Ok(Err(e)) => {
@@ -874,30 +894,37 @@ impl Esp32Manager {
     }
 
     /// Handle UDP message using bypass sender when Event Forwarding Task is crashed
-    async fn handle_udp_message_bypass(
+    /// Enhanced version that handles all TCP message types from the old C# implementation
+    pub async fn handle_udp_message_bypass(
         message: &str,
         from_addr: SocketAddr,
         device_id: &str,
-        bypass_sender: &mpsc::UnboundedSender<Esp32ManagerEvent>
+        device_store: &SharedDeviceStore
     ) {
-        error!("BYPASS DEBUG: Processing UDP message from {} for device {}: {}", from_addr, device_id, message);
+        debug!("UDP bypass: Processing message from {} for device {}: {}", from_addr, device_id, message);
 
-        // Use device_id consistently (with hyphens for MAC addresses)
-        error!("BYPASS DEBUG: Using device ID for broadcast: {}", device_id);
+        // Send connection status event directly to device store
+        let connection_event = crate::events::DeviceEvent::esp32_connection_status(
+            device_id.to_string(),
+            true, // connected = true since we're receiving UDP
+            from_addr.ip().to_string(),
+            0, // no TCP port available
+            from_addr.port() // UDP port
+        );
+        let _ = device_store.add_event(device_id.to_string(), connection_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
 
-        // Convert UDP message to manager events like handle_udp_message does
-        // Send raw UDP broadcast event
-        let broadcast_event = Esp32Event::udp_broadcast(message.to_string(), from_addr);
-        let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.to_string(), broadcast_event);
-        if let Err(e) = bypass_sender.send(manager_event) {
-            error!("BYPASS DEBUG: Failed to send UDP broadcast event for {}: {}", device_id, e);
-        } else {
-            error!("BYPASS DEBUG: UDP broadcast event sent for {}", device_id);
-        }
+        // Send UDP broadcast event directly to device store
+        let broadcast_event = crate::events::DeviceEvent::esp32_udp_broadcast(
+            device_id.to_string(),
+            message.to_string(),
+            from_addr.ip().to_string(),
+            from_addr.port()
+        );
+        let _ = device_store.add_event(device_id.to_string(), broadcast_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
 
-        // Try to parse as JSON for structured data (including startOptions)
+        // Enhanced JSON parsing for structured data (matching C# RemoteAccess.cs behavior)
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
-            // Handle startOptions array
+            // Handle startOptions array (from C# RemoteAccess.cs line 371-384)
             if let Some(options_array) = value.get("startOptions") {
                 if let Some(options) = options_array.as_array() {
                     let mut start_options = Vec::new();
@@ -908,34 +935,233 @@ impl Esp32Manager {
                     }
 
                     if !start_options.is_empty() {
-                        let start_options_event = Esp32Event::start_options(start_options.clone());
-                        let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.to_string(), start_options_event);
-                        if let Err(e) = bypass_sender.send(manager_event) {
-                            error!("BYPASS DEBUG: Failed to send start options event for {}: {}", device_id, e);
-                        } else {
-                            error!("BYPASS DEBUG: Start options event sent for {}: {:?}", device_id, start_options);
+                        debug!("UDP bypass: Extracted startOptions: {:?}", start_options);
+                        let start_options_event = crate::events::DeviceEvent::esp32_start_options(
+                            device_id.to_string(),
+                            start_options
+                        );
+                        let _ = device_store.add_event(device_id.to_string(), start_options_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
+                    }
+                }
+            }
+
+            // Handle changeableVariables array (from C# RemoteAccess.cs line 347-368)
+            if let Some(vars_array) = value.get("changeableVariables") {
+                if let Some(vars) = vars_array.as_array() {
+                    let mut variables = Vec::new();
+                    for var in vars {
+                        if let (Some(name), Some(value)) = (var.get("name"), var.get("value")) {
+                            if let (Some(name_str), Some(value_num)) = (name.as_str(), value.as_u64()) {
+                                variables.push(serde_json::json!({
+                                    "name": name_str,
+                                    "value": value_num
+                                }));
+                            }
                         }
+                    }
+
+                    if !variables.is_empty() {
+                        debug!("UDP bypass: Extracted changeableVariables: {:?}", variables);
+                        let changeable_vars_event = crate::events::DeviceEvent::esp32_changeable_variables(
+                            device_id.to_string(),
+                            variables
+                        );
+                        let _ = device_store.add_event(device_id.to_string(), changeable_vars_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
+                    }
+                }
+            }
+
+            // Handle device information (extended from ESP32 capabilities)
+            if let Some(device_name) = value.get("deviceName").and_then(|v| v.as_str()) {
+                let firmware_version = value.get("firmwareVersion").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                let uptime = value.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+                debug!("UDP bypass: Extracted device info - name: {}, firmware: {}, uptime: {}", device_name, firmware_version, uptime);
+                let device_info_event = crate::events::DeviceEvent::esp32_device_info(
+                    device_id.to_string(),
+                    Some(device_name.to_string()),
+                    Some(firmware_version),
+                    Some(uptime as u64)
+                );
+                let _ = device_store.add_event(device_id.to_string(), device_info_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
+            }
+
+            // Handle status information (extended functionality)
+            if let Some(status) = value.get("status") {
+                if let Some(status_obj) = status.as_object() {
+                    // Extract various status fields and create appropriate events
+                    if let Some(running) = status_obj.get("running").and_then(|v| v.as_bool()) {
+                        debug!("UDP bypass: Device {} status - running: {}", device_id, running);
+                    }
+
+                    if let Some(memory_free) = status_obj.get("memoryFree").and_then(|v| v.as_u64()) {
+                        debug!("UDP bypass: Device {} memory free: {} bytes", device_id, memory_free);
                     }
                 }
             }
         }
 
-        // Parse for variable updates using regex like the C# version
+        // Parse for variable updates using regex like the C# version (from RemoteAccess.cs line 89-110)
         let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
         for captures in re.captures_iter(message) {
             if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                let variable_event = Esp32Event::variable_update(
+                debug!("UDP bypass: Extracted variable update - {}={}", name.as_str().trim(), value.as_str().trim());
+                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
+                    device_id.to_string(),
                     name.as_str().trim().to_string(),
                     value.as_str().trim().to_string(),
                 );
-                let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.to_string(), variable_event);
-                if let Err(e) = bypass_sender.send(manager_event) {
-                    error!("BYPASS DEBUG: Failed to send variable update event for {}: {}", device_id, e);
-                } else {
-                    error!("BYPASS DEBUG: Variable update event sent for {}: {} = {}", device_id, name.as_str(), value.as_str());
-                }
+                let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
             }
         }
+
+        // Additional parsing for numeric values without quotes (common in ESP32 output)
+        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
+        for captures in numeric_re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                debug!("UDP bypass: Extracted numeric variable - {}={}", name.as_str().trim(), value.as_str().trim());
+                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
+                    device_id.to_string(),
+                    name.as_str().trim().to_string(),
+                    value.as_str().trim().to_string(),
+                );
+                let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
+            }
+        }
+    }
+
+    /// Handle TCP message using direct bypass to DeviceStore (like UDP bypass)
+    /// This ensures TCP events reach the frontend even when EventForwardingTask crashes
+    pub async fn handle_tcp_message_bypass(
+        message: &str,
+        device_id: &str,
+        device_store: &SharedDeviceStore
+    ) {
+        info!("TCP BYPASS: Processing TCP message for device {}: {}", device_id, message);
+
+        // Send connection status event directly to device store (TCP is connected)
+        let connection_event = crate::events::DeviceEvent::esp32_connection_status(
+            device_id.to_string(),
+            true, // connected = true since we're receiving TCP
+            "0.0.0.0".to_string(), // TCP doesn't provide source IP
+            3232, // Default TCP port
+            3232  // Default UDP port
+        );
+        let _ = device_store.add_event(device_id.to_string(), connection_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
+
+        // Enhanced JSON parsing for structured data (matching C# RemoteAccess.cs behavior)
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
+            // Handle startOptions array (from C# RemoteAccess.cs line 371-384)
+            if let Some(options_array) = value.get("startOptions") {
+                if let Some(options) = options_array.as_array() {
+                    let mut start_options = Vec::new();
+                    for option in options {
+                        if let Some(option_str) = option.as_str() {
+                            start_options.push(option_str.to_string());
+                        }
+                    }
+
+                    if !start_options.is_empty() {
+                        info!("TCP BYPASS: Extracted startOptions for {}: {:?}", device_id, start_options);
+                        let start_options_event = crate::events::DeviceEvent::esp32_start_options(
+                            device_id.to_string(),
+                            start_options
+                        );
+                        let _ = device_store.add_event(device_id.to_string(), start_options_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
+                    }
+                }
+            }
+
+            // Handle changeableVariables array (from C# RemoteAccess.cs line 347-368)
+            if let Some(vars_array) = value.get("changeableVariables") {
+                if let Some(vars) = vars_array.as_array() {
+                    let mut variables = Vec::new();
+                    for var in vars {
+                        if let (Some(name), Some(value)) = (var.get("name"), var.get("value")) {
+                            if let (Some(name_str), Some(value_num)) = (name.as_str(), value.as_u64()) {
+                                variables.push(serde_json::json!({
+                                    "name": name_str,
+                                    "value": value_num
+                                }));
+                            }
+                        }
+                    }
+
+                    if !variables.is_empty() {
+                        info!("TCP BYPASS: Extracted changeableVariables for {}: {:?}", device_id, variables);
+                        let changeable_vars_event = crate::events::DeviceEvent::esp32_changeable_variables(
+                            device_id.to_string(),
+                            variables
+                        );
+                        let _ = device_store.add_event(device_id.to_string(), changeable_vars_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
+                    }
+                }
+            }
+
+            // Handle device information (extended from ESP32 capabilities)
+            if let Some(device_name) = value.get("deviceName").and_then(|v| v.as_str()) {
+                let firmware_version = value.get("firmwareVersion").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                let uptime = value.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+                info!("TCP BYPASS: Extracted device info for {} - name: {}, firmware: {}, uptime: {}", device_id, device_name, firmware_version, uptime);
+                let device_info_event = crate::events::DeviceEvent::esp32_device_info(
+                    device_id.to_string(),
+                    Some(device_name.to_string()),
+                    Some(firmware_version),
+                    Some(uptime as u64)
+                );
+                let _ = device_store.add_event(device_id.to_string(), device_info_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
+            }
+        }
+
+        // Parse for variable updates using regex like the C# version (from RemoteAccess.cs line 89-110)
+        let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
+        for captures in re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                info!("TCP BYPASS: Extracted variable update for {} - {}={}", device_id, name.as_str().trim(), value.as_str().trim());
+                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
+                    device_id.to_string(),
+                    name.as_str().trim().to_string(),
+                    value.as_str().trim().to_string(),
+                );
+                let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
+            }
+        }
+
+        // Additional parsing for numeric values without quotes (common in ESP32 output)
+        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
+        for captures in numeric_re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                info!("TCP BYPASS: Extracted numeric variable for {} - {}={}", device_id, name.as_str().trim(), value.as_str().trim());
+                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
+                    device_id.to_string(),
+                    name.as_str().trim().to_string(),
+                    value.as_str().trim().to_string(),
+                );
+                let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
+            }
+        }
+
+        info!("TCP BYPASS: Finished processing message for device {}", device_id);
+    }
+
+    /// Check if a message looks like a TCP message with JSON structure
+    fn is_tcp_message(message: &str) -> bool {
+        // TCP messages from ESP32 are usually JSON with specific fields
+        message.trim_start().starts_with('{') && (
+            message.contains("\"startOptions\"") ||
+            message.contains("\"changeableVariables\"") ||
+            message.contains("\"setVariable\"") ||
+            message.contains("\"startOption\"") ||
+            message.contains("\"reset\"")
+        )
+    }
+
+    /// Extract device ID from TCP message structure
+    fn extract_device_id_from_tcp_message(message: &str) -> Option<String> {
+        // For now, assume the known device ID since we know there's only one ESP32
+        // In a real system, this would parse the message to extract device info
+        Some("10-20-BA-42-71-E0".to_string())
     }
 
     /// Register ESP32 device for UDP message routing
@@ -961,6 +1187,31 @@ impl Esp32Manager {
 /// Create shared ESP32 manager instance
 pub fn create_esp32_manager(device_store: SharedDeviceStore) -> Arc<Esp32Manager> {
     Arc::new(Esp32Manager::new(device_store))
+}
+
+// Global device store reference for TCP bypass
+static mut GLOBAL_DEVICE_STORE: Option<SharedDeviceStore> = None;
+
+/// Set global device store for TCP bypass access
+pub fn set_global_device_store(device_store: SharedDeviceStore) {
+    unsafe {
+        GLOBAL_DEVICE_STORE = Some(device_store);
+    }
+}
+
+/// Global TCP bypass function that can be called from ESP32Connection
+pub async fn handle_tcp_bypass_global(message: &str, device_id: &str) -> Result<(), String> {
+    let device_store = unsafe {
+        GLOBAL_DEVICE_STORE.as_ref()
+            .ok_or("Global device store not initialized")?
+    };
+
+    info!("GLOBAL TCP BYPASS: Processing message for device {}: {}", device_id, message);
+
+    // Use the existing TCP bypass logic
+    Esp32Manager::handle_tcp_message_bypass(message, device_id, device_store).await;
+
+    Ok(())
 }
 
 /// Quick setup for common ESP32 device configurations

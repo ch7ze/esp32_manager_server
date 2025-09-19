@@ -249,9 +249,18 @@ function processDeviceEvent(deviceId, event) {
     } else if (event.esp32StartOptions) {
         eventType = 'esp32StartOptions';
         eventData = event.esp32StartOptions;
+    } else if (event.event === 'esp32StartOptions') {
+        eventType = 'esp32StartOptions';
+        eventData = event;
     } else if (event.esp32ChangeableVariables) {
         eventType = 'esp32ChangeableVariables';
         eventData = event.esp32ChangeableVariables;
+    } else if (event.event === 'esp32ChangeableVariables') {
+        eventType = 'esp32ChangeableVariables';
+        eventData = event;
+    } else if (event.event === 'esp32ConnectionStatus') {
+        eventType = 'esp32ConnectionStatus';
+        eventData = event;
     } else if (event.userJoined) {
         eventType = 'userJoined';
         eventData = event.userJoined;
@@ -560,10 +569,13 @@ function showDevicesContainer() {
 }
 
 function updateConnectionStatus(deviceId, connected) {
+    console.log(`ESP32 DEBUG: updateConnectionStatus called for device ${deviceId} connected: ${connected}`);
     // Update all status indicators for this device
     const statusElements = document.querySelectorAll(`[id*="${deviceId}"] .status-dot`);
+    console.log(`ESP32 DEBUG: Found ${statusElements.length} status elements for device ${deviceId}`);
     statusElements.forEach(el => {
         el.className = `status-dot ${getStatusClass(connected)}`;
+        console.log(`ESP32 DEBUG: Updated status element class to: status-dot ${getStatusClass(connected)}`);
     });
 }
 
@@ -625,45 +637,84 @@ function updateVariableMonitor(deviceId, name, value) {
 }
 
 function updateStartOptions(deviceId, options) {
-    const selectEl = document.getElementById(`${deviceId}-start-select`);
-    if (selectEl) {
-        selectEl.innerHTML = '<option value="">Select option...</option>';
-        options.forEach(option => {
-            const optionEl = document.createElement('option');
-            optionEl.value = option;
-            optionEl.textContent = option;
-            selectEl.appendChild(optionEl);
-        });
+    console.log(`ESP32 DEBUG: updateStartOptions called for device ${deviceId} with options:`, options);
+
+    // Update all layout variants (tab, stack, grid)
+    const suffixes = ['tab', 'stack', 'grid'];
+    let updated = false;
+
+    suffixes.forEach(suffix => {
+        const selectId = `${deviceId}-${suffix}-start-select`;
+        const selectEl = document.getElementById(selectId);
+        console.log(`ESP32 DEBUG: Element with ID '${selectId}' found:`, selectEl);
+
+        if (selectEl) {
+            selectEl.innerHTML = '<option value="">Select option...</option>';
+            console.log(`ESP32 DEBUG: Adding ${options.length} options to ${suffix} select`);
+            options.forEach(option => {
+                const optionEl = document.createElement('option');
+                optionEl.value = option;
+                optionEl.textContent = option;
+                selectEl.appendChild(optionEl);
+            });
+            console.log(`ESP32 DEBUG: Updated ${suffix} select with options:`, options);
+            updated = true;
+        }
+    });
+
+    if (!updated) {
+        console.error(`ESP32 DEBUG: Cannot update start options - no select elements found for device ${deviceId}`);
+    } else {
+        console.log(`ESP32 DEBUG: Successfully updated start options for device ${deviceId}`);
     }
 }
 
 function updateVariableControls(deviceId, variables) {
-    const containerEl = document.getElementById(`${deviceId}-variables`);
-    if (containerEl) {
-        if (variables.length === 0) {
-            containerEl.innerHTML = '<p class="text-muted">No variables available</p>';
-            return;
+    // Update all layout variants (tab, stack, grid)
+    const suffixes = ['tab', 'stack', 'grid'];
+    let updated = false;
+
+    suffixes.forEach(suffix => {
+        const containerId = `${deviceId}-${suffix}-variables`;
+        const containerEl = document.getElementById(containerId);
+        console.log(`ESP32 DEBUG: Variable container with ID '${containerId}' found:`, containerEl);
+
+        if (containerEl) {
+            console.log(`ESP32 DEBUG: Updating ${suffix} variables container with:`, variables);
+            updateVariableControlsForContainer(containerEl, variables, deviceId);
+            updated = true;
         }
-        
-        containerEl.innerHTML = '';
-        variables.forEach(variable => {
-            const variableEl = document.createElement('div');
-            variableEl.className = 'variable-item';
-            variableEl.innerHTML = `
-                <div class="variable-name">${variable.name}</div>
-                <input type="number" 
-                       class="form-control variable-value" 
-                       value="${variable.value}"
-                       min="0"
-                       onkeypress="handleVariableKeyPress(event, '${deviceId}', '${variable.name}')">
-                <button class="btn btn-sm btn-outline-primary" 
-                        onclick="sendVariable('${deviceId}', '${variable.name}')">
-                    <i class="bi bi-send"></i>
-                </button>
-            `;
-            containerEl.appendChild(variableEl);
-        });
+    });
+
+    if (!updated) {
+        console.error(`ESP32 DEBUG: Cannot update variable controls - no containers found for device ${deviceId}`);
     }
+}
+
+function updateVariableControlsForContainer(containerEl, variables, deviceId) {
+    if (variables.length === 0) {
+        containerEl.innerHTML = '<p class="text-muted">No variables available</p>';
+        return;
+    }
+
+    containerEl.innerHTML = '';
+    variables.forEach(variable => {
+        const variableEl = document.createElement('div');
+        variableEl.className = 'variable-item';
+        variableEl.innerHTML = `
+            <div class="variable-name">${variable.name}</div>
+            <input type="number"
+                   class="form-control variable-value"
+                   value="${variable.value}"
+                   min="0"
+                   onkeypress="handleVariableKeyPress(event, '${deviceId}', '${variable.name}')">
+            <button class="btn btn-sm btn-outline-primary"
+                    onclick="sendVariable('${deviceId}', '${variable.name}')">
+                <i class="bi bi-send"></i>
+            </button>
+        `;
+        containerEl.appendChild(variableEl);
+    });
 }
 
 function updateDeviceUsers(deviceId) {
@@ -685,18 +736,40 @@ function updateDeviceUsers(deviceId) {
 
 // Event handlers
 function sendStartOption(deviceId) {
-    const selectEl = document.getElementById(`${deviceId}-start-select`);
-    if (selectEl && selectEl.value && esp32Websocket) {
+    console.log(`ESP32 DEBUG: sendStartOption called for device ${deviceId}`);
+
+    // Try to find select element from any layout (tab, stack, grid)
+    const suffixes = ['tab', 'stack', 'grid'];
+    let selectedValue = null;
+    let foundElement = null;
+
+    for (const suffix of suffixes) {
+        const selectId = `${deviceId}-${suffix}-start-select`;
+        const selectEl = document.getElementById(selectId);
+        console.log(`ESP32 DEBUG: Checking ${selectId}, found:`, selectEl);
+
+        if (selectEl && selectEl.value) {
+            selectedValue = selectEl.value;
+            foundElement = selectEl;
+            console.log(`ESP32 DEBUG: Found selected value '${selectedValue}' in ${suffix} layout`);
+            break;
+        }
+    }
+
+    if (foundElement && selectedValue && esp32Websocket) {
+        console.log(`ESP32 DEBUG: Sending start option: ${selectedValue}`);
         esp32Websocket.send(JSON.stringify({
             type: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
                 event: 'esp32Command',
                 command: {
-                    startOption: selectEl.value
+                    startOption: selectedValue
                 }
             }]
         }));
+    } else {
+        console.error(`ESP32 DEBUG: Cannot send start option - no element found or no value selected`);
     }
 }
 

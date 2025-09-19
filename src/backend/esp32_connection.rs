@@ -207,6 +207,7 @@ impl Esp32Connection {
         let event_sender = self.event_sender.clone();
         let connection_state = Arc::clone(&self.connection_state);
         let device_id = self.config.device_id.clone();
+        let device_config = self.config.clone();
         
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -240,11 +241,23 @@ impl Esp32Connection {
                             {
                                 let mut buf = tcp_buffer.lock().await;
                                 buf.push_str(&chunk);
-                                
+
                                 // Try to extract complete JSON messages
                                 while let Some(json_str) = extract_complete_json(&mut buf) {
-                                    if let Err(e) = handle_tcp_message(&json_str, &event_sender).await {
-                                        error!("Failed to handle TCP message from {}: {}", device_id, e);
+                                    info!("TCP BYPASS: Processing message for device {}: {}", device_id, json_str);
+
+                                    // DISABLE EventForwardingTask for TCP to prevent duplicate events
+                                    // EventForwardingTask is unreliable and causes race conditions with TCP bypass
+                                    // if let Err(e) = handle_tcp_message(&json_str, &event_sender).await {
+                                    //     error!("TCP EventForwardingTask failed for device {}: {}", device_id, e);
+                                    // }
+
+                                    // Use ONLY TCP bypass for reliable message processing (like UDP bypass)
+                                    info!("TCP BYPASS: Using direct bypass for device {} (EventForwardingTask disabled)", device_id);
+
+                                    // Call global TCP bypass function
+                                    if let Err(e) = crate::esp32_manager::handle_tcp_bypass_global(&json_str, &device_id).await {
+                                        error!("TCP BYPASS: Global bypass failed for device {}: {}", device_id, e);
                                     }
                                 }
                             }
@@ -323,10 +336,11 @@ fn extract_complete_json(buffer: &mut String) -> Option<String> {
 }
 
 /// Handle incoming TCP message from ESP32
+/// Enhanced version that matches the UDP bypass functionality and C# implementation
 async fn handle_tcp_message(json_str: &str, event_sender: &mpsc::UnboundedSender<Esp32Event>) -> Esp32Result<()> {
     let value: Value = serde_json::from_str(json_str)?;
-    
-    // Handle changeableVariables array
+
+    // Handle changeableVariables array (from C# RemoteAccess.cs line 347-368)
     if let Some(vars_array) = value.get("changeableVariables") {
         if let Some(vars) = vars_array.as_array() {
             let mut variables = Vec::new();
@@ -340,15 +354,16 @@ async fn handle_tcp_message(json_str: &str, event_sender: &mpsc::UnboundedSender
                     }
                 }
             }
-            
+
             if !variables.is_empty() {
+                debug!("TCP: Extracted changeableVariables: {:?}", variables);
                 let event = Esp32Event::changeable_variables(variables);
                 let _ = event_sender.send(event);
             }
         }
     }
-    
-    // Handle startOptions array
+
+    // Handle startOptions array (from C# RemoteAccess.cs line 371-384)
     if let Some(options_array) = value.get("startOptions") {
         if let Some(options) = options_array.as_array() {
             let mut start_options = Vec::new();
@@ -357,15 +372,59 @@ async fn handle_tcp_message(json_str: &str, event_sender: &mpsc::UnboundedSender
                     start_options.push(option_str.to_string());
                 }
             }
-            
+
             if !start_options.is_empty() {
+                debug!("TCP: Extracted startOptions: {:?}", start_options);
                 let event = Esp32Event::start_options(start_options);
                 let _ = event_sender.send(event);
             }
         }
     }
-    
+
+    // Handle device information (enhanced from ESP32 capabilities)
+    if let Some(device_name) = value.get("deviceName").and_then(|v| v.as_str()) {
+        let firmware_version = value.get("firmwareVersion").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+        let uptime = value.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+        debug!("TCP: Extracted device info - name: {}, firmware: {}, uptime: {}", device_name, firmware_version, uptime);
+        let device_info_event = Esp32Event::DeviceInfo {
+            device_id: "tcp_device".to_string(), // Will be overridden by manager
+            device_name: Some(device_name.to_string()),
+            firmware_version: Some(firmware_version),
+            uptime: Some(uptime as u64),
+        };
+        let _ = event_sender.send(device_info_event);
+    }
+
+    // Handle individual variable updates (similar to UDP parsing)
+    for (key, val) in value.as_object().unwrap_or(&serde_json::Map::new()) {
+        if key != "changeableVariables" && key != "startOptions" && key != "deviceName" && key != "firmwareVersion" && key != "uptime" {
+            if let Some(val_str) = val.as_str() {
+                debug!("TCP: Extracted individual variable - {}={}", key, val_str);
+                let variable_event = Esp32Event::variable_update(key.clone(), val_str.to_string());
+                let _ = event_sender.send(variable_event);
+            } else if let Some(val_num) = val.as_u64() {
+                debug!("TCP: Extracted individual numeric variable - {}={}", key, val_num);
+                let variable_event = Esp32Event::variable_update(key.clone(), val_num.to_string());
+                let _ = event_sender.send(variable_event);
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// Handle TCP message using direct bypass to DeviceStore (like UDP bypass)
+/// This ensures TCP events reach the frontend even when EventForwardingTask crashes
+async fn handle_tcp_message_bypass(json_str: &str, device_id: &str) {
+    info!("TCP BYPASS: Processing TCP message for device {}: {}", device_id, json_str);
+
+    // For now, we'll log the bypass logic but can't call DeviceStore directly from here
+    // The DeviceStore access needs to be done from ESP32Manager
+    // This is a placeholder that will be replaced by a call from ESP32Manager
+
+    warn!("TCP BYPASS: TCP bypass logic needs to be called from ESP32Manager with DeviceStore access");
+    warn!("TCP BYPASS: Message for device {}: {}", device_id, json_str);
 }
 
 /// Handle incoming UDP message from ESP32
