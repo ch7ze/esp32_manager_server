@@ -658,10 +658,25 @@ function updateVariableMonitor(deviceId, name, value) {
         const monitorEl = document.getElementById(monitorId);
 
         if (monitorEl) {
+            // Look for existing variable entry
+            const variableId = `${monitorId}-${name}`;
+            let existingDiv = document.getElementById(variableId);
+
             const timestamp = new Date().toLocaleTimeString();
-            const existingContent = monitorEl.innerHTML;
-            monitorEl.innerHTML = existingContent + `<br>[${timestamp}] ${name}: ${value}`;
-            monitorEl.scrollTop = monitorEl.scrollHeight;
+            const content = `[${timestamp}] ${name}: ${value}`;
+
+            if (existingDiv) {
+                // Update existing variable in place
+                existingDiv.textContent = content;
+            } else {
+                // Create new variable entry
+                existingDiv = document.createElement('div');
+                existingDiv.id = variableId;
+                existingDiv.textContent = content;
+                existingDiv.style.marginBottom = '2px';
+                monitorEl.appendChild(existingDiv);
+            }
+
             updated = true;
         }
     });
