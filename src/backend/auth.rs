@@ -92,11 +92,6 @@ pub struct AuthResponse {
     pub email: Option<String>,
 }
 
-// Thread-safe user store
-pub type UserStore = Arc<RwLock<HashMap<String, User>>>;
-
-// Thread-safe ESP32 device store
-pub type DeviceStore = Arc<RwLock<HashMap<String, ESP32Device>>>;
 
 // JWT token creation and validation
 pub fn create_jwt(user: &User) -> Result<String, jsonwebtoken::errors::Error> {
@@ -132,32 +127,6 @@ pub fn create_jwt(user: &User) -> Result<String, jsonwebtoken::errors::Error> {
 }
 
 // Create JWT with actual device permissions from store
-pub fn create_jwt_with_device_permissions(user: &User, device_store: &HashMap<String, ESP32Device>) -> Result<String, jsonwebtoken::errors::Error> {
-    // Token expires after 24 hours
-    let expiration = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
-        .expect("valid timestamp")
-        .timestamp() as usize;
-
-    // Load actual device permissions from store
-    let device_permissions = get_user_device_permissions(device_store, &user.id);
-
-    // Token claims
-    let claims = Claims {
-        user_id: user.id.clone(),
-        email: user.email.clone(),
-        display_name: user.display_name.clone(),
-        device_permissions,
-        exp: expiration,
-    };
-
-    // Create and sign the token
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(JWT_SECRET),
-    )
-}
 
 // Validates a JWT token and returns the claims
 // Website feature: Checks if a user is still logged in

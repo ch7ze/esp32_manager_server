@@ -21,7 +21,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use futures::{sink::SinkExt, stream::StreamExt};
 use tracing::{info, warn, error, debug};
-use serde_json;
 
 // ============================================================================
 // APPLICATION STATE FOR WEBSOCKET

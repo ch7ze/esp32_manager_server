@@ -568,28 +568,6 @@ async fn serve_markdown_file(file_path: &str) -> impl IntoResponse {
     }
 }
 
-// Static file handler
-async fn serve_static_file(file_path: &str) -> impl IntoResponse {
-    match fs::read(file_path) {
-        Ok(contents) => {
-            let mime_type = mime_guess::from_path(file_path)
-                .first_or_octet_stream()
-                .to_string();
-            
-            Response::builder()
-                .header("content-type", mime_type)
-                .header("cache-control", "no-cache, must-revalidate")
-                .body(Body::from(contents))
-                .unwrap()
-        }
-        Err(_) => {
-            Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("File not found"))
-                .unwrap()
-        }
-    }
-}
 
 
 
@@ -1247,102 +1225,6 @@ async fn update_device_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-// POST /api/canvas/:id/permissions - Manage permissions for a canvas
-async fn update_esp32_device_permissions_handler(
-    State(app_state): State<AppState>,
-    cookie_jar: CookieJar,
-    Path(canvas_id): Path<String>,
-    Json(req): Json<UpdatePermissionRequest>,
-) -> Result<Response<Body>, StatusCode> {
-    // Validate JWT token (optional)
-    let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
-    
-    let user_id = match token {
-        Some(token_value) => {
-            match validate_jwt(token_value) {
-                Ok(claims) => Some(claims.user_id),
-                Err(_) => None,
-            }
-        }
-        None => None,
-    };
-
-    // Permission validieren
-    if req.permission != "REMOVE" && !is_valid_permission(&req.permission) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    // Canvas existenz prüfen
-    let _canvas = match app_state.db.get_esp32_device_by_id(&canvas_id).await {
-        Ok(Some(canvas)) => canvas,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
-        Err(e) => {
-            tracing::error!("Database error loading canvas: {:?}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
-    // For guest users, allow all permission operations
-    let can_grant = match &user_id {
-        Some(uid) => {
-            // Check if user can grant permissions
-            let user_permission = match app_state.db.get_user_device_permission(&canvas_id, uid).await {
-                Ok(Some(permission)) => permission,
-                Ok(None) => return Err(StatusCode::FORBIDDEN),
-                Err(e) => {
-                    tracing::error!("Database error checking user permission: {:?}", e);
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                }
-            };
-
-            // Check permission to grant
-            match user_permission.as_str() {
-                "O" => true, // Owner can grant all permissions
-                "M" => ["R", "W", "V"].contains(&req.permission.as_str()), // Moderator can grant up to V
-                _ => false,
-            }
-        }
-        None => true, // Guest users can grant all permissions
-    };
-
-    if !can_grant && req.permission != "REMOVE" {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    // Update or remove permission
-    let result = if req.permission == "REMOVE" {
-        app_state.db.remove_device_permission(&canvas_id, &req.user_id).await
-    } else {
-        app_state.db.set_device_permission(&canvas_id, &req.user_id, &req.permission).await
-    };
-
-    if let Err(e) = result {
-        tracing::error!("Database error updating permission: {:?}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    // Aktualisierte Berechtigungen laden
-    let updated_permissions = match app_state.db.get_device_permissions(&canvas_id).await {
-        Ok(permissions) => permissions,
-        Err(e) => {
-            tracing::error!("Database error loading updated permissions: {:?}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
-    let user_info = user_id.unwrap_or_else(|| "guest".to_string());
-    tracing::info!("Canvas permission updated: {} {} for canvas {} by {}", 
-                   req.user_id, req.permission, canvas_id, user_info);
-
-    Response::builder()
-        .header("content-type", "application/json")
-        .body(Body::from(json!({
-            "success": true,
-            "message": "Permission updated successfully",
-            "permissions": updated_permissions
-        }).to_string()))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
 
 // POST /api/canvas-permissions/:id - Vereinfachter Permission Handler (optional auth)
 async fn simple_permissions_handler(
