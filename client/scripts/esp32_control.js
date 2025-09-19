@@ -360,8 +360,14 @@ function renderDevices() {
         createDeviceStackContent(device);
         createDeviceGridContent(device);
     });
-    
+
     showDevicesContainer();
+
+    // Apply dynamic layout immediately after devices are created
+    const aspectRatio = window.innerWidth / window.innerHeight;
+    const isLandscape = aspectRatio > 1.2;
+    console.log(`ESP32 LAYOUT DEBUG: Initial layout application - aspectRatio: ${aspectRatio}, isLandscape: ${isLandscape}`);
+    applyDynamicLayout(isLandscape);
 }
 
 function createDeviceTabContent(device, isActive) {
@@ -434,51 +440,60 @@ function createDeviceGridContent(device) {
 
 function createDeviceContent(device, suffix = '') {
     const idPrefix = suffix ? `${device.id}-${suffix}` : device.id;
+
     return `
-        <!-- Control Panel -->
-        <div class="start-options-area">
-            <h6><i class="bi bi-play-circle"></i> Device Control</h6>
-            <div class="row align-items-end">
-                <div class="col-md-4">
-                    <label class="form-label">Start Option</label>
-                    <select class="form-select" id="${idPrefix}-start-select">
-                        <option value="">Select option...</option>
-                    </select>
-                </div>
-                <div class="col-md-4">
-                    <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="${idPrefix}-auto-start">
-                        <label class="form-check-label" for="${idPrefix}-auto-start">Auto Start</label>
+        <div class="device-layout" id="${idPrefix}-layout">
+            <div class="main-container" id="${idPrefix}-main">
+                <div class="left-panel">
+                    <!-- Control Panel -->
+                    <div class="start-options-area">
+                        <h6><i class="bi bi-play-circle"></i> Device Control</h6>
+                        <div class="row align-items-end">
+                            <div class="col-md-4">
+                                <label class="form-label">Start Option</label>
+                                <select class="form-select" id="${idPrefix}-start-select">
+                                    <option value="">Select option...</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="${idPrefix}-auto-start">
+                                    <label class="form-check-label" for="${idPrefix}-auto-start">Auto Start</label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <button class="btn btn-success me-2" onclick="sendStartOption('${device.id}')">
+                                    <i class="bi bi-play"></i> Start
+                                </button>
+                                <button class="btn btn-danger" onclick="sendReset('${device.id}')">
+                                    <i class="bi bi-arrow-clockwise"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Variable Controls -->
+                    <div class="variable-control">
+                        <h6><i class="bi bi-sliders"></i> Variable Control</h6>
+                        <div id="${idPrefix}-variables">
+                            <p class="text-muted">No variables available</p>
+                        </div>
+                    </div>
+
+                    <!-- Variable Monitor -->
+                    <div class="variable-monitor-section">
+                        <h6><i class="bi bi-link-45deg"></i> Variable Monitor</h6>
+                        <div class="monitor-area" id="${idPrefix}-variable-monitor"></div>
                     </div>
                 </div>
-                <div class="col-md-4">
-                    <button class="btn btn-success me-2" onclick="sendStartOption('${device.id}')">
-                        <i class="bi bi-play"></i> Start
-                    </button>
-                    <button class="btn btn-danger" onclick="sendReset('${device.id}')">
-                        <i class="bi bi-arrow-clockwise"></i> Reset
-                    </button>
+
+                <div class="right-panel">
+                    <!-- UDP Monitor -->
+                    <div class="udp-monitor-section">
+                        <h6><i class="bi bi-broadcast"></i> UDP Monitor</h6>
+                        <div class="monitor-area" id="${idPrefix}-udp-monitor"></div>
+                    </div>
                 </div>
-            </div>
-        </div>
-
-        <!-- Variable Controls -->
-        <div class="variable-control">
-            <h6><i class="bi bi-sliders"></i> Variable Control</h6>
-            <div id="${idPrefix}-variables">
-                <p class="text-muted">No variables available</p>
-            </div>
-        </div>
-
-        <!-- Monitors -->
-        <div class="row">
-            <div class="col-lg-6">
-                <h6><i class="bi bi-broadcast"></i> UDP Monitor</h6>
-                <div class="monitor-area" id="${idPrefix}-udp-monitor"></div>
-            </div>
-            <div class="col-lg-6">
-                <h6><i class="bi bi-link-45deg"></i> Variable Monitor</h6>
-                <div class="monitor-area" id="${idPrefix}-variable-monitor"></div>
             </div>
         </div>
     `;
@@ -557,22 +572,54 @@ function showSpecificDeviceNotFound(deviceId) {
 function showDevicesContainer() {
     document.getElementById('loading-state').style.display = 'none';
     document.getElementById('no-devices-state').style.display = 'none';
-    
-    // Show appropriate layout based on screen size
+
+    // Hide all layouts first
+    document.getElementById('esp32-grid').style.display = 'none';
+    document.getElementById('esp32-tabs').style.display = 'none';
+    document.getElementById('esp32-stack').style.display = 'none';
+
+    // Show appropriate layout based on screen size and aspect ratio
+    const aspectRatio = window.innerWidth / window.innerHeight;
+    const isLandscape = aspectRatio > 1.2; // Landscape if wider than 1.2:1
+
     if (window.innerWidth >= 1400) {
         document.getElementById('esp32-grid').style.display = 'grid';
-    } else if (window.innerWidth >= 769) {
+    } else if (window.innerWidth >= 600) {
         document.getElementById('esp32-tabs').style.display = 'block';
     } else {
         document.getElementById('esp32-stack').style.display = 'block';
     }
+
+    // Apply dynamic layout based on aspect ratio
+    applyDynamicLayout(isLandscape);
 }
+
+function applyDynamicLayout(isLandscape) {
+    // Add or remove CSS class based on orientation
+    const containers = document.querySelectorAll('.main-container');
+
+    console.log(`ESP32 LAYOUT DEBUG: Found ${containers.length} main containers, isLandscape: ${isLandscape}`);
+
+    containers.forEach(container => {
+        if (isLandscape) {
+            container.classList.add('landscape-layout');
+            container.classList.remove('portrait-layout');
+            console.log(`ESP32 LAYOUT DEBUG: Added landscape-layout class`);
+        } else {
+            container.classList.add('portrait-layout');
+            container.classList.remove('landscape-layout');
+            console.log(`ESP32 LAYOUT DEBUG: Added portrait-layout class`);
+        }
+    });
+}
+
 
 function updateConnectionStatus(deviceId, connected) {
     console.log(`ESP32 DEBUG: updateConnectionStatus called for device ${deviceId} connected: ${connected}`);
 
     // Update status dots in tab buttons
-    const tabStatusElements = document.querySelectorAll(`[id="${deviceId}-tab"] .status-dot`);
+    const escapedDeviceId = CSS.escape(deviceId);
+    const tabStatusElements = document.querySelectorAll(`[id="${escapedDeviceId}-tab"] .status-dot`);
     console.log(`ESP32 DEBUG: Found ${tabStatusElements.length} tab status dot elements for device ${deviceId}`);
     tabStatusElements.forEach(el => {
         el.className = `status-dot ${getStatusClass(connected)}`;
@@ -757,6 +804,7 @@ function updateVariableControlsForContainer(containerEl, variables, deviceId) {
             <div class="variable-name">${variable.name}</div>
             <input type="number"
                    class="form-control variable-value"
+                   data-variable-name="${variable.name}"
                    value="${variable.value}"
                    min="0"
                    onkeypress="handleVariableKeyPress(event, '${deviceId}', '${variable.name}')">
@@ -851,10 +899,32 @@ window.refreshDevices = refreshDevices;
 window.initializeWebSocket = initializeWebSocket;
 
 function sendVariable(deviceId, variableName) {
-    const inputEl = document.querySelector(`#${deviceId}-variables input[onkeypress*="${variableName}"]`);
+    console.log(`ESP32 FRONTEND DEBUG: sendVariable called with deviceId: ${deviceId}, variableName: ${variableName}`);
+
+    // Find input element across all possible layouts (tabs, stack, grid)
+    const suffixes = ['tabs', 'stack', 'grid'];
+    let inputEl = null;
+
+    for (const suffix of suffixes) {
+        const containerId = `${deviceId}-${suffix}-variables`;
+        const container = document.getElementById(containerId);
+
+        if (container) {
+            inputEl = container.querySelector(`input[data-variable-name="${variableName}"]`);
+            if (inputEl) {
+                console.log(`ESP32 FRONTEND DEBUG: Found input in ${suffix} layout`);
+                break;
+            }
+        }
+    }
+
+    console.log(`ESP32 FRONTEND DEBUG: inputEl found:`, inputEl);
+
     if (inputEl && esp32Websocket) {
         const value = parseInt(inputEl.value) || 0;
-        esp32Websocket.send(JSON.stringify({
+        console.log(`ESP32 FRONTEND DEBUG: Sending variable ${variableName} = ${value} for device ${deviceId}`);
+
+        const message = {
             type: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
@@ -867,7 +937,12 @@ function sendVariable(deviceId, variableName) {
                     }
                 }
             }]
-        }));
+        };
+
+        console.log(`ESP32 FRONTEND DEBUG: WebSocket message:`, JSON.stringify(message, null, 2));
+        esp32Websocket.send(JSON.stringify(message));
+    } else {
+        console.error(`ESP32 FRONTEND DEBUG: Cannot send variable - inputEl: ${!!inputEl}, websocket: ${!!esp32Websocket}`);
     }
 }
 
@@ -891,6 +966,11 @@ function logout() {
 window.addEventListener('resize', function() {
     if (esp32Devices.size > 0) {
         showDevicesContainer();
+
+        // Also apply dynamic layout immediately
+        const aspectRatio = window.innerWidth / window.innerHeight;
+        const isLandscape = aspectRatio > 1.2;
+        applyDynamicLayout(isLandscape);
     }
 });
 

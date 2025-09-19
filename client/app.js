@@ -45,7 +45,7 @@ const pages = {
         template: 'esp32_control.html',
         defaultPath: '/devices/:id',
         scripts: ['esp32_control.js'],
-        styles: [],
+        styles: ['esp32_control.css'],
         requiresAuth: false
     },
     'docs': {

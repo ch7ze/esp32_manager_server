@@ -1,4 +1,85 @@
 /* ESP32-specific styling - Modern Design */
+
+/* Dynamic layout based on aspect ratio */
+.main-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* Landscape layout - left panel with everything except UDP, UDP on right */
+.main-container.landscape-layout {
+    flex-direction: row;
+    gap: 30px;
+    height: calc(100vh - 150px); /* Full viewport height minus header/nav */
+    overflow: hidden;
+}
+
+.main-container.landscape-layout .left-panel {
+    flex: 1; /* Left panel takes available space */
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto; /* Scroll if content too tall */
+}
+
+.main-container.landscape-layout .right-panel {
+    flex: 1.5; /* UDP monitor takes more space */
+    display: flex;
+    flex-direction: column;
+}
+
+.main-container.landscape-layout .udp-monitor-section {
+    height: 100%; /* Take full available height */
+    display: flex;
+    flex-direction: column;
+}
+
+.main-container.landscape-layout .udp-monitor-section .monitor-area {
+    flex: 1 !important; /* Take all remaining space */
+    min-height: 0 !important; /* Allow shrinking */
+    height: auto !important; /* Override fixed height */
+    max-height: none !important; /* Override max-height */
+}
+
+.main-container.landscape-layout .variable-monitor-section .monitor-area {
+    height: 200px !important; /* Smaller variable monitor */
+    max-height: 200px !important; /* Override default max-height */
+}
+
+/* Portrait layout - everything stacked vertically */
+.main-container.portrait-layout {
+    flex-direction: column;
+}
+
+.main-container.portrait-layout .left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.main-container.portrait-layout .variable-monitor-section .monitor-area {
+    height: 250px !important;
+    max-height: 250px !important;
+}
+
+.main-container.portrait-layout .udp-monitor-section .monitor-area {
+    height: 500px !important; /* Double height for UDP monitor in portrait */
+    max-height: 500px !important; /* Override default max-height */
+}
+
+/* Default mobile layout */
+@media (max-width: 768px) {
+    .main-container {
+        flex-direction: column !important;
+    }
+
+    .left-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+}
 .esp32-device-card {
     background: rgba(255, 255, 255, 0.95);
     border: none;
