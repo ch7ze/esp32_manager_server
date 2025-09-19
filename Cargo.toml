@@ -33,6 +33,7 @@ pulldown-cmark = "0.9"
 regex = "1.0"
 thiserror = "1.0"
 mdns-sd = "0.11"
+socket2 = "0.5"
 
 
 [profile.dev]

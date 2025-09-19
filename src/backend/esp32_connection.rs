@@ -155,14 +155,60 @@ impl Esp32Connection {
     /// Send command to ESP32 via TCP
     pub async fn send_command(&self, command: Esp32Command) -> Esp32Result<()> {
         debug!("Sending command to ESP32 {}: {:?}", self.config.device_id, command);
-        
+
+        // Check if this is a reset command (which will close the TCP connection)
+        let is_reset_command = matches!(command, Esp32Command::Reset { .. });
+        if is_reset_command {
+            info!("RESET COMMAND: ESP32 {} will reset and close TCP connection - this is expected behavior", self.config.device_id);
+        }
+
         let json_str = command.to_json()?;
-        
+
         let mut tcp = self.tcp_stream.lock().await;
         if let Some(stream) = tcp.as_mut() {
-            stream.write_all(json_str.as_bytes()).await?;
-            stream.flush().await?;
+            // Send the command
+            let write_result = stream.write_all(json_str.as_bytes()).await;
+            if let Err(e) = write_result {
+                if is_reset_command {
+                    info!("RESET COMMAND: Write failed for device {} (expected during reset): {}", self.config.device_id, e);
+                    return Ok(()); // Reset commands are expected to fail during write/flush
+                } else {
+                    return Err(e.into());
+                }
+            }
+
+            // Flush the command
+            let flush_result = stream.flush().await;
+            if let Err(e) = flush_result {
+                if is_reset_command {
+                    info!("RESET COMMAND: Flush failed for device {} (expected during reset): {}", self.config.device_id, e);
+                    return Ok(()); // Reset commands are expected to fail during write/flush
+                } else {
+                    return Err(e.into());
+                }
+            }
+
             debug!("Command sent successfully: {}", json_str);
+
+            // For reset commands, immediately mark connection as disconnected
+            if is_reset_command {
+                info!("RESET COMMAND: Marking connection as disconnected for device {} after reset", self.config.device_id);
+                *tcp = None; // Close our side of the connection
+
+                // Update connection state
+                {
+                    let mut state = self.connection_state.write().await;
+                    *state = ConnectionState::Disconnected;
+                }
+
+                // Send disconnect event
+                if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(&self.config.device_id).await {
+                    warn!("RESET COMMAND: Failed to send disconnect event after reset for device {}: {}", self.config.device_id, e);
+                } else {
+                    info!("RESET COMMAND: Disconnect event sent after reset for device {}", self.config.device_id);
+                }
+            }
+
             Ok(())
         } else {
             // No TCP connection available, try to reconnect
@@ -206,12 +252,43 @@ impl Esp32Connection {
     async fn connect_tcp(&self) -> Esp32Result<()> {
         let tcp_addr = self.config.tcp_addr();
         debug!("Connecting to TCP address: {}", tcp_addr);
-        
+
         // Try to connect with timeout
         let stream = timeout(Duration::from_secs(5), TcpStream::connect(tcp_addr))
             .await
             .map_err(|_| Esp32Error::Timeout)?
             .map_err(|e| Esp32Error::ConnectionFailed(format!("TCP connection failed: {}", e)))?;
+
+        // Configure TCP socket for faster disconnect detection
+        if let Err(e) = stream.set_nodelay(true) {
+            warn!("Failed to set TCP_NODELAY for device {}: {}", self.config.device_id, e);
+        }
+
+        // Enable TCP keep-alive with shorter intervals
+        let socket2_socket = socket2::Socket::from(stream.into_std()?);
+
+        // Enable keep-alive
+        if let Err(e) = socket2_socket.set_keepalive(true) {
+            warn!("Failed to enable TCP keep-alive for device {}: {}", self.config.device_id, e);
+        }
+
+        // Set keep-alive parameters (Linux/Windows specific)
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            use socket2::TcpKeepalive;
+            let keepalive = TcpKeepalive::new()
+                .with_time(Duration::from_secs(10))    // Start after 10 seconds of inactivity
+                .with_interval(Duration::from_secs(5)); // Send probe every 5 seconds
+
+            if let Err(e) = socket2_socket.set_tcp_keepalive(&keepalive) {
+                warn!("Failed to set TCP keep-alive parameters for device {}: {}", self.config.device_id, e);
+            } else {
+                info!("TCP keep-alive enabled for device {} (10s idle, 5s interval)", self.config.device_id);
+            }
+        }
+
+        // Convert back to tokio TcpStream
+        let stream = TcpStream::from_std(socket2_socket.into())?;
         
         // Store stream
         {
@@ -237,10 +314,12 @@ impl Esp32Connection {
         let connection_state = Arc::clone(&self.connection_state);
         let device_id = self.config.device_id.clone();
         let _device_config = self.config.clone();
-        
+
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
-            
+            let mut last_data_time = std::time::Instant::now();
+            let connection_timeout = Duration::from_secs(30); // 30 seconds without data = disconnect
+
             loop {
                 // Check for shutdown signal
                 if shutdown_rx.try_recv().is_ok() {
@@ -248,21 +327,57 @@ impl Esp32Connection {
                     break;
                 }
                 
+                // Check for connection timeout (e.g., when ESP32 loses power)
+                if last_data_time.elapsed() > connection_timeout {
+                    warn!("TCP CONNECTION TIMEOUT: No data received from device {} for {:?} - assuming disconnected", device_id, connection_timeout);
+
+                    // Close connection and update state
+                    {
+                        let mut tcp = tcp_stream.lock().await;
+                        *tcp = None;
+                    }
+
+                    {
+                        let mut state = connection_state.write().await;
+                        *state = ConnectionState::Disconnected;
+                    }
+
+                    // Send disconnect event to frontend due to timeout
+                    warn!("TCP TIMEOUT: Sending disconnect event to frontend for device {} due to connection timeout", device_id);
+                    if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(&device_id).await {
+                        error!("TCP TIMEOUT: Failed to send disconnect event for device {}: {}", device_id, e);
+                    } else {
+                        info!("TCP TIMEOUT: Disconnect event sent successfully for device {}", device_id);
+                    }
+
+                    break;
+                }
+
                 // Check if we have a TCP connection
                 let mut tcp = tcp_stream.lock().await;
                 if let Some(stream) = tcp.as_mut() {
-                    match timeout(Duration::from_millis(100), stream.read(&mut buffer)).await {
+                    match timeout(Duration::from_millis(500), stream.read(&mut buffer)).await {
                         Ok(Ok(0)) => {
                             // Connection closed
                             warn!("TCP connection closed by ESP32 device {}", device_id);
                             *tcp = None;
-                            
+
                             let mut state = connection_state.write().await;
                             *state = ConnectionState::Disconnected;
+
+                            // Send disconnect event to frontend
+                            warn!("TCP DISCONNECT: Sending disconnect event to frontend for device {}", device_id);
+                            if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(&device_id).await {
+                                error!("TCP DISCONNECT: Failed to send disconnect event for device {}: {}", device_id, e);
+                            } else {
+                                info!("TCP DISCONNECT: Disconnect event sent successfully for device {}", device_id);
+                            }
+
                             break;
                         }
                         Ok(Ok(bytes_read)) => {
-                            // Data received
+                            // Data received - update last data time
+                            last_data_time = std::time::Instant::now();
                             let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
                             debug!("Received TCP data from {}: {}", device_id, chunk);
                             
@@ -294,13 +409,23 @@ impl Esp32Connection {
                         Ok(Err(e)) => {
                             error!("TCP read error for device {}: {}", device_id, e);
                             *tcp = None;
-                            
+
                             let mut state = connection_state.write().await;
                             *state = ConnectionState::Failed(e.to_string());
+
+                            // Send disconnect event to frontend for TCP errors too
+                            warn!("TCP ERROR: Sending disconnect event to frontend for device {} due to TCP error: {}", device_id, e);
+                            if let Err(disconnect_err) = crate::esp32_manager::handle_tcp_disconnect_global(&device_id).await {
+                                error!("TCP ERROR: Failed to send disconnect event for device {}: {}", device_id, disconnect_err);
+                            } else {
+                                info!("TCP ERROR: Disconnect event sent successfully for device {}", device_id);
+                            }
+
                             break;
                         }
                         Err(_) => {
-                            // Timeout, continue loop
+                            // Read timeout, continue loop (this is normal)
+                            // The timeout check above will handle connection timeouts
                         }
                     }
                 } else {

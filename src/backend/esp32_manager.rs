@@ -1214,6 +1214,38 @@ pub async fn handle_tcp_bypass_global(message: &str, device_id: &str) -> Result<
     Ok(())
 }
 
+/// Global TCP disconnect function that can be called from ESP32Connection
+pub async fn handle_tcp_disconnect_global(device_id: &str) -> Result<(), String> {
+    let device_store = unsafe {
+        GLOBAL_DEVICE_STORE.as_ref()
+            .ok_or("Global device store not initialized")?
+    };
+
+    info!("GLOBAL TCP DISCONNECT: Processing disconnect for device {}", device_id);
+
+    // Send disconnect event directly to device store
+    let disconnect_event = crate::events::DeviceEvent::esp32_connection_status(
+        device_id.to_string(),
+        false, // disconnected
+        "unknown".to_string(), // IP not available here
+        0, // port not available
+        0, // UDP port not available
+    );
+
+    if let Err(e) = device_store.add_event(
+        device_id.to_string(),
+        disconnect_event,
+        "ESP32_CONNECTION".to_string(),
+        "TCP_DISCONNECT".to_string(),
+    ).await {
+        error!("GLOBAL TCP DISCONNECT: Failed to send disconnect event for device {}: {}", device_id, e);
+        return Err(format!("Failed to send disconnect event: {}", e));
+    }
+
+    info!("GLOBAL TCP DISCONNECT: Disconnect event sent successfully for device {}", device_id);
+    Ok(())
+}
+
 /// Quick setup for common ESP32 device configurations
 impl Esp32DeviceConfig {
     /// Create config for ESP32 with default ports
