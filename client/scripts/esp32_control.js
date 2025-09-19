@@ -800,6 +800,7 @@ function sendStartOption(deviceId) {
             deviceId: deviceId,
             eventsForDevice: [{
                 event: 'esp32Command',
+                deviceId: deviceId,
                 command: {
                     startOption: selectedValue
                 }
@@ -817,6 +818,7 @@ function sendReset(deviceId) {
             deviceId: deviceId,
             eventsForDevice: [{
                 event: 'esp32Command',
+                deviceId: deviceId,
                 command: {
                     reset: true
                 }
@@ -824,6 +826,14 @@ function sendReset(deviceId) {
         }));
     }
 }
+
+// Expose functions to global scope for HTML onclick handlers
+window.sendReset = sendReset;
+window.sendStartOption = sendStartOption;
+window.sendVariable = sendVariable;
+window.handleVariableKeyPress = handleVariableKeyPress;
+window.refreshDevices = refreshDevices;
+window.initializeWebSocket = initializeWebSocket;
 
 function sendVariable(deviceId, variableName) {
     const inputEl = document.querySelector(`#${deviceId}-variables input[onkeypress*="${variableName}"]`);
@@ -834,6 +844,7 @@ function sendVariable(deviceId, variableName) {
             deviceId: deviceId,
             eventsForDevice: [{
                 event: 'esp32Command',
+                deviceId: deviceId,
                 command: {
                     setVariable: {
                         name: variableName,

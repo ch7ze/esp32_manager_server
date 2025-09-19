@@ -481,9 +481,14 @@ async fn handle_device_events(
     }
     
     // Check write permissions for device operations
-    let has_write_permission = db.user_has_device_permission(&device_id, user_id, "W").await
-        .map_err(|e| format!("Database error checking write permissions: {}", e))?;
-    
+    // Allow access to ESP32 devices (identified by MAC address format) for all users
+    let has_write_permission = if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
+        true  // Allow all users to control ESP32 devices
+    } else {
+        db.user_has_device_permission(&device_id, user_id, "W").await
+            .map_err(|e| format!("Database error checking write permissions: {}", e))?
+    };
+
     if !has_write_permission {
         return Err(format!("User {} does not have write permission for device {}", user_id, device_id));
     }
