@@ -165,7 +165,36 @@ impl Esp32Connection {
             debug!("Command sent successfully: {}", json_str);
             Ok(())
         } else {
-            Err(Esp32Error::ConnectionFailed("No TCP connection available".to_string()))
+            // No TCP connection available, try to reconnect
+            debug!("No TCP connection available for device {}, attempting reconnection", self.config.device_id);
+            drop(tcp); // Release the lock before reconnecting
+
+            // Attempt to reconnect
+            self.connect_tcp().await?;
+
+            // Send connection status event to notify clients
+            let event = Esp32Event::connection_status(
+                true,
+                self.config.ip_address,
+                self.config.tcp_port,
+                self.config.udp_port
+            );
+            if let Err(e) = self.event_sender.send(event) {
+                warn!("Failed to send reconnection status event for device {}: {}", self.config.device_id, e);
+            } else {
+                debug!("Reconnection status event sent for device {}", self.config.device_id);
+            }
+
+            // Try sending the command again with the new connection
+            let mut tcp = self.tcp_stream.lock().await;
+            if let Some(stream) = tcp.as_mut() {
+                stream.write_all(json_str.as_bytes()).await?;
+                stream.flush().await?;
+                debug!("Command sent successfully after reconnection: {}", json_str);
+                Ok(())
+            } else {
+                Err(Esp32Error::ConnectionFailed("Failed to reconnect to ESP32".to_string()))
+            }
         }
     }
     
