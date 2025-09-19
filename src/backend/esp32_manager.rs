@@ -11,9 +11,10 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::panic;
+use std::time::Instant;
 use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::net::UdpSocket;
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{sleep, timeout, Duration, interval};
 use tracing::{info, warn, error, debug};
 
 // ============================================================================
@@ -43,6 +44,10 @@ pub struct Esp32Manager {
     connection_mutex: Arc<Mutex<()>>,
     /// Direct bypass event sender for crashed Event Forwarding Tasks
     bypass_event_sender: mpsc::UnboundedSender<Esp32ManagerEvent>,
+    /// UDP activity tracking for device connectivity monitoring
+    udp_activity_tracker: Arc<RwLock<HashMap<String, Instant>>>,
+    /// Connection state tracking to prevent redundant events (device_id -> is_connected)
+    udp_connection_states: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 /// Internal events for ESP32 manager
@@ -68,6 +73,8 @@ impl Esp32Manager {
             ip_to_device_id: Arc::new(RwLock::new(HashMap::new())),
             connection_mutex: Arc::new(Mutex::new(())),
             bypass_event_sender: event_sender,
+            udp_activity_tracker: Arc::new(RwLock::new(HashMap::new())),
+            udp_connection_states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -85,6 +92,9 @@ impl Esp32Manager {
 
         // Start reconnect monitoring task
         self.start_reconnect_monitor().await;
+
+        // Start UDP timeout monitoring task
+        self.start_udp_timeout_monitor().await;
 
         info!("ESP32 Manager started");
     }
@@ -259,6 +269,20 @@ impl Esp32Manager {
             if let Some(ref config) = config {
                 crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("REGISTERING_UDP_ROUTING: {} -> {}", device_id, config.ip_address));
                 self.register_esp32_for_udp(device_id.to_string(), config.ip_address).await;
+
+                // Initialize UDP activity tracking for connected device
+                {
+                    let mut tracker = self.udp_activity_tracker.write().await;
+                    tracker.insert(device_id.to_string(), Instant::now());
+                    info!("UDP activity tracking initialized for device: {}", device_id);
+                }
+
+                // Mark device as connected in UDP connection states
+                {
+                    let mut states = self.udp_connection_states.write().await;
+                    states.insert(device_id.to_string(), true);
+                    info!("UDP connection state set to connected for device: {}", device_id);
+                }
             }
 
             info!("DEVICE CONNECTION DEBUG: Successfully connected to ESP32 device: {}", device_id);
@@ -875,6 +899,8 @@ impl Esp32Manager {
         let ip_to_device_id = Arc::clone(&self.ip_to_device_id);
         let _device_event_senders = Arc::clone(&self.device_event_senders);
         let device_store = Arc::clone(&self.device_store);
+        let udp_activity_tracker = Arc::clone(&self.udp_activity_tracker);
+        let udp_connection_states = Arc::clone(&self.udp_connection_states);
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -895,9 +921,16 @@ impl Esp32Manager {
                             {
                                 let device_map = ip_to_device_id.read().await;
                                 if let Some(device_id) = device_map.get(&from_addr.ip()) {
+                                    // Update UDP activity tracking
+                                    {
+                                        let mut tracker = udp_activity_tracker.write().await;
+                                        tracker.insert(device_id.clone(), Instant::now());
+                                        debug!("UDP activity updated for device: {}", device_id);
+                                    }
+
                                     // Use direct device store bypass - much more reliable than event processor
                                     debug!("UDP: Routing message to device {} via direct bypass", device_id);
-                                    Self::handle_udp_message_bypass(&message, from_addr, device_id, &device_store).await;
+                                    Self::handle_udp_message_bypass_smart(&message, from_addr, device_id, &device_store, &udp_connection_states).await;
                                 } else {
                                     drop(device_map); // Drop read lock before getting write lock
 
@@ -910,9 +943,17 @@ impl Esp32Manager {
                                                 let mut device_map = ip_to_device_id.write().await;
                                                 device_map.insert(from_addr.ip(), device_id.clone());
                                             }
+
+                                            // Update UDP activity tracking
+                                            {
+                                                let mut tracker = udp_activity_tracker.write().await;
+                                                tracker.insert(device_id.clone(), Instant::now());
+                                                debug!("UDP activity updated for auto-registered device: {}", device_id);
+                                            }
+
                                             // Route the TCP message through UDP bypass
                                             debug!("TCP via UDP bypass: Routing message to device {} via direct bypass", device_id);
-                                            Self::handle_udp_message_bypass(&message, from_addr, &device_id, &device_store).await;
+                                            Self::handle_udp_message_bypass_smart(&message, from_addr, &device_id, &device_store, &udp_connection_states).await;
                                         } else {
                                             info!("TCP message from unregistered IP {} but no device ID found", from_addr.ip());
                                         }
@@ -939,25 +980,49 @@ impl Esp32Manager {
         Ok(())
     }
 
-    /// Handle UDP message using bypass sender when Event Forwarding Task is crashed
-    /// Enhanced version that handles all TCP message types from the old C# implementation
-    pub async fn handle_udp_message_bypass(
+    /// Handle UDP message with smart connection state detection to prevent redundant events
+    pub async fn handle_udp_message_bypass_smart(
         message: &str,
         from_addr: SocketAddr,
         device_id: &str,
-        device_store: &SharedDeviceStore
+        device_store: &SharedDeviceStore,
+        udp_connection_states: &Arc<RwLock<HashMap<String, bool>>>
     ) {
         debug!("UDP bypass: Processing message from {} for device {}: {}", from_addr, device_id, message);
 
-        // Send connection status event directly to device store
-        let connection_event = crate::events::DeviceEvent::esp32_connection_status(
-            device_id.to_string(),
-            true, // connected = true since we're receiving UDP
-            from_addr.ip().to_string(),
-            0, // no TCP port available
-            from_addr.port() // UDP port
-        );
-        let _ = device_store.add_event(device_id.to_string(), connection_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
+        // Check if device was previously disconnected (or never seen before)
+        let should_send_connected_event = {
+            let mut states = udp_connection_states.write().await;
+            let was_connected = states.get(device_id).copied().unwrap_or(false);
+
+            if !was_connected {
+                // Device was disconnected or new - mark as connected
+                states.insert(device_id.to_string(), true);
+                info!("UDP RECONNECT: Device {} is now connected (was: disconnected)", device_id);
+                true
+            } else {
+                // Device was already connected - no event needed
+                false
+            }
+        };
+
+        // Only send connection event if state changed from disconnected to connected
+        if should_send_connected_event {
+            let connection_event = crate::events::DeviceEvent::esp32_connection_status(
+                device_id.to_string(),
+                true, // connected = true since we're receiving UDP
+                from_addr.ip().to_string(),
+                0, // no TCP port available
+                from_addr.port() // UDP port
+            );
+            if let Err(e) = device_store.add_event(device_id.to_string(), connection_event, "esp32_system".to_string(), "udp_reconnect".to_string()).await {
+                error!("Failed to send UDP reconnect event for device {}: {}", device_id, e);
+            } else {
+                info!("UDP RECONNECT: Connected event sent for device {}", device_id);
+            }
+        } else {
+            debug!("UDP: Device {} already marked as connected - skipping redundant event", device_id);
+        }
 
         // Send UDP broadcast event directly to device store
         let broadcast_event = crate::events::DeviceEvent::esp32_udp_broadcast(
@@ -1290,6 +1355,92 @@ pub async fn handle_tcp_disconnect_global(device_id: &str) -> Result<(), String>
 
     info!("GLOBAL TCP DISCONNECT: Disconnect event sent successfully for device {}", device_id);
     Ok(())
+}
+
+impl Esp32Manager {
+    /// Start UDP timeout monitoring task
+    async fn start_udp_timeout_monitor(&self) {
+        let udp_activity_tracker = Arc::clone(&self.udp_activity_tracker);
+        let device_configs = Arc::clone(&self.device_configs);
+        let device_store = self.device_store.clone();
+        let udp_connection_states = Arc::clone(&self.udp_connection_states);
+
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_secs(5)); // Check every 5 seconds
+            info!("UDP timeout monitor started");
+
+            loop {
+                interval.tick().await;
+
+                let configs = device_configs.read().await;
+                let mut tracker = udp_activity_tracker.write().await;
+                let now = Instant::now();
+
+                // Check each device for UDP timeout
+                for (device_id, config) in configs.iter() {
+                    if let Some(last_activity) = tracker.get(device_id) {
+                        let elapsed = now.duration_since(*last_activity);
+                        let timeout = Duration::from_secs(config.udp_timeout_seconds);
+
+                        if elapsed > timeout {
+                            warn!("UDP TIMEOUT: Device {} has been inactive for {}s (timeout: {}s)",
+                                  device_id, elapsed.as_secs(), config.udp_timeout_seconds);
+
+                            // Only send disconnect event if device was connected
+                            let should_send_disconnect = {
+                                let mut states = udp_connection_states.write().await;
+                                let was_connected = states.get(device_id).copied().unwrap_or(false);
+
+                                if was_connected {
+                                    // Mark as disconnected
+                                    states.insert(device_id.clone(), false);
+                                    info!("UDP TIMEOUT: Device {} marked as disconnected", device_id);
+                                    true
+                                } else {
+                                    // Already disconnected - no event needed
+                                    false
+                                }
+                            };
+
+                            if should_send_disconnect {
+                                // Send disconnect event
+                                let disconnect_event = crate::events::DeviceEvent::esp32_connection_status(
+                                    device_id.clone(),
+                                    false, // disconnected
+                                    config.ip_address.to_string(),
+                                    config.tcp_port,
+                                    config.udp_port,
+                                );
+
+                                if let Err(e) = device_store.add_event(
+                                    device_id.clone(),
+                                    disconnect_event,
+                                    "ESP32_SYSTEM".to_string(),
+                                    "UDP_TIMEOUT".to_string(),
+                                ).await {
+                                    error!("Failed to send UDP timeout disconnect event for device {}: {}", device_id, e);
+                                } else {
+                                    info!("UDP TIMEOUT: Disconnect event sent for device {}", device_id);
+                                }
+                            } else {
+                                debug!("UDP TIMEOUT: Device {} already marked as disconnected - skipping redundant event", device_id);
+                            }
+
+                            // Remove from tracker to avoid spam
+                            tracker.remove(device_id);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Update UDP activity for a device
+    pub async fn update_udp_activity(&self, device_id: &str) {
+        let mut tracker = self.udp_activity_tracker.write().await;
+        tracker.insert(device_id.to_string(), Instant::now());
+        debug!("UDP activity updated for device: {}", device_id);
+    }
 }
 
 /// Quick setup for common ESP32 device configurations

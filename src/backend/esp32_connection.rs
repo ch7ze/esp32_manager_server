@@ -29,6 +29,21 @@ pub struct Esp32Connection {
 }
 
 impl Esp32Connection {
+    /// Handle TCP disconnect - centralized function
+    async fn handle_disconnect(connection_state: &Arc<RwLock<ConnectionState>>, device_id: &str) {
+        // Update state
+        {
+            let mut state = connection_state.write().await;
+            *state = ConnectionState::Disconnected;
+        }
+
+        // Send single disconnect event
+        if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(device_id).await {
+            error!("Failed to send disconnect event for device {}: {}", device_id, e);
+        } else {
+            info!("Disconnect event sent for device {}", device_id);
+        }
+    }
     /// Create a new ESP32 connection manager
     pub fn new(config: Esp32DeviceConfig, event_sender: mpsc::UnboundedSender<Esp32Event>) -> Self {
         info!("ESP32CONNECTION CREATION DEBUG: Creating new ESP32Connection for device {}", config.device_id);
@@ -272,18 +287,18 @@ impl Esp32Connection {
             warn!("Failed to enable TCP keep-alive for device {}: {}", self.config.device_id, e);
         }
 
-        // Set reasonable TCP keep-alive for disconnect detection
+        // Set TCP keep-alive for 10 minute disconnect detection
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             use socket2::TcpKeepalive;
             let keepalive = TcpKeepalive::new()
-                .with_time(Duration::from_secs(3))     // Start after 3 seconds of inactivity
-                .with_interval(Duration::from_secs(1)); // Send probe every 1 second
+                .with_time(Duration::from_secs(600))     // Start after 10 minutes of inactivity
+                .with_interval(Duration::from_secs(60)); // Send probe every 60 seconds
 
             if let Err(e) = socket2_socket.set_tcp_keepalive(&keepalive) {
                 warn!("Failed to set TCP keep-alive parameters for device {}: {}", self.config.device_id, e);
             } else {
-                info!("TCP keep-alive enabled for device {} (3s idle, 1s interval)", self.config.device_id);
+                info!("TCP keep-alive enabled for device {} (10min idle, 60s interval)", self.config.device_id);
             }
         }
 
@@ -321,13 +336,10 @@ impl Esp32Connection {
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
-            let mut last_activity = std::time::Instant::now();
-            let connection_timeout = Duration::from_secs(5); // 5 seconds without activity = disconnect
 
-            info!("TCP LISTENER TASK: Started for device {} with 5s activity timeout", device_id);
+            info!("TCP LISTENER TASK: Started for device {} (using TCP keep-alive only)", device_id);
 
             loop {
-
                 // Check for shutdown signal
                 if shutdown_rx.try_recv().is_ok() {
                     debug!("TCP listener task shutting down for device {}", device_id);
@@ -337,94 +349,31 @@ impl Esp32Connection {
                 // Check if we have a TCP connection for reading
                 let mut tcp = tcp_stream.lock().await;
                 if let Some(stream) = tcp.as_mut() {
-                    match timeout(Duration::from_millis(50), stream.read(&mut buffer)).await {
-                        Ok(Ok(0)) => {
-                            // Connection closed
-                            warn!("TCP connection closed by ESP32 device {}", device_id);
+                    match stream.read(&mut buffer).await {
+                        Ok(0) | Err(_) => {
+                            // Connection closed or error (including keep-alive failures)
+                            warn!("TCP connection lost for device {}", device_id);
                             *tcp = None;
 
-                            let mut state = connection_state.write().await;
-                            *state = ConnectionState::Disconnected;
-
-                            // Send disconnect event to frontend
-                            warn!("TCP DISCONNECT: Sending disconnect event to frontend for device {}", device_id);
-                            if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(&device_id).await {
-                                error!("TCP DISCONNECT: Failed to send disconnect event for device {}: {}", device_id, e);
-                            } else {
-                                info!("TCP DISCONNECT: Disconnect event sent successfully for device {}", device_id);
-                            }
-
+                            // Update state and send disconnect event
+                            Self::handle_disconnect(&connection_state, &device_id).await;
                             break;
                         }
-                        Ok(Ok(bytes_read)) => {
-                            // Data received - reset activity timer
-                            last_activity = std::time::Instant::now();
-
+                        Ok(bytes_read) => {
+                            // Data received
                             let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-                            debug!("TCP DATA RECEIVED: Device {} sent {} bytes", device_id, bytes_read);
-                            debug!("Received TCP data from {}: {}", device_id, chunk);
+                            debug!("TCP DATA: Device {} sent {} bytes: {}", device_id, bytes_read, chunk);
 
-                            // Append to buffer
+                            // Process messages
                             {
                                 let mut buf = tcp_buffer.lock().await;
                                 buf.push_str(&chunk);
 
-                                // Try to extract complete JSON messages
                                 while let Some(json_str) = extract_complete_json(&mut buf) {
-                                    info!("TCP BYPASS: Processing message for device {}: {}", device_id, json_str);
-
-                                    // DISABLE EventForwardingTask for TCP to prevent duplicate events
-                                    // EventForwardingTask is unreliable and causes race conditions with TCP bypass
-                                    // if let Err(e) = handle_tcp_message(&json_str, &event_sender).await {
-                                    //     error!("TCP EventForwardingTask failed for device {}: {}", device_id, e);
-                                    // }
-
-                                    // Use ONLY TCP bypass for reliable message processing (like UDP bypass)
-                                    info!("TCP BYPASS: Using direct bypass for device {} (EventForwardingTask disabled)", device_id);
-
-                                    // Call global TCP bypass function
                                     if let Err(e) = crate::esp32_manager::handle_tcp_bypass_global(&json_str, &device_id).await {
-                                        error!("TCP BYPASS: Global bypass failed for device {}: {}", device_id, e);
+                                        error!("TCP bypass failed for device {}: {}", device_id, e);
                                     }
                                 }
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            error!("TCP read error for device {}: {}", device_id, e);
-                            *tcp = None;
-
-                            let mut state = connection_state.write().await;
-                            *state = ConnectionState::Failed(e.to_string());
-
-                            // Send disconnect event to frontend for TCP errors too
-                            warn!("TCP ERROR: Sending disconnect event to frontend for device {} due to TCP error: {}", device_id, e);
-                            if let Err(disconnect_err) = crate::esp32_manager::handle_tcp_disconnect_global(&device_id).await {
-                                error!("TCP ERROR: Failed to send disconnect event for device {}: {}", device_id, disconnect_err);
-                            } else {
-                                info!("TCP ERROR: Disconnect event sent successfully for device {}", device_id);
-                            }
-
-                            break;
-                        }
-                        Err(_) => {
-                            // Read timeout - check if connection is still alive
-                            if last_activity.elapsed() > connection_timeout {
-                                warn!("TCP ACTIVITY TIMEOUT: No activity for {}s on device {}, assuming disconnected",
-                                      connection_timeout.as_secs(), device_id);
-                                *tcp = None;
-
-                                let mut state = connection_state.write().await;
-                                *state = ConnectionState::Disconnected;
-
-                                // Send disconnect event to frontend
-                                warn!("TCP ACTIVITY TIMEOUT: Sending disconnect event to frontend for device {}", device_id);
-                                if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(&device_id).await {
-                                    error!("TCP ACTIVITY TIMEOUT: Failed to send disconnect event for device {}: {}", device_id, e);
-                                } else {
-                                    info!("TCP ACTIVITY TIMEOUT: Disconnect event sent successfully for device {}", device_id);
-                                }
-
-                                break;
                             }
                         }
                     }
@@ -432,22 +381,6 @@ impl Esp32Connection {
                     // No connection, wait a bit
                     sleep(Duration::from_millis(100)).await;
                 }
-            }
-
-            // Connection lost - send disconnect event
-            info!("TCP PROBE DISCONNECT: Connection lost for device {}, sending disconnect event", device_id);
-
-            // Update connection state
-            {
-                let mut state = connection_state.write().await;
-                *state = ConnectionState::Disconnected;
-            }
-
-            // Send disconnect event to frontend
-            if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(&device_id).await {
-                error!("TCP PROBE DISCONNECT: Failed to send disconnect event for device {}: {}", device_id, e);
-            } else {
-                info!("TCP PROBE DISCONNECT: Disconnect event sent successfully for device {}", device_id);
             }
 
             debug!("TCP listener task ended for device {}", device_id);

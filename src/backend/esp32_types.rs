@@ -182,6 +182,7 @@ pub struct Esp32DeviceConfig {
     pub udp_port: u16,
     pub auto_connect: bool,
     pub auto_start_option: Option<String>,
+    pub udp_timeout_seconds: u64,
 }
 
 impl Esp32DeviceConfig {
@@ -194,6 +195,7 @@ impl Esp32DeviceConfig {
             udp_port,
             auto_connect: false,
             auto_start_option: None,
+            udp_timeout_seconds: 10, // Default: 10 seconds UDP timeout
         }
     }
     
