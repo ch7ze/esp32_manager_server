@@ -272,49 +272,24 @@ impl Esp32Connection {
             warn!("Failed to enable TCP keep-alive for device {}: {}", self.config.device_id, e);
         }
 
-        // Set aggressive keep-alive parameters for faster disconnect detection
+        // Set reasonable TCP keep-alive for disconnect detection
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             use socket2::TcpKeepalive;
             let keepalive = TcpKeepalive::new()
-                .with_time(Duration::from_secs(2))    // Start after 2 seconds of inactivity
-                .with_interval(Duration::from_millis(500)); // Send probe every 500ms
+                .with_time(Duration::from_secs(3))     // Start after 3 seconds of inactivity
+                .with_interval(Duration::from_secs(1)); // Send probe every 1 second
 
             if let Err(e) = socket2_socket.set_tcp_keepalive(&keepalive) {
                 warn!("Failed to set TCP keep-alive parameters for device {}: {}", self.config.device_id, e);
             } else {
-                info!("AGGRESSIVE TCP keep-alive enabled for device {} (2s idle, 500ms interval)", self.config.device_id);
+                info!("TCP keep-alive enabled for device {} (3s idle, 1s interval)", self.config.device_id);
             }
         }
 
-        // Enable immediate error reporting when remote closes connection
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::io::AsRawSocket;
-            use winapi::um::winsock2::{setsockopt, SOL_SOCKET, SO_LINGER};
-            use winapi::um::winsock2::LINGER;
+        // Note: Additional Windows TCP optimizations would require more complex winapi setup
 
-            let raw_socket = socket2_socket.as_raw_socket();
-            let linger = LINGER {
-                l_onoff: 1,   // Enable linger
-                l_linger: 0,  // Immediate close (RST instead of FIN)
-            };
-
-            unsafe {
-                let result = setsockopt(
-                    raw_socket as _,
-                    SOL_SOCKET,
-                    SO_LINGER,
-                    &linger as *const _ as *const i8,
-                    std::mem::size_of::<LINGER>() as i32,
-                );
-                if result == 0 {
-                    info!("SO_LINGER enabled for device {} - immediate disconnect detection", self.config.device_id);
-                } else {
-                    warn!("Failed to set SO_LINGER for device {}", self.config.device_id);
-                }
-            }
-        }
+        // Note: SO_LINGER removed - it was causing connection issues
 
         // Convert back to tokio TcpStream
         let stream = TcpStream::from_std(socket2_socket.into())?;
@@ -346,10 +321,10 @@ impl Esp32Connection {
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
-            let mut last_probe_time = std::time::Instant::now();
-            let probe_interval = Duration::from_secs(2); // Send probe every 2 seconds (more aggressive)
-            let probe_timeout = Duration::from_millis(500); // Wait max 500ms for response (faster)
-            info!("TCP LISTENER TASK: Started for device {} with aggressive probing ({}s interval)", device_id, probe_interval.as_secs());
+            let mut last_activity = std::time::Instant::now();
+            let connection_timeout = Duration::from_secs(5); // 5 seconds without activity = disconnect
+
+            info!("TCP LISTENER TASK: Started for device {} with 5s activity timeout", device_id);
 
             loop {
 
@@ -359,56 +334,10 @@ impl Esp32Connection {
                     break;
                 }
 
-                // Check if it's time to send a probe
-                if last_probe_time.elapsed() > probe_interval {
-                    debug!("TCP PROBE: Sending connection probe to device {}", device_id);
-
-                    // Try to send a simple probe message
-                    let mut tcp = tcp_stream.lock().await;
-                    if let Some(stream) = tcp.as_mut() {
-                        // Send a simple JSON ping
-                        let probe_msg = r#"{"ping":"probe"}"#;
-                        match timeout(probe_timeout, stream.write_all(probe_msg.as_bytes())).await {
-                            Ok(Ok(())) => {
-                                match timeout(probe_timeout, stream.flush()).await {
-                                    Ok(Ok(())) => {
-                                        debug!("TCP PROBE: Probe sent successfully to device {}", device_id);
-                                        last_probe_time = std::time::Instant::now();
-                                    }
-                                    Ok(Err(e)) => {
-                                        warn!("TCP PROBE: Flush failed for device {} - connection lost: {}", device_id, e);
-                                        *tcp = None;
-                                        break; // Exit to disconnect logic below
-                                    }
-                                    Err(_) => {
-                                        warn!("TCP PROBE: Flush timeout for device {} - connection lost", device_id);
-                                        *tcp = None;
-                                        break; // Exit to disconnect logic below
-                                    }
-                                }
-                            }
-                            Ok(Err(e)) => {
-                                warn!("TCP PROBE: Write failed for device {} - connection lost: {}", device_id, e);
-                                *tcp = None;
-                                break; // Exit to disconnect logic below
-                            }
-                            Err(_) => {
-                                warn!("TCP PROBE: Write timeout for device {} - connection lost", device_id);
-                                *tcp = None;
-                                break; // Exit to disconnect logic below
-                            }
-                        }
-                    } else {
-                        warn!("TCP PROBE: No connection available for device {}", device_id);
-                        break; // Exit to disconnect logic below
-                    }
-                    drop(tcp); // Release lock
-                }
-
                 // Check if we have a TCP connection for reading
                 let mut tcp = tcp_stream.lock().await;
                 if let Some(stream) = tcp.as_mut() {
-                    match timeout(Duration::from_millis(100), stream.read(&mut buffer)).await {
+                    match timeout(Duration::from_millis(50), stream.read(&mut buffer)).await {
                         Ok(Ok(0)) => {
                             // Connection closed
                             warn!("TCP connection closed by ESP32 device {}", device_id);
@@ -428,11 +357,13 @@ impl Esp32Connection {
                             break;
                         }
                         Ok(Ok(bytes_read)) => {
-                            // Data received
+                            // Data received - reset activity timer
+                            last_activity = std::time::Instant::now();
+
                             let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
                             debug!("TCP DATA RECEIVED: Device {} sent {} bytes", device_id, bytes_read);
                             debug!("Received TCP data from {}: {}", device_id, chunk);
-                            
+
                             // Append to buffer
                             {
                                 let mut buf = tcp_buffer.lock().await;
@@ -476,8 +407,25 @@ impl Esp32Connection {
                             break;
                         }
                         Err(_) => {
-                            // Read timeout, continue loop (this is normal)
-                            // The timeout check above will handle connection timeouts
+                            // Read timeout - check if connection is still alive
+                            if last_activity.elapsed() > connection_timeout {
+                                warn!("TCP ACTIVITY TIMEOUT: No activity for {}s on device {}, assuming disconnected",
+                                      connection_timeout.as_secs(), device_id);
+                                *tcp = None;
+
+                                let mut state = connection_state.write().await;
+                                *state = ConnectionState::Disconnected;
+
+                                // Send disconnect event to frontend
+                                warn!("TCP ACTIVITY TIMEOUT: Sending disconnect event to frontend for device {}", device_id);
+                                if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(&device_id).await {
+                                    error!("TCP ACTIVITY TIMEOUT: Failed to send disconnect event for device {}: {}", device_id, e);
+                                } else {
+                                    info!("TCP ACTIVITY TIMEOUT: Disconnect event sent successfully for device {}", device_id);
+                                }
+
+                                break;
+                            }
                         }
                     }
                 } else {
