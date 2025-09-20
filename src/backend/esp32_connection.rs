@@ -178,16 +178,26 @@ impl Esp32Connection {
         }
 
         let json_str = command.to_json()?;
+        let command_name = format!("{:?}", command);
+
+        // Log command attempt to debug file
+        crate::debug_logger::DebugLogger::log_tcp_command_send(&self.config.device_id, &command_name, false); // Will be updated below
 
         let mut tcp = self.tcp_stream.lock().await;
         if let Some(stream) = tcp.as_mut() {
+            // TCP connection is available - update log
+            crate::debug_logger::DebugLogger::log_tcp_command_send(&self.config.device_id, &command_name, true);
+            crate::debug_logger::DebugLogger::log_tcp_connection_status(&self.config.device_id, "AVAILABLE", "TCP stream exists, attempting to send command");
+
             // Send the command
             let write_result = stream.write_all(json_str.as_bytes()).await;
             if let Err(e) = write_result {
                 if is_reset_command {
                     info!("RESET COMMAND: Write failed for device {} (expected during reset): {}", self.config.device_id, e);
+                    crate::debug_logger::DebugLogger::log_tcp_command_success(&self.config.device_id, &format!("{} (reset - write failed as expected)", command_name));
                     return Ok(()); // Reset commands are expected to fail during write/flush
                 } else {
+                    crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, &format!("write failed: {}", e));
                     return Err(e.into());
                 }
             }
@@ -197,13 +207,16 @@ impl Esp32Connection {
             if let Err(e) = flush_result {
                 if is_reset_command {
                     info!("RESET COMMAND: Flush failed for device {} (expected during reset): {}", self.config.device_id, e);
+                    crate::debug_logger::DebugLogger::log_tcp_command_success(&self.config.device_id, &format!("{} (reset - flush failed as expected)", command_name));
                     return Ok(()); // Reset commands are expected to fail during write/flush
                 } else {
+                    crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, &format!("flush failed: {}", e));
                     return Err(e.into());
                 }
             }
 
             debug!("Command sent successfully: {}", json_str);
+            crate::debug_logger::DebugLogger::log_tcp_command_success(&self.config.device_id, &command_name);
 
             // For reset commands, immediately mark connection as disconnected
             if is_reset_command {
@@ -226,12 +239,23 @@ impl Esp32Connection {
 
             Ok(())
         } else {
-            // No TCP connection available, try to reconnect
+            // No TCP connection available
+            crate::debug_logger::DebugLogger::log_tcp_connection_status(&self.config.device_id, "NOT_AVAILABLE", "TCP stream is None, attempting reconnection");
+            crate::debug_logger::DebugLogger::log_tcp_reconnect_attempt(&self.config.device_id, "send_command - no TCP connection");
+
             debug!("No TCP connection available for device {}, attempting reconnection", self.config.device_id);
             drop(tcp); // Release the lock before reconnecting
 
             // Attempt to reconnect
-            self.connect_tcp().await?;
+            match self.connect_tcp().await {
+                Ok(()) => {
+                    crate::debug_logger::DebugLogger::log_tcp_reconnect_result(&self.config.device_id, true, None);
+                }
+                Err(e) => {
+                    crate::debug_logger::DebugLogger::log_tcp_reconnect_result(&self.config.device_id, false, Some(&e.to_string()));
+                    return Err(e);
+                }
+            }
 
             // Send connection status event to notify clients
             let event = Esp32Event::connection_status(
@@ -249,11 +273,30 @@ impl Esp32Connection {
             // Try sending the command again with the new connection
             let mut tcp = self.tcp_stream.lock().await;
             if let Some(stream) = tcp.as_mut() {
-                stream.write_all(json_str.as_bytes()).await?;
-                stream.flush().await?;
-                debug!("Command sent successfully after reconnection: {}", json_str);
-                Ok(())
+                crate::debug_logger::DebugLogger::log_tcp_connection_status(&self.config.device_id, "AVAILABLE_AFTER_RECONNECT", "TCP stream available after reconnect, sending command");
+
+                match stream.write_all(json_str.as_bytes()).await {
+                    Ok(()) => {
+                        match stream.flush().await {
+                            Ok(()) => {
+                                debug!("Command sent successfully after reconnection: {}", json_str);
+                                crate::debug_logger::DebugLogger::log_tcp_command_success(&self.config.device_id, &format!("{} (after reconnect)", command_name));
+                                Ok(())
+                            }
+                            Err(e) => {
+                                crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, &format!("flush failed after reconnect: {}", e));
+                                Err(e.into())
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, &format!("write failed after reconnect: {}", e));
+                        Err(e.into())
+                    }
+                }
             } else {
+                crate::debug_logger::DebugLogger::log_tcp_connection_status(&self.config.device_id, "STILL_NOT_AVAILABLE", "TCP stream is still None even after reconnect");
+                crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, "TCP connection still not available after reconnect");
                 Err(Esp32Error::ConnectionFailed("Failed to reconnect to ESP32".to_string()))
             }
         }
@@ -346,37 +389,14 @@ impl Esp32Connection {
                     break;
                 }
 
-                // Check if we have a TCP connection for reading
-                let mut tcp = tcp_stream.lock().await;
-                if let Some(stream) = tcp.as_mut() {
-                    match stream.read(&mut buffer).await {
-                        Ok(0) | Err(_) => {
-                            // Connection closed or error (including keep-alive failures)
-                            warn!("TCP connection lost for device {}", device_id);
-                            *tcp = None;
-
-                            // Update state and send disconnect event
-                            Self::handle_disconnect(&connection_state, &device_id).await;
-                            break;
-                        }
-                        Ok(bytes_read) => {
-                            // Data received
-                            let chunk = String::from_utf8_lossy(&buffer[..bytes_read]);
-                            debug!("TCP DATA: Device {} sent {} bytes: {}", device_id, bytes_read, chunk);
-
-                            // Process messages
-                            {
-                                let mut buf = tcp_buffer.lock().await;
-                                buf.push_str(&chunk);
-
-                                while let Some(json_str) = extract_complete_json(&mut buf) {
-                                    if let Err(e) = crate::esp32_manager::handle_tcp_bypass_global(&json_str, &device_id).await {
-                                        error!("TCP bypass failed for device {}: {}", device_id, e);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                // ESP32 uses TCP only for receiving commands, not for sending data
+                // We don't need to read from TCP as ESP32 sends all data via UDP
+                // Just check if the TCP connection still exists by checking the lock
+                let tcp = tcp_stream.lock().await;
+                if tcp.is_some() {
+                    // TCP connection is available, just wait
+                    drop(tcp);
+                    sleep(Duration::from_millis(1000)).await;
                 } else {
                     // No connection, wait a bit
                     sleep(Duration::from_millis(100)).await;

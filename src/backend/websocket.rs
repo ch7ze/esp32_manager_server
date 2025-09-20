@@ -442,7 +442,7 @@ async fn handle_register_for_device(
               client_id, device_id);
         info!("FRONTEND DEBUG: Client {} registered for device {} - frontend should now receive device events to update connection status", client_id, device_id);
     }
-    
+
     Ok(())
 }
 
@@ -475,8 +475,11 @@ async fn handle_device_events(
     client_id: &str,
     registered_devices: &[String],
 ) -> Result<(), String> {
+    info!("DEVICE EVENTS DEBUG: handle_device_events called for device {} by client {}, registered_devices: {:?}", device_id, client_id, registered_devices);
+
     // Check if client is registered for this device
     if !registered_devices.contains(&device_id) {
+        error!("DEVICE EVENTS DEBUG: Client {} is not registered for device {} - current registered devices: {:?}", client_id, device_id, registered_devices);
         return Err(format!("Client {} is not registered for device {}", client_id, device_id));
     }
     

@@ -70,6 +70,36 @@ impl DebugLogger {
         Self::log_event("ESP32_CONNECTION", &format!("EVENT_SEND {} for device {} (channel_closed: {}){}", status, device_id, is_closed, details));
     }
 
+    pub fn log_tcp_command_send(device_id: &str, command: &str, tcp_available: bool) {
+        Self::log_event("TCP_COMMAND", &format!("SENDING command '{}' to device {} - TCP_AVAILABLE: {}", command, device_id, tcp_available));
+    }
+
+    pub fn log_tcp_command_success(device_id: &str, command: &str) {
+        Self::log_event("TCP_COMMAND", &format!("SUCCESS sent command '{}' to device {}", command, device_id));
+    }
+
+    pub fn log_tcp_command_failed(device_id: &str, command: &str, error: &str) {
+        Self::log_event("TCP_COMMAND", &format!("FAILED to send command '{}' to device {}: {}", command, device_id, error));
+    }
+
+    pub fn log_tcp_connection_status(device_id: &str, status: &str, details: &str) {
+        Self::log_event("TCP_CONNECTION", &format!("STATUS for device {}: {} - {}", device_id, status, details));
+    }
+
+    pub fn log_tcp_reconnect_attempt(device_id: &str, reason: &str) {
+        Self::log_event("TCP_RECONNECT", &format!("ATTEMPTING reconnect for device {} - reason: {}", device_id, reason));
+    }
+
+    pub fn log_tcp_reconnect_result(device_id: &str, success: bool, error: Option<&str>) {
+        let status = if success { "SUCCESS" } else { "FAILED" };
+        let details = if let Some(err) = error {
+            format!(" - error: {}", err)
+        } else {
+            String::new()
+        };
+        Self::log_event("TCP_RECONNECT", &format!("RESULT for device {}: {}{}", device_id, status, details));
+    }
+
     pub fn clear_log() {
         let _ = std::fs::remove_file(Self::LOG_FILE);
     }
