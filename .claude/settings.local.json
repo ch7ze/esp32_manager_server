@@ -27,7 +27,9 @@
       "Bash(powershell:*)",
       "Bash(del:*)",
       "Bash(grep:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(mkdir:*)",
+      "Bash(move:*)"
     ],
     "deny": [],
     "ask": []

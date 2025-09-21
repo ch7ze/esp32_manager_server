@@ -199,6 +199,7 @@ impl Esp32Connection {
             crate::debug_logger::DebugLogger::log_tcp_connection_status(&self.config.device_id, "AVAILABLE", "TCP stream exists, attempting to send command");
 
             // Send the command
+            crate::debug_logger::DebugLogger::log_tcp_message(&self.config.device_id, "SENT", &json_str);
             let write_result = stream.write_all(json_str.as_bytes()).await;
             if let Err(e) = write_result {
                 if is_reset_command {
@@ -417,14 +418,57 @@ impl Esp32Connection {
                     break;
                 }
 
-                // ESP32 uses TCP only for receiving commands, not for sending data
-                // We don't need to read from TCP as ESP32 sends all data via UDP
-                // Just check if the TCP connection still exists by checking the lock
-                let tcp = tcp_stream.lock().await;
-                if tcp.is_some() {
-                    // TCP connection is available, just wait
+                // Read from TCP stream for incoming messages from ESP32
+                let mut tcp = tcp_stream.lock().await;
+                if let Some(stream) = tcp.as_mut() {
+                    // Try to read from TCP stream with timeout
+                    let read_result = tokio::time::timeout(
+                        Duration::from_millis(100),
+                        stream.read(&mut buffer)
+                    ).await;
+
+                    match read_result {
+                        Ok(Ok(0)) => {
+                            // Connection closed
+                            info!("TCP connection closed for device {}", device_id);
+                            *tcp = None;
+                        }
+                        Ok(Ok(bytes_read)) => {
+                            // Got data from ESP32
+                            let message = String::from_utf8_lossy(&buffer[..bytes_read]);
+                            info!("TCP RECEIVED from {}: {}", device_id, message);
+                            crate::debug_logger::DebugLogger::log_tcp_message(&device_id, "RECEIVED", &message);
+
+                            // Add to TCP buffer for processing
+                            {
+                                let mut buffer_guard = tcp_buffer.lock().await;
+                                buffer_guard.push_str(&message);
+                            }
+
+                            // Process complete JSON messages from buffer
+                            let mut buffer_guard = tcp_buffer.lock().await;
+                            while let Some(json_str) = extract_complete_json(&mut buffer_guard) {
+                                info!("TCP JSON extracted: {}", json_str);
+                                // Process the TCP message using the global bypass function
+                                let device_id_clone = device_id.clone();
+                                let json_clone = json_str.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = crate::esp32_manager::handle_tcp_bypass_global(&json_clone, &device_id_clone).await {
+                                        warn!("Failed to process TCP message: {}", e);
+                                    }
+                                });
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            // Read error
+                            warn!("TCP read error for device {}: {}", device_id, e);
+                            sleep(Duration::from_millis(100)).await;
+                        }
+                        Err(_) => {
+                            // Timeout - no data available, continue loop
+                        }
+                    }
                     drop(tcp);
-                    sleep(Duration::from_millis(1000)).await;
                 } else {
                     // No connection, wait a bit
                     sleep(Duration::from_millis(100)).await;

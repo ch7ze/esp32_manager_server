@@ -6,6 +6,7 @@ use crate::esp32_types::{
 };
 use crate::device_store::{SharedDeviceStore, DeviceEventStore};
 use crate::events::DeviceEvent;
+use crate::debug_logger::DebugLogger;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -1192,6 +1193,7 @@ impl Esp32Manager {
         device_store: &SharedDeviceStore
     ) {
         info!("TCP BYPASS: Processing TCP message for device {}: {}", device_id, message);
+        DebugLogger::log_tcp_message(device_id, "RECEIVED", message);
 
         // Send connection status event directly to device store (TCP is connected)
         let connection_event = crate::events::DeviceEvent::esp32_connection_status(
