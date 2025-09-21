@@ -282,6 +282,10 @@ function processDeviceEvent(deviceId, event) {
         case 'esp32ConnectionStatus':
             device.connected = eventData.connected;
             updateConnectionStatus(deviceId, eventData.connected);
+            // Bei Disconnect alle pending Variable Sends löschen und Controls sperren
+            if (!eventData.connected) {
+                clearPendingVariableSendsForDevice(deviceId);
+            }
             break;
 
         case 'esp32UdpBroadcast':
@@ -670,6 +674,9 @@ function updateConnectionStatus(deviceId, connected) {
             }
         }
     }
+
+    // Variable Controls auch entsprechend dem Connection Status aktualisieren
+    updateVariableControlsConnectionState(deviceId, connected);
 }
 
 function updateMonitorArea(deviceId, type) {
@@ -939,9 +946,9 @@ function sendVariable(deviceId, variableName) {
         const rawValue = inputEl.value;
         const value = parseInt(rawValue) || 0;
 
-        // Textfeld deaktivieren und Button-Status auf "sending" setzen
+        // Textfeld deaktivieren während des Sendens
         inputEl.disabled = true;
-        buttonEl.classList.remove('changed');
+        // Button bleibt rot bis ACK ankommt
 
         // Variable als "wird gesendet" markieren
         const variableKey = `${deviceId}-${variableName}`;
@@ -964,15 +971,6 @@ function sendVariable(deviceId, variableName) {
 
         console.log(`ESP32 FRONTEND DEBUG: Sending variable ${variableName} = ${value} for device ${deviceId}`);
         esp32Websocket.send(JSON.stringify(message));
-
-        // Nach 3 Sekunden automatisch wieder aktivieren (Fallback)
-        setTimeout(() => {
-            if (pendingVariableSends.has(variableKey)) {
-                pendingVariableSends.delete(variableKey);
-                inputEl.disabled = false;
-                console.log(`ESP32 FRONTEND DEBUG: Fallback reactivation for ${variableName}`);
-            }
-        }, 3000);
 
     } else {
         console.error(`ESP32 FRONTEND DEBUG: Cannot send variable - inputEl: ${!!inputEl}, buttonEl: ${!!buttonEl}, websocket: ${!!esp32Websocket}`);
@@ -1021,6 +1019,42 @@ function reactivateVariableInput(deviceId, variableName, newValue) {
                     buttonEl.classList.add('changed');
                 }
             }
+        }
+    }
+}
+
+function clearPendingVariableSendsForDevice(deviceId) {
+    // Alle pending Sends für dieses Device löschen
+    const keysToDelete = Array.from(pendingVariableSends).filter(key => key.startsWith(deviceId + '-'));
+    keysToDelete.forEach(key => pendingVariableSends.delete(key));
+
+    // Alle Variable Controls für dieses Device sperren und auf blass rot setzen
+    updateVariableControlsConnectionState(deviceId, false);
+}
+
+function updateVariableControlsConnectionState(deviceId, connected) {
+    const suffixes = ['tabs', 'stack', 'grid'];
+
+    for (const suffix of suffixes) {
+        const containerId = `${deviceId}-${suffix}-variables`;
+        const container = document.getElementById(containerId);
+
+        if (container) {
+            const inputElements = container.querySelectorAll('input[data-variable-name]');
+            const buttonElements = container.querySelectorAll('button[data-variable-name]');
+
+            inputElements.forEach(input => {
+                input.disabled = !connected;
+            });
+
+            buttonElements.forEach(button => {
+                if (connected) {
+                    button.classList.remove('disconnected');
+                } else {
+                    button.classList.add('disconnected');
+                    button.classList.remove('changed');
+                }
+            });
         }
     }
 }

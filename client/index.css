@@ -292,6 +292,12 @@ body {
   background: #dc3545;
 }
 
+.variable-send-btn.disconnected {
+  background: #f8d7da;
+  color: #721c24;
+  cursor: not-allowed;
+}
+
 /* Monitor Areas */
 .monitor-area {
   background: #1a1a1a;
