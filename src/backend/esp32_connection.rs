@@ -1,10 +1,9 @@
 // ESP32 TCP/UDP connection management
 
 use crate::esp32_types::{
-    Esp32Command, Esp32Event, Esp32DeviceConfig, ConnectionState, Esp32Result, Esp32Error, Esp32Variable
+    Esp32Command, Esp32Event, Esp32DeviceConfig, ConnectionState, Esp32Result, Esp32Error
 };
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -13,7 +12,6 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::time::{timeout, sleep};
 use tracing::{info, warn, error, debug};
-use serde_json::Value;
 
 // Global reset attempt counter
 static RESET_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -402,7 +400,7 @@ impl Esp32Connection {
         let tcp_stream = Arc::clone(&self.tcp_stream);
         let tcp_buffer = Arc::clone(&self.tcp_buffer);
         let _event_sender = self.event_sender.clone();
-        let connection_state = Arc::clone(&self.connection_state);
+        let _connection_state = Arc::clone(&self.connection_state);
         let device_id = self.config.device_id.clone();
         let _device_config = self.config.clone();
 
@@ -530,119 +528,8 @@ fn extract_complete_json(buffer: &mut String) -> Option<String> {
     None
 }
 
-/// Handle incoming TCP message from ESP32
-/// Enhanced version that matches the UDP bypass functionality and C# implementation
-async fn handle_tcp_message(json_str: &str, event_sender: &mpsc::UnboundedSender<Esp32Event>) -> Esp32Result<()> {
-    let value: Value = serde_json::from_str(json_str)?;
 
-    // Handle changeableVariables array (from C# RemoteAccess.cs line 347-368)
-    if let Some(vars_array) = value.get("changeableVariables") {
-        if let Some(vars) = vars_array.as_array() {
-            let mut variables = Vec::new();
-            for var in vars {
-                if let (Some(name), Some(value)) = (var.get("name"), var.get("value")) {
-                    if let (Some(name_str), Some(value_num)) = (name.as_str(), value.as_u64()) {
-                        variables.push(Esp32Variable {
-                            name: name_str.to_string(),
-                            value: value_num as u32,
-                        });
-                    }
-                }
-            }
 
-            if !variables.is_empty() {
-                debug!("TCP: Extracted changeableVariables: {:?}", variables);
-                let event = Esp32Event::changeable_variables(variables);
-                let _ = event_sender.send(event);
-            }
-        }
-    }
-
-    // Handle startOptions array (from C# RemoteAccess.cs line 371-384)
-    if let Some(options_array) = value.get("startOptions") {
-        if let Some(options) = options_array.as_array() {
-            let mut start_options = Vec::new();
-            for option in options {
-                if let Some(option_str) = option.as_str() {
-                    start_options.push(option_str.to_string());
-                }
-            }
-
-            if !start_options.is_empty() {
-                debug!("TCP: Extracted startOptions: {:?}", start_options);
-                let event = Esp32Event::start_options(start_options);
-                let _ = event_sender.send(event);
-            }
-        }
-    }
-
-    // Handle device information (enhanced from ESP32 capabilities)
-    if let Some(device_name) = value.get("deviceName").and_then(|v| v.as_str()) {
-        let firmware_version = value.get("firmwareVersion").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-        let uptime = value.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-
-        debug!("TCP: Extracted device info - name: {}, firmware: {}, uptime: {}", device_name, firmware_version, uptime);
-        let device_info_event = Esp32Event::DeviceInfo {
-            device_id: "tcp_device".to_string(), // Will be overridden by manager
-            device_name: Some(device_name.to_string()),
-            firmware_version: Some(firmware_version),
-            uptime: Some(uptime as u64),
-        };
-        let _ = event_sender.send(device_info_event);
-    }
-
-    // Handle individual variable updates (similar to UDP parsing)
-    for (key, val) in value.as_object().unwrap_or(&serde_json::Map::new()) {
-        if key != "changeableVariables" && key != "startOptions" && key != "deviceName" && key != "firmwareVersion" && key != "uptime" {
-            if let Some(val_str) = val.as_str() {
-                debug!("TCP: Extracted individual variable - {}={}", key, val_str);
-                let variable_event = Esp32Event::variable_update(key.clone(), val_str.to_string());
-                let _ = event_sender.send(variable_event);
-            } else if let Some(val_num) = val.as_u64() {
-                debug!("TCP: Extracted individual numeric variable - {}={}", key, val_num);
-                let variable_event = Esp32Event::variable_update(key.clone(), val_num.to_string());
-                let _ = event_sender.send(variable_event);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Handle TCP message using direct bypass to DeviceStore (like UDP bypass)
-/// This ensures TCP events reach the frontend even when EventForwardingTask crashes
-async fn handle_tcp_message_bypass(json_str: &str, device_id: &str) {
-    info!("TCP BYPASS: Processing TCP message for device {}: {}", device_id, json_str);
-
-    // For now, we'll log the bypass logic but can't call DeviceStore directly from here
-    // The DeviceStore access needs to be done from ESP32Manager
-    // This is a placeholder that will be replaced by a call from ESP32Manager
-
-    warn!("TCP BYPASS: TCP bypass logic needs to be called from ESP32Manager with DeviceStore access");
-    warn!("TCP BYPASS: Message for device {}: {}", device_id, json_str);
-}
-
-/// Handle incoming UDP message from ESP32
-pub async fn handle_udp_message(message: &str, from_addr: SocketAddr, event_sender: &mpsc::UnboundedSender<Esp32Event>) {
-    // Console output is now handled by central UDP listener
-    debug!("Processing UDP message from {}: {}", from_addr, message);
-
-    // Send raw UDP broadcast event
-    let broadcast_event = Esp32Event::udp_broadcast(message.to_string(), from_addr);
-    let _ = event_sender.send(broadcast_event);
-    
-    // Parse for variable updates using regex like the C# version
-    let re = regex::Regex::new(r#"\{"([^"]+)"\s*:\s*"([^"]+)"\}"#).unwrap();
-    for captures in re.captures_iter(message) {
-        if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-            let variable_event = Esp32Event::variable_update(
-                name.as_str().trim().to_string(),
-                value.as_str().trim().to_string(),
-            );
-            let _ = event_sender.send(variable_event);
-        }
-    }
-}
 
 impl Drop for Esp32Connection {
     fn drop(&mut self) {

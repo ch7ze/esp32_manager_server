@@ -11,7 +11,6 @@ use crate::debug_logger::DebugLogger;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::panic;
 use std::time::Instant;
 use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::net::UdpSocket;
@@ -27,8 +26,6 @@ use tracing::{info, warn, error, debug};
 pub struct Esp32Manager {
     /// Map of device_id -> ESP32 connection
     connections: Arc<RwLock<HashMap<String, Arc<Mutex<Esp32Connection>>>>>,
-    /// Map of device_id -> event sender (separate from connection to avoid mutex blocking)
-    device_event_senders: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<Esp32Event>>>>,
     /// Device configurations
     device_configs: Arc<RwLock<HashMap<String, Esp32DeviceConfig>>>,
     /// Shared device store for event management
@@ -65,7 +62,6 @@ impl Esp32Manager {
 
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
-            device_event_senders: Arc::new(RwLock::new(HashMap::new())),
             device_configs: Arc::new(RwLock::new(HashMap::new())),
             device_store,
             event_sender: event_sender.clone(),
@@ -91,8 +87,6 @@ impl Esp32Manager {
         // Start event processing task
         self.start_event_processor().await;
 
-        // Start reconnect monitoring task
-        self.start_reconnect_monitor().await;
 
         // Start UDP timeout monitoring task
         self.start_udp_timeout_monitor().await;
@@ -167,10 +161,6 @@ impl Esp32Manager {
             crate::debug_logger::DebugLogger::log_device_manager_state(device_id, "REMOVED from connections HashMap");
         }
 
-        {
-            let mut senders = self.device_event_senders.write().await;
-            senders.remove(device_id);
-        }
 
         {
             let mut configs = self.device_configs.write().await;
@@ -473,209 +463,6 @@ impl Esp32Manager {
     // EVENT PROCESSING
     // ========================================================================
     
-    /// Create event sender for a specific device
-    fn create_device_event_sender(&self, device_id: String) -> mpsc::UnboundedSender<Esp32Event> {
-        let manager_sender = self.event_sender.clone();
-        let bypass_event_sender = self.bypass_event_sender.clone();
-
-        let (tx, mut rx) = mpsc::unbounded_channel();
-
-        // Sanitize device_id for logging to prevent issues with special characters
-        let safe_device_id = device_id.replace(':', "_COLON_");
-        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("SANITIZED_DEVICE_ID: {} -> {}", device_id, safe_device_id));
-
-        // Forward device events to manager - clone sender to ensure it stays alive
-        let device_id_for_spawn = device_id.clone();
-        let manager_sender_clone = manager_sender.clone();
-        let spawn_handle = tokio::spawn(async move {
-                info!("EVENT FORWARDING DEBUG: Started event forwarding task for device {}", device_id);
-                info!("EVENT FORWARDING DEBUG: Task spawned, waiting for events from device {}", device_id);
-                crate::debug_logger::DebugLogger::log_event_forwarding_task_start(&device_id);
-                let mut event_count = 0;
-
-                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("LOOP_START for device {}", device_id));
-                info!("EVENT FORWARDING DEBUG: About to enter main event loop for device {}", device_id);
-
-                // Check manager sender status
-                let manager_sender_closed = manager_sender_clone.is_closed();
-                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("MANAGER_SENDER_STATUS for device {} - is_closed: {}", device_id, manager_sender_closed));
-
-                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("ENTERING_MAIN_LOOP for device {}", device_id));
-
-                loop {
-                    info!("EVENT FORWARDING DEBUG: Device {} waiting for next event (processed so far: {})", device_id, event_count);
-                    crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("LOOP_ITERATION for device {} - event_count: {}", device_id, event_count));
-
-                    info!("EVENT FORWARDING DEBUG: Device {} calling rx.recv().await", device_id);
-                    crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("CALLING_RECV for device {}", device_id));
-
-                    // Add detailed pre-recv status
-                    crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("PRE_RECV_STATUS for device {} - manager_sender_closed: {}", device_id, manager_sender_clone.is_closed()));
-
-                    // Add timeout to see if recv blocks indefinitely
-                    crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("CALLING_RECV_WITH_TIMEOUT for device {}", device_id));
-
-                    // Use select! to ensure the timeout is not blocked by recv
-                    let recv_result = tokio::select! {
-                        result = rx.recv() => {
-                            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_COMPLETED_BEFORE_TIMEOUT for device {}", device_id));
-                            Ok(result)
-                        }
-                        _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_TIMEOUT_TRIGGERED for device {}", device_id));
-                            Err(())
-                        }
-                    };
-
-                    // Add immediate post-recv logging
-                    crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("POST_RECV_IMMEDIATE for device {} - timeout_result: {}", device_id, recv_result.is_ok()));
-
-                let final_recv_result = match recv_result {
-                    Ok(recv_data) => {
-                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_SUCCESS for device {} - has_data: {:?}", device_id, recv_data.is_some()));
-
-                        if recv_data.is_none() {
-                            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_RETURNED_NONE_IMMEDIATELY for device {} - channel closed!", device_id));
-                            error!("EVENT FORWARDING DEBUG: CRITICAL - Channel for device {} returned None! ESP32Connection event_sender was dropped!", device_id);
-                            error!("EVENT FORWARDING DEBUG: This explains the 'EVENT_SEND FAILED' error - the sender is trying to send to a closed channel!");
-                            error!("EVENT FORWARDING DEBUG: The ESP32Connection for {} needs to be recreated or the channel is corrupted!", device_id);
-
-                            // Check if we have the Connection in the manager
-                            let manager_sender_still_open = !manager_sender_clone.is_closed();
-                            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_NONE_MANAGER_SENDER_STATUS for device {} - still_open: {}", device_id, manager_sender_still_open));
-
-                            // Exit the task since the channel is permanently closed
-                            error!("EVENT FORWARDING DEBUG: Task for device {} exiting due to closed channel", device_id);
-                            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("TASK_EXITING_CHANNEL_CLOSED for device {}", device_id));
-                            break;
-                        }
-
-                        recv_data
-                    }
-                    Err(_) => {
-                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_TIMEOUT for device {} - continuing...", device_id));
-
-                        // Check if manager sender is still alive
-                        if manager_sender_clone.is_closed() {
-                            error!("EVENT FORWARDING DEBUG: CRITICAL - Manager sender closed for device {} during timeout - this will cause task to exit!", device_id);
-                            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("MANAGER_SENDER_CLOSED_DURING_TIMEOUT for device {}", device_id));
-                            break; // Exit the loop if manager sender is closed
-                        }
-
-                        continue; // Continue the loop after timeout
-                    }
-                };
-
-                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_COMPLETED for device {} - result: {:?}", device_id, final_recv_result.is_some()));
-
-                match final_recv_result {
-                    Some(event) => {
-                        event_count += 1;
-                        info!("EVENT FORWARDING DEBUG: Received event #{} from device {}: {:?}", event_count, device_id, event);
-                        crate::debug_logger::DebugLogger::log_event_forwarding_task_receive(&device_id, event_count, &format!("{:?}", event));
-
-                        info!("EVENT FORWARDING DEBUG: Attempting to forward event #{} from device {} to manager", event_count, device_id);
-                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("ATTEMPTING_SEND to manager for device {} - event #{}", device_id, event_count));
-                        match manager_sender_clone.send(Esp32ManagerEvent::DeviceEvent(device_id.clone(), event)) {
-                            Ok(()) => {
-                                info!("EVENT FORWARDING DEBUG: Successfully forwarded event #{} from device {} to manager", event_count, device_id);
-                                crate::debug_logger::DebugLogger::log_event_forwarding_task_send_success(&device_id, event_count);
-                            }
-                            Err(e) => {
-                                error!("EVENT FORWARDING DEBUG: FAILED to forward event #{} from device {} to manager: {}", event_count, device_id, e);
-                                error!("EVENT FORWARDING DEBUG: Manager channel appears to be closed - this is why events don't reach frontend!");
-                                error!("EVENT FORWARDING DEBUG: Event forwarding task will exit for device {} after {} events", device_id, event_count);
-                                error!("EVENT FORWARDING DEBUG: Manager sender error details: {}", e);
-                                crate::debug_logger::DebugLogger::log_event_forwarding_task_send_fail(&device_id, event_count, &e.to_string());
-                                crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("BREAK_ON_SEND_ERROR for device {}", device_id));
-                                break;
-                            }
-                        }
-                    }
-                    None => {
-                        warn!("EVENT FORWARDING DEBUG: Receiver channel closed for device {} after {} events", device_id, event_count);
-                        warn!("EVENT FORWARDING DEBUG: This means the ESP32Connection event_sender was dropped!");
-                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("RECV_RETURNED_NONE for device {}", device_id));
-                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("BREAK_ON_CHANNEL_CLOSED for device {}", device_id));
-                        break;
-                    }
-                }
-            }
-
-                if event_count == 0 {
-                    error!("EVENT FORWARDING DEBUG: Event forwarding task for device {} ended WITHOUT processing any events - channel was closed immediately!", device_id);
-                    error!("EVENT FORWARDING DEBUG: This indicates the ESP32Connection event_sender was dropped before any events were sent!");
-                } else {
-                    warn!("EVENT FORWARDING DEBUG: Event forwarding task ended for device {} after processing {} events", device_id, event_count);
-                }
-                warn!("EVENT FORWARDING DEBUG: Event forwarding task for device {} is now TERMINATED", device_id);
-                crate::debug_logger::DebugLogger::log_event_forwarding_task_end(&device_id, event_count);
-
-                event_count // Return event count
-        });
-
-        // Monitor the spawned task for completion or panic
-        let monitoring_device_id = device_id_for_spawn.clone();
-        let manager_sender_for_recovery = manager_sender.clone();
-        let bypass_sender_for_recovery = bypass_event_sender.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(100)).await; // Give task time to start
-
-            // Log that monitoring started
-            crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("MONITORING_STARTED for device {}", monitoring_device_id));
-
-            match spawn_handle.await {
-                Ok(event_count) => {
-                    error!("EVENT FORWARDING DEBUG: CRITICAL - Task completed normally for device {} with {} events - THIS IS THE BUG!", monitoring_device_id, event_count);
-                    crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("TASK_COMPLETED_NORMALLY for device {} - events: {}", monitoring_device_id, event_count));
-                }
-                Err(join_error) => {
-                    if join_error.is_panic() {
-                        error!("EVENT FORWARDING DEBUG: PANIC in task for device {}: {:?}", monitoring_device_id, join_error);
-                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("TASK_PANICKED for device {}: {:?}", monitoring_device_id, join_error));
-                    } else if join_error.is_cancelled() {
-                        error!("EVENT FORWARDING DEBUG: Task CANCELLED for device {}", monitoring_device_id);
-                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("TASK_CANCELLED for device {}", monitoring_device_id));
-                    } else {
-                        error!("EVENT FORWARDING DEBUG: Task FAILED for device {}: {:?}", monitoring_device_id, join_error);
-                        crate::debug_logger::DebugLogger::log_event("EVENT_FORWARDING_TASK", &format!("TASK_FAILED for device {}: {:?}", monitoring_device_id, join_error));
-                    }
-
-                    // Send manual connection status and restart task automatically
-                    error!("EVENT FORWARDING DEBUG: Restarting crashed Event Forwarding Task for {}", monitoring_device_id);
-
-                    // Send manual connection status event using bypass sender
-                    let manual_event = Esp32ManagerEvent::DeviceEvent(
-                        monitoring_device_id.clone(),
-                        Esp32Event::ConnectionStatus {
-                            connected: true,
-                            device_ip: "0.0.0.0".parse().unwrap(), // Will be updated by actual connection
-                            tcp_port: 0,
-                            udp_port: 0,
-                        }
-                    );
-
-                    // Try regular sender first, then bypass if it fails
-                    if let Err(e) = manager_sender_for_recovery.send(manual_event.clone()) {
-                        error!("EVENT FORWARDING DEBUG: Regular sender failed for {}: {}, trying bypass", monitoring_device_id, e);
-                        if let Err(e) = bypass_sender_for_recovery.send(manual_event) {
-                            error!("EVENT FORWARDING DEBUG: Bypass sender also failed for {}: {}", monitoring_device_id, e);
-                        } else {
-                            error!("EVENT FORWARDING DEBUG: Bypass manual recovery event sent for {}", monitoring_device_id);
-                        }
-                    } else {
-                        error!("EVENT FORWARDING DEBUG: Manual recovery event sent for {}", monitoring_device_id);
-                    }
-
-                    // Auto-restart the crashed Event Forwarding Task
-                    error!("EVENT FORWARDING DEBUG: Event Forwarding Task crashed for {}", monitoring_device_id);
-                    error!("EVENT FORWARDING DEBUG: Will send recovery status - need to manually restart task or reconnect device");
-                }
-            }
-        });
-        
-        tx
-    }
 
     /// Create a direct device event sender - SIMPLIFIED VERSION
     /// This bypasses the complex event forwarding layer and sends directly to the manager
@@ -779,47 +566,6 @@ impl Esp32Manager {
         });
     }
 
-    /// Start reconnect monitoring task that automatically reconnects disconnected devices
-    async fn start_reconnect_monitor(&self) {
-        let connections = Arc::clone(&self.connections);
-        let device_configs = Arc::clone(&self.device_configs);
-        let reconnect_interval = Duration::from_secs(5); // Check every 5 seconds
-
-        info!("ESP32 RECONNECT MONITOR: Starting automatic reconnect monitoring");
-        tokio::spawn(async move {
-            loop {
-                sleep(reconnect_interval).await;
-
-                // Get list of all device configs
-                let configs_to_check = {
-                    let configs = device_configs.read().await;
-                    configs.clone() // Clone the HashMap to avoid holding the lock
-                };
-
-                for (device_id, config) in configs_to_check {
-                    // Check connection state
-                    let needs_reconnect = {
-                        let connections = connections.read().await;
-                        if let Some(connection_arc) = connections.get(&device_id) {
-                            let connection = connection_arc.lock().await;
-                            let state = connection.get_connection_state().await;
-                            matches!(state, ConnectionState::Disconnected | ConnectionState::Failed(_))
-                        } else {
-                            true // No connection exists at all
-                        }
-                    };
-
-                    if needs_reconnect {
-                        info!("ESP32 RECONNECT MONITOR: Device {} is disconnected, attempting reconnect", device_id);
-
-                        // Note: We can't call self.connect_device here because we don't have &self
-                        // Instead, we'll let the next connection attempt handle this
-                        debug!("ESP32 RECONNECT MONITOR: Device {} needs reconnection - will be handled by next connection request", device_id);
-                    }
-                }
-            }
-        });
-    }
 
     /// Handle ESP32 event by converting it to DeviceEvent and storing it
     async fn handle_esp32_event(
@@ -902,7 +648,6 @@ impl Esp32Manager {
         // Start listener task
         let socket = Arc::clone(&self.central_udp_socket);
         let ip_to_device_id = Arc::clone(&self.ip_to_device_id);
-        let _device_event_senders = Arc::clone(&self.device_event_senders);
         let device_store = Arc::clone(&self.device_store);
         let udp_activity_tracker = Arc::clone(&self.udp_activity_tracker);
         let udp_connection_states = Arc::clone(&self.udp_connection_states);
