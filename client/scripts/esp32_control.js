@@ -919,9 +919,13 @@ function sendVariable(deviceId, variableName) {
     }
 
     console.log(`ESP32 FRONTEND DEBUG: inputEl found:`, inputEl);
+    console.log(`ESP32 FRONTEND DEBUG: inputEl.value (raw):`, inputEl ? inputEl.value : 'null');
+    console.log(`ESP32 FRONTEND DEBUG: inputEl.getAttribute('value'):`, inputEl ? inputEl.getAttribute('value') : 'null');
 
     if (inputEl && esp32Websocket) {
-        const value = parseInt(inputEl.value) || 0;
+        const rawValue = inputEl.value;
+        const value = parseInt(rawValue) || 0;
+        console.log(`ESP32 FRONTEND DEBUG: rawValue: "${rawValue}", parsed value: ${value}`);
         console.log(`ESP32 FRONTEND DEBUG: Sending variable ${variableName} = ${value} for device ${deviceId}`);
 
         const message = {
