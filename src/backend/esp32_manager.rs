@@ -138,8 +138,10 @@ impl Esp32Manager {
 
         {
             let mut connections = self.connections.write().await;
+            crate::debug_logger::DebugLogger::log_device_manager_state(&device_id, "ADDING to connections HashMap");
             connections.insert(device_id.clone(), Arc::new(Mutex::new(connection)));
             crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CONNECTION_STORED_IN_HASHMAP: {}", device_id));
+            crate::debug_logger::DebugLogger::log_device_manager_state(&device_id, "ADDED to connections HashMap");
         }
 
         info!("ESP32 device {} added successfully", device_id);
@@ -159,7 +161,9 @@ impl Esp32Manager {
         // Remove from collections
         {
             let mut connections = self.connections.write().await;
+            crate::debug_logger::DebugLogger::log_device_manager_state(device_id, "REMOVING from connections HashMap");
             connections.remove(device_id);
+            crate::debug_logger::DebugLogger::log_device_manager_state(device_id, "REMOVED from connections HashMap");
         }
 
         {
@@ -198,9 +202,9 @@ impl Esp32Manager {
                         return Ok(());
                     }
                     ConnectionState::Connecting => {
-                        warn!("DEVICE CONNECTION DEBUG: Device {} already connecting - preventing race condition", device_id);
-                        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("ALREADY_CONNECTING_SKIP: {}", device_id));
-                        return Err(Esp32Error::ConnectionFailed("Already connecting".to_string()));
+                        info!("DEVICE CONNECTION DEBUG: Device {} is in connecting state (likely after reset) - attempting reconnect", device_id);
+                        crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("CONNECTING_STATE_RECONNECT: {}", device_id));
+                        false // Use existing connection and try to reconnect
                     }
                     ConnectionState::Disconnected | ConnectionState::Failed(_) => {
                         info!("DEVICE CONNECTION DEBUG: Device {} is disconnected/failed - recreating connection", device_id);
@@ -980,6 +984,42 @@ impl Esp32Manager {
         Ok(())
     }
 
+    /// Update device configuration if UDP port has changed (after ESP32 restart)
+    async fn update_device_config_for_udp_port_change(device_id: &str, from_addr: SocketAddr) {
+        let device_configs = unsafe {
+            GLOBAL_DEVICE_CONFIGS.as_ref()
+        };
+
+        if let Some(configs) = device_configs {
+            let mut configs_guard = configs.write().await;
+
+            if let Some(current_config) = configs_guard.get(device_id) {
+                // Check if the UDP port has changed
+                if current_config.udp_port != from_addr.port() {
+                    info!("UDP PORT CHANGED: Device {} UDP port changed from {} to {} - updating configuration for TCP connections",
+                        device_id, current_config.udp_port, from_addr.port());
+
+                    // Create updated config with new ports
+                    // ESP32 uses the same port for both TCP and UDP
+                    let mut updated_config = current_config.clone();
+                    updated_config.udp_port = from_addr.port();
+                    updated_config.tcp_port = from_addr.port(); // ESP32 uses same port for TCP and UDP
+
+                    // Update the configuration
+                    configs_guard.insert(device_id.to_string(), updated_config);
+
+                    info!("UDP PORT UPDATED: Device {} configuration updated - TCP and UDP now use port {}",
+                        device_id, from_addr.port());
+                } else {
+                    debug!("UDP PORT UNCHANGED: Device {} UDP port {} matches stored configuration",
+                        device_id, from_addr.port());
+                }
+            } else {
+                debug!("UDP PORT CHECK: No stored configuration found for device {}", device_id);
+            }
+        }
+    }
+
     /// Handle UDP message with smart connection state detection to prevent redundant events
     pub async fn handle_udp_message_bypass_smart(
         message: &str,
@@ -989,6 +1029,9 @@ impl Esp32Manager {
         udp_connection_states: &Arc<RwLock<HashMap<String, bool>>>
     ) {
         debug!("UDP bypass: Processing message from {} for device {}: {}", from_addr, device_id, message);
+
+        // Update device configuration if UDP port has changed (important for TCP connections after ESP32 restart)
+        Self::update_device_config_for_udp_port_change(device_id, from_addr).await;
 
         // Check if device was previously disconnected (or never seen before)
         let should_send_connected_event = {
@@ -1297,16 +1340,44 @@ impl Esp32Manager {
 
 /// Create shared ESP32 manager instance
 pub fn create_esp32_manager(device_store: SharedDeviceStore) -> Arc<Esp32Manager> {
-    Arc::new(Esp32Manager::new(device_store))
+    let manager = Arc::new(Esp32Manager::new(device_store));
+
+    // Set global UDP connection states for TCP disconnect handling
+    set_global_udp_connection_states(Arc::clone(&manager.udp_connection_states));
+
+    // Set global device configs for UDP port updates
+    set_global_device_configs(Arc::clone(&manager.device_configs));
+
+    manager
 }
 
 // Global device store reference for TCP bypass
 static mut GLOBAL_DEVICE_STORE: Option<SharedDeviceStore> = None;
 
+// Global UDP connection states reference for TCP disconnect handling
+static mut GLOBAL_UDP_CONNECTION_STATES: Option<Arc<RwLock<HashMap<String, bool>>>> = None;
+
+// Global device configs reference for UDP port updates
+static mut GLOBAL_DEVICE_CONFIGS: Option<Arc<RwLock<HashMap<String, Esp32DeviceConfig>>>> = None;
+
 /// Set global device store for TCP bypass access
 pub fn set_global_device_store(device_store: SharedDeviceStore) {
     unsafe {
         GLOBAL_DEVICE_STORE = Some(device_store);
+    }
+}
+
+/// Set global UDP connection states for TCP disconnect handling
+pub fn set_global_udp_connection_states(udp_states: Arc<RwLock<HashMap<String, bool>>>) {
+    unsafe {
+        GLOBAL_UDP_CONNECTION_STATES = Some(udp_states);
+    }
+}
+
+/// Set global device configs for UDP port updates
+pub fn set_global_device_configs(device_configs: Arc<RwLock<HashMap<String, Esp32DeviceConfig>>>) {
+    unsafe {
+        GLOBAL_DEVICE_CONFIGS = Some(device_configs);
     }
 }
 
@@ -1332,7 +1403,20 @@ pub async fn handle_tcp_disconnect_global(device_id: &str) -> Result<(), String>
             .ok_or("Global device store not initialized")?
     };
 
+    let udp_connection_states = unsafe {
+        GLOBAL_UDP_CONNECTION_STATES.as_ref()
+            .ok_or("Global UDP connection states not initialized")?
+    };
+
     info!("GLOBAL TCP DISCONNECT: Processing disconnect for device {}", device_id);
+
+    // Mark device as disconnected in UDP connection states
+    // This ensures that when UDP messages arrive after restart, a reconnect event is sent
+    {
+        let mut states = udp_connection_states.write().await;
+        states.insert(device_id.to_string(), false);
+        info!("GLOBAL TCP DISCONNECT: Device {} marked as disconnected in UDP states", device_id);
+    }
 
     // Send disconnect event directly to device store
     let disconnect_event = crate::events::DeviceEvent::esp32_connection_status(

@@ -6,6 +6,7 @@ use crate::esp32_types::{
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -13,6 +14,9 @@ use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::time::{timeout, sleep};
 use tracing::{info, warn, error, debug};
 use serde_json::Value;
+
+// Global reset attempt counter
+static RESET_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 // ============================================================================
 // ESP32 CONNECTION MANAGER
@@ -173,9 +177,14 @@ impl Esp32Connection {
 
         // Check if this is a reset command (which will close the TCP connection)
         let is_reset_command = matches!(command, Esp32Command::Reset { .. });
-        if is_reset_command {
-            info!("RESET COMMAND: ESP32 {} will reset and close TCP connection - this is expected behavior", self.config.device_id);
-        }
+        let reset_attempt_number = if is_reset_command {
+            let attempt = RESET_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+            info!("RESET COMMAND: ESP32 {} will reset and close TCP connection - this is expected behavior (attempt #{})", self.config.device_id, attempt);
+            crate::debug_logger::DebugLogger::log_reset_attempt(&self.config.device_id, attempt);
+            attempt
+        } else {
+            0
+        };
 
         let json_str = command.to_json()?;
         let command_name = format!("{:?}", command);
@@ -195,6 +204,7 @@ impl Esp32Connection {
                 if is_reset_command {
                     info!("RESET COMMAND: Write failed for device {} (expected during reset): {}", self.config.device_id, e);
                     crate::debug_logger::DebugLogger::log_tcp_command_success(&self.config.device_id, &format!("{} (reset - write failed as expected)", command_name));
+                    crate::debug_logger::DebugLogger::log_reset_success(&self.config.device_id, reset_attempt_number);
                     return Ok(()); // Reset commands are expected to fail during write/flush
                 } else {
                     crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, &format!("write failed: {}", e));
@@ -208,6 +218,7 @@ impl Esp32Connection {
                 if is_reset_command {
                     info!("RESET COMMAND: Flush failed for device {} (expected during reset): {}", self.config.device_id, e);
                     crate::debug_logger::DebugLogger::log_tcp_command_success(&self.config.device_id, &format!("{} (reset - flush failed as expected)", command_name));
+                    crate::debug_logger::DebugLogger::log_reset_success(&self.config.device_id, reset_attempt_number);
                     return Ok(()); // Reset commands are expected to fail during write/flush
                 } else {
                     crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, &format!("flush failed: {}", e));
@@ -218,23 +229,21 @@ impl Esp32Connection {
             debug!("Command sent successfully: {}", json_str);
             crate::debug_logger::DebugLogger::log_tcp_command_success(&self.config.device_id, &command_name);
 
-            // For reset commands, immediately mark connection as disconnected
+            // For reset commands, close TCP stream but keep connection ready for reconnect
             if is_reset_command {
-                info!("RESET COMMAND: Marking connection as disconnected for device {} after reset", self.config.device_id);
+                info!("RESET COMMAND: Closing TCP stream for device {} after reset (keeping connection alive for reconnect)", self.config.device_id);
+                crate::debug_logger::DebugLogger::log_reset_success(&self.config.device_id, reset_attempt_number);
                 *tcp = None; // Close our side of the connection
 
-                // Update connection state
+                // Update connection state to Connecting (ready for reconnect) instead of Disconnected
                 {
                     let mut state = self.connection_state.write().await;
-                    *state = ConnectionState::Disconnected;
+                    *state = ConnectionState::Connecting; // This prevents the connection from being removed from HashMap
                 }
 
-                // Send disconnect event
-                if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(&self.config.device_id).await {
-                    warn!("RESET COMMAND: Failed to send disconnect event after reset for device {}: {}", self.config.device_id, e);
-                } else {
-                    info!("RESET COMMAND: Disconnect event sent after reset for device {}", self.config.device_id);
-                }
+                // Do NOT send disconnect event for reset commands - this is a temporary state
+                // The ESP32 will reconnect automatically and we want to keep the connection object alive
+                info!("RESET COMMAND: TCP stream closed for device {}, connection kept alive for automatic reconnect", self.config.device_id);
             }
 
             Ok(())
@@ -281,6 +290,22 @@ impl Esp32Connection {
                             Ok(()) => {
                                 debug!("Command sent successfully after reconnection: {}", json_str);
                                 crate::debug_logger::DebugLogger::log_tcp_command_success(&self.config.device_id, &format!("{} (after reconnect)", command_name));
+
+                                // For reset commands, we need to be more careful about the TCP connection state
+                                if is_reset_command {
+                                    // NOTE: The ESP might not actually receive this command if the TCP connection is stale
+                                    // This is why only the first 2 resets work - subsequent reconnects create "zombie" connections
+                                    warn!("RESET COMMAND: Reset sent after reconnect - ESP might not receive this due to stale TCP connection!");
+                                    crate::debug_logger::DebugLogger::log_reset_success(&self.config.device_id, reset_attempt_number);
+                                    // Close TCP stream and set to Connecting state (same as normal reset path)
+                                    *tcp = None;
+                                    {
+                                        let mut state = self.connection_state.write().await;
+                                        *state = ConnectionState::Connecting;
+                                    }
+                                    info!("RESET COMMAND: TCP stream closed after reconnect reset for device {}, connection kept alive for automatic reconnect", self.config.device_id);
+                                }
+
                                 Ok(())
                             }
                             Err(e) => {
@@ -297,6 +322,9 @@ impl Esp32Connection {
             } else {
                 crate::debug_logger::DebugLogger::log_tcp_connection_status(&self.config.device_id, "STILL_NOT_AVAILABLE", "TCP stream is still None even after reconnect");
                 crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, "TCP connection still not available after reconnect");
+                if is_reset_command {
+                    crate::debug_logger::DebugLogger::log_reset_failure(&self.config.device_id, reset_attempt_number, "Failed to reconnect to ESP32");
+                }
                 Err(Esp32Error::ConnectionFailed("Failed to reconnect to ESP32".to_string()))
             }
         }
@@ -576,6 +604,7 @@ impl Drop for Esp32Connection {
     fn drop(&mut self) {
         error!("ESP32CONNECTION DROP DEBUG: ESP32Connection for device {} is being DROPPED! This will close the event_sender!", self.config.device_id);
         crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("CONNECTION_DROPPED: {}", self.config.device_id));
+        crate::debug_logger::DebugLogger::log_connection_drop(&self.config.device_id, "ESP32Connection struct dropped");
 
         // Send shutdown signal if we have one
         if let Some(shutdown_tx) = &self.shutdown_sender {

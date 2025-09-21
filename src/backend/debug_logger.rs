@@ -103,4 +103,37 @@ impl DebugLogger {
     pub fn clear_log() {
         let _ = std::fs::remove_file(Self::LOG_FILE);
     }
+
+    pub fn log_reset_attempt(device_id: &str, attempt_number: u32) {
+        Self::log_to_temp_log(&format!("RESET_ATTEMPT_{}: Device {} - Reset command initiated", attempt_number, device_id));
+    }
+
+    pub fn log_reset_success(device_id: &str, attempt_number: u32) {
+        Self::log_to_temp_log(&format!("RESET_SUCCESS_{}: Device {} - Reset command sent successfully", attempt_number, device_id));
+    }
+
+    pub fn log_reset_failure(device_id: &str, attempt_number: u32, error: &str) {
+        Self::log_to_temp_log(&format!("RESET_FAILURE_{}: Device {} - Reset failed: {}", attempt_number, device_id, error));
+    }
+
+    pub fn log_connection_drop(device_id: &str, reason: &str) {
+        Self::log_to_temp_log(&format!("CONNECTION_DROP: Device {} - Connection dropped: {}", device_id, reason));
+    }
+
+    pub fn log_device_manager_state(device_id: &str, state: &str) {
+        Self::log_to_temp_log(&format!("DEVICE_MANAGER_STATE: Device {} - {}", device_id, state));
+    }
+
+    fn log_to_temp_log(message: &str) {
+        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let log_entry = format!("[{}] {}\n", timestamp, message);
+
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("templog.log") {
+            let _ = file.write_all(log_entry.as_bytes());
+            let _ = file.flush();
+        }
+    }
 }
