@@ -5,6 +5,7 @@
     let esp32Websocket = null;
     let esp32Devices = new Map();
     let currentUser = null;
+    let pendingVariableSends = new Set(); // Track which variables are being sent
 
 // Get device ID from URL parameter
 function getDeviceIdFromUrl() {
@@ -295,6 +296,14 @@ function processDeviceEvent(deviceId, event) {
             console.log('ESP32 FRONTEND DEBUG: Updating variable:', eventData.variableName, '=', eventData.variableValue);
             device.variables.set(eventData.variableName, eventData.variableValue);
             updateVariableMonitor(deviceId, eventData.variableName, eventData.variableValue);
+
+            // Nur bei gesendeten Variablen das Textfeld reaktivieren
+            const variableKey = `${deviceId}-${eventData.variableName}`;
+            if (pendingVariableSends.has(variableKey)) {
+                pendingVariableSends.delete(variableKey);
+                reactivateVariableInput(deviceId, eventData.variableName, eventData.variableValue);
+                console.log('ESP32 FRONTEND DEBUG: Reactivated input for sent variable');
+            }
             console.log('ESP32 FRONTEND DEBUG: Called updateVariableMonitor');
             break;
 
@@ -805,10 +814,13 @@ function updateVariableControlsForContainer(containerEl, variables, deviceId) {
             <input type="number"
                    class="form-control variable-value"
                    data-variable-name="${variable.name}"
+                   data-original-value="${variable.value}"
                    value="${variable.value}"
                    min="0"
+                   oninput="handleVariableChange(this, '${deviceId}', '${variable.name}')"
                    onkeypress="handleVariableKeyPress(event, '${deviceId}', '${variable.name}')">
-            <button class="btn btn-sm btn-outline-primary"
+            <button class="btn btn-sm variable-send-btn"
+                    data-variable-name="${variable.name}"
                     onclick="sendVariable('${deviceId}', '${variable.name}')">
                 <i class="bi bi-send"></i>
             </button>
@@ -894,6 +906,7 @@ function sendReset(deviceId) {
 window.sendReset = sendReset;
 window.sendStartOption = sendStartOption;
 window.sendVariable = sendVariable;
+window.handleVariableChange = handleVariableChange;
 window.handleVariableKeyPress = handleVariableKeyPress;
 window.refreshDevices = refreshDevices;
 window.initializeWebSocket = initializeWebSocket;
@@ -904,6 +917,7 @@ function sendVariable(deviceId, variableName) {
     // Find input element across all possible layouts (tabs, stack, grid)
     const suffixes = ['tabs', 'stack', 'grid'];
     let inputEl = null;
+    let buttonEl = null;
 
     for (const suffix of suffixes) {
         const containerId = `${deviceId}-${suffix}-variables`;
@@ -911,22 +925,25 @@ function sendVariable(deviceId, variableName) {
 
         if (container) {
             inputEl = container.querySelector(`input[data-variable-name="${variableName}"]`);
-            if (inputEl) {
-                console.log(`ESP32 FRONTEND DEBUG: Found input in ${suffix} layout`);
+            buttonEl = container.querySelector(`button[data-variable-name="${variableName}"]`);
+            if (inputEl && buttonEl) {
+                console.log(`ESP32 FRONTEND DEBUG: Found input and button in ${suffix} layout`);
                 break;
             }
         }
     }
 
-    console.log(`ESP32 FRONTEND DEBUG: inputEl found:`, inputEl);
-    console.log(`ESP32 FRONTEND DEBUG: inputEl.value (raw):`, inputEl ? inputEl.value : 'null');
-    console.log(`ESP32 FRONTEND DEBUG: inputEl.getAttribute('value'):`, inputEl ? inputEl.getAttribute('value') : 'null');
-
-    if (inputEl && esp32Websocket) {
+    if (inputEl && buttonEl && esp32Websocket) {
         const rawValue = inputEl.value;
         const value = parseInt(rawValue) || 0;
-        console.log(`ESP32 FRONTEND DEBUG: rawValue: "${rawValue}", parsed value: ${value}`);
-        console.log(`ESP32 FRONTEND DEBUG: Sending variable ${variableName} = ${value} for device ${deviceId}`);
+
+        // Textfeld deaktivieren und Button-Status auf "sending" setzen
+        inputEl.disabled = true;
+        buttonEl.classList.remove('changed');
+
+        // Variable als "wird gesendet" markieren
+        const variableKey = `${deviceId}-${variableName}`;
+        pendingVariableSends.add(variableKey);
 
         const message = {
             type: 'deviceEvent',
@@ -943,10 +960,66 @@ function sendVariable(deviceId, variableName) {
             }]
         };
 
-        console.log(`ESP32 FRONTEND DEBUG: WebSocket message:`, JSON.stringify(message, null, 2));
+        console.log(`ESP32 FRONTEND DEBUG: Sending variable ${variableName} = ${value} for device ${deviceId}`);
         esp32Websocket.send(JSON.stringify(message));
+
+        // Nach 3 Sekunden automatisch wieder aktivieren (Fallback)
+        setTimeout(() => {
+            if (pendingVariableSends.has(variableKey)) {
+                pendingVariableSends.delete(variableKey);
+                inputEl.disabled = false;
+                console.log(`ESP32 FRONTEND DEBUG: Fallback reactivation for ${variableName}`);
+            }
+        }, 3000);
+
     } else {
-        console.error(`ESP32 FRONTEND DEBUG: Cannot send variable - inputEl: ${!!inputEl}, websocket: ${!!esp32Websocket}`);
+        console.error(`ESP32 FRONTEND DEBUG: Cannot send variable - inputEl: ${!!inputEl}, buttonEl: ${!!buttonEl}, websocket: ${!!esp32Websocket}`);
+    }
+}
+
+function handleVariableChange(inputEl, deviceId, variableName) {
+    const originalValue = inputEl.getAttribute('data-original-value');
+    const currentValue = inputEl.value;
+
+    // Finde den entsprechenden Button
+    const variableItem = inputEl.closest('.variable-item');
+    const button = variableItem.querySelector(`button[data-variable-name="${variableName}"]`);
+
+    if (currentValue !== originalValue) {
+        button.classList.add('changed');
+    } else {
+        button.classList.remove('changed');
+    }
+}
+
+function reactivateVariableInput(deviceId, variableName, newValue) {
+    // Finde alle Input-Elemente für diese Variable in allen Layouts
+    const suffixes = ['tabs', 'stack', 'grid'];
+
+    for (const suffix of suffixes) {
+        const containerId = `${deviceId}-${suffix}-variables`;
+        const container = document.getElementById(containerId);
+
+        if (container) {
+            const inputEl = container.querySelector(`input[data-variable-name="${variableName}"]`);
+            const buttonEl = container.querySelector(`button[data-variable-name="${variableName}"]`);
+
+            if (inputEl && buttonEl) {
+                // Textfeld wieder aktivieren
+                inputEl.disabled = false;
+
+                // Wert NICHT ändern - User könnte schon wieder etwas getippt haben
+                // Nur original-value aktualisieren damit Button-Status richtig ist
+                inputEl.setAttribute('data-original-value', newValue.toString());
+
+                // Button-Status basierend auf aktuellem Wert prüfen
+                if (inputEl.value === newValue.toString()) {
+                    buttonEl.classList.remove('changed');
+                } else {
+                    buttonEl.classList.add('changed');
+                }
+            }
+        }
     }
 }
 
