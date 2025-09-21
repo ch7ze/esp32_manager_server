@@ -267,6 +267,13 @@ body {
   min-width: 120px;
 }
 
+.variable-input-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
 .variable-value {
   flex: 1;
   max-width: 120px;
@@ -418,6 +425,20 @@ body {
 
   .variable-value {
     max-width: none;
+  }
+
+  .variable-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .variable-input-row .variable-value {
+    flex: 1;
+  }
+
+  .variable-input-row .variable-send-btn {
+    flex-shrink: 0;
   }
 
   .row .col-md-4 {

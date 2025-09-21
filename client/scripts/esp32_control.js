@@ -811,19 +811,21 @@ function updateVariableControlsForContainer(containerEl, variables, deviceId) {
         variableEl.className = 'variable-item';
         variableEl.innerHTML = `
             <div class="variable-name">${variable.name}</div>
-            <input type="number"
-                   class="form-control variable-value"
-                   data-variable-name="${variable.name}"
-                   data-original-value="${variable.value}"
-                   value="${variable.value}"
-                   min="0"
-                   oninput="handleVariableChange(this, '${deviceId}', '${variable.name}')"
-                   onkeypress="handleVariableKeyPress(event, '${deviceId}', '${variable.name}')">
-            <button class="btn btn-sm variable-send-btn"
-                    data-variable-name="${variable.name}"
-                    onclick="sendVariable('${deviceId}', '${variable.name}')">
-                <i class="bi bi-send"></i>
-            </button>
+            <div class="variable-input-row">
+                <input type="number"
+                       class="form-control variable-value"
+                       data-variable-name="${variable.name}"
+                       data-original-value="${variable.value}"
+                       value="${variable.value}"
+                       min="0"
+                       oninput="handleVariableChange(this, '${deviceId}', '${variable.name}')"
+                       onkeypress="handleVariableKeyPress(event, '${deviceId}', '${variable.name}')">
+                <button class="btn btn-sm variable-send-btn"
+                        data-variable-name="${variable.name}"
+                        onclick="sendVariable('${deviceId}', '${variable.name}')">
+                    <i class="bi bi-send"></i>
+                </button>
+            </div>
         `;
         containerEl.appendChild(variableEl);
     });
