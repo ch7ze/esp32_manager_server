@@ -42,38 +42,6 @@ impl DebugLogger {
         }
     }
 
-    pub fn log_event_forwarding_task_start(device_id: &str) {
-        Self::log_event("EVENT_FORWARDING_TASK", &format!("STARTED for device {}", device_id));
-    }
-
-    pub fn log_event_forwarding_task_end(device_id: &str, event_count: usize) {
-        Self::log_event("EVENT_FORWARDING_TASK", &format!("TERMINATED for device {} after {} events", device_id, event_count));
-    }
-
-    pub fn log_event_forwarding_task_receive(device_id: &str, event_count: usize, event: &str) {
-        Self::log_event("EVENT_FORWARDING_TASK", &format!("RECEIVED event #{} from device {}: {}", event_count, device_id, event));
-    }
-
-    pub fn log_event_forwarding_task_send_success(device_id: &str, event_count: usize) {
-        Self::log_event("EVENT_FORWARDING_TASK", &format!("SENT event #{} from device {} to manager", event_count, device_id));
-    }
-
-    pub fn log_event_forwarding_task_send_fail(device_id: &str, event_count: usize, error: &str) {
-        Self::log_event("EVENT_FORWARDING_TASK", &format!("SEND_FAILED event #{} from device {} to manager: {}", event_count, device_id, error));
-    }
-
-    pub fn log_manager_event_processor_start() {
-        Self::log_event("MANAGER_EVENT_PROCESSOR", "STARTED");
-    }
-
-    pub fn log_manager_event_processor_receive(event_count: usize, event: &str) {
-        Self::log_event("MANAGER_EVENT_PROCESSOR", &format!("RECEIVED event #{}: {}", event_count, event));
-    }
-
-    pub fn log_manager_event_processor_end(event_count: usize) {
-        Self::log_event("MANAGER_EVENT_PROCESSOR", &format!("TERMINATED after {} events", event_count));
-    }
-
     pub fn log_device_add(device_id: &str) {
         Self::log_event("DEVICE_MANAGEMENT", &format!("ADD_DEVICE called for {}", device_id));
     }

@@ -139,9 +139,6 @@ async fn main() {
     // Initialize ESP32 Manager
     tracing::info!("Initializing ESP32 Manager...");
 
-    // Set global device store for TCP bypass
-    esp32_manager::set_global_device_store(device_store.clone());
-    tracing::info!("Global device store initialized for TCP bypass");
 
     let esp32_manager = esp32_manager::create_esp32_manager(device_store.clone());
     esp32_manager.start().await;

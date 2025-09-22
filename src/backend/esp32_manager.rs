@@ -30,46 +30,29 @@ pub struct Esp32Manager {
     device_configs: Arc<RwLock<HashMap<String, Esp32DeviceConfig>>>,
     /// Shared device store for event management
     device_store: SharedDeviceStore,
-    /// Event sender for internal communication
-    event_sender: mpsc::UnboundedSender<Esp32ManagerEvent>,
-    /// Event receiver for processing (Option because it's moved to the processor task)
-    event_receiver: Arc<Mutex<Option<mpsc::UnboundedReceiver<Esp32ManagerEvent>>>>,
     /// Central UDP listener for all ESP32 devices
     central_udp_socket: Arc<Mutex<Option<UdpSocket>>>,
     /// Map of IP -> device_id for UDP message routing
     ip_to_device_id: Arc<RwLock<HashMap<IpAddr, String>>>,
     /// Global mutex to prevent race conditions during device connections
     connection_mutex: Arc<Mutex<()>>,
-    /// Direct bypass event sender for crashed Event Forwarding Tasks
-    bypass_event_sender: mpsc::UnboundedSender<Esp32ManagerEvent>,
     /// UDP activity tracking for device connectivity monitoring
     udp_activity_tracker: Arc<RwLock<HashMap<String, Instant>>>,
     /// Connection state tracking to prevent redundant events (device_id -> is_connected)
     udp_connection_states: Arc<RwLock<HashMap<String, bool>>>,
 }
 
-/// Internal events for ESP32 manager
-#[derive(Debug, Clone)]
-pub enum Esp32ManagerEvent {
-    DeviceEvent(String, Esp32Event), // (device_id, event)
-    ConnectionStateChanged(String, ConnectionState), // (device_id, state)
-}
 
 impl Esp32Manager {
     /// Create new ESP32 manager
     pub fn new(device_store: SharedDeviceStore) -> Self {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
-
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             device_configs: Arc::new(RwLock::new(HashMap::new())),
             device_store,
-            event_sender: event_sender.clone(),
-            event_receiver: Arc::new(Mutex::new(Some(event_receiver))),
             central_udp_socket: Arc::new(Mutex::new(None)),
             ip_to_device_id: Arc::new(RwLock::new(HashMap::new())),
             connection_mutex: Arc::new(Mutex::new(())),
-            bypass_event_sender: event_sender,
             udp_activity_tracker: Arc::new(RwLock::new(HashMap::new())),
             udp_connection_states: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -84,8 +67,6 @@ impl Esp32Manager {
             error!("Failed to start central UDP listener: {}", e);
         }
 
-        // Start event processing task
-        self.start_event_processor().await;
 
 
         // Start UDP timeout monitoring task
@@ -129,7 +110,7 @@ impl Esp32Manager {
         let device_event_sender = self.create_direct_device_sender(device_id.clone());
 
         info!("Direct event sender created for device {} - closed: {}", device_id, device_event_sender.is_closed());
-        let connection = Esp32Connection::new(config, device_event_sender);
+        let connection = Esp32Connection::new(config, device_event_sender, self.device_store.clone());
 
         {
             let mut connections = self.connections.write().await;
@@ -221,7 +202,7 @@ impl Esp32Manager {
 
             // Create new ESP32Connection with fresh direct sender
             let direct_sender = self.create_direct_device_sender(device_id.to_string());
-            let new_connection = Esp32Connection::new(config.clone(), direct_sender);
+            let new_connection = Esp32Connection::new(config.clone(), direct_sender, self.device_store.clone());
             let connection_arc = Arc::new(Mutex::new(new_connection));
 
             // Replace the connection
@@ -465,25 +446,22 @@ impl Esp32Manager {
     
 
     /// Create a direct device event sender - SIMPLIFIED VERSION
-    /// This bypasses the complex event forwarding layer and sends directly to the manager
+    /// This sends events directly to the DeviceStore, bypassing all intermediate processing
     fn create_direct_device_sender(&self, device_id: String) -> mpsc::UnboundedSender<Esp32Event> {
         info!("Creating direct device sender for {}", device_id);
 
-        // Create a simple channel that wraps events with device_id and forwards to manager
+        // Create a simple channel that sends events directly to DeviceStore
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let manager_sender = self.bypass_event_sender.clone();
+        let device_store = self.device_store.clone();
 
-        // Spawn a simple forwarding task that just wraps events with device_id
+        // Spawn a simple forwarding task that sends directly to DeviceStore
         tokio::spawn(async move {
             info!("DIRECT SENDER: Started direct forwarding task for device {}", device_id);
 
-            while let Some(event) = rx.recv().await {
-                // Wrap the event with device_id and send to manager
-                let manager_event = Esp32ManagerEvent::DeviceEvent(device_id.clone(), event);
-
-                if let Err(e) = manager_sender.send(manager_event) {
-                    warn!("DIRECT SENDER: Failed to send event for device {}: {}", device_id, e);
-                    break;
+            while let Some(esp32_event) = rx.recv().await {
+                // Convert ESP32 event to DeviceEvent and send directly to DeviceStore
+                if let Err(e) = Self::handle_esp32_event(&device_store, &device_id, esp32_event).await {
+                    warn!("DIRECT SENDER: Failed to handle event for device {}: {}", device_id, e);
                 }
             }
 
@@ -493,78 +471,6 @@ impl Esp32Manager {
         tx
     }
 
-    /// Start background event processor
-    async fn start_event_processor(&self) {
-        let event_receiver = Arc::clone(&self.event_receiver);
-        let device_store = Arc::clone(&self.device_store);
-
-        info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Starting ESP32Manager event processor");
-        crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "STARTING");
-        tokio::spawn(async move {
-            info!("ESP32MANAGER EVENT PROCESSOR DEBUG: ESP32Manager event processor task started");
-            crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "TASK_STARTED");
-            let mut event_count = 0;
-
-            info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Taking receiver ownership");
-            crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "TAKING_RECEIVER_OWNERSHIP");
-            let mut receiver = {
-                let mut receiver_option = event_receiver.lock().await;
-                receiver_option.take().expect("Event receiver should only be taken once")
-            };
-            info!("ESP32MANAGER EVENT PROCESSOR DEBUG: ESP32Manager event processor has receiver ownership");
-            crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "RECEIVER_OWNERSHIP_ACQUIRED");
-
-            loop {
-                info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Waiting for next event (processed so far: {})", event_count);
-                crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", &format!("WAITING_FOR_EVENT - count: {}", event_count));
-
-                let recv_result = receiver.recv().await;
-                crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", &format!("RECV_RESULT - is_some: {}", recv_result.is_some()));
-
-                match recv_result {
-                    Some(event) => {
-                        event_count += 1;
-                        info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Received event #{}: {:?}", event_count, event);
-
-                        match event {
-                            Esp32ManagerEvent::DeviceEvent(device_id, esp32_event) => {
-                                info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Processing device event #{} for device {}: {:?}", event_count, device_id, esp32_event);
-
-                                match Self::handle_esp32_event(&device_store, &device_id, esp32_event).await {
-                                    Ok(()) => {
-                                        info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Successfully processed event #{} for device {}", event_count, device_id);
-                                    }
-                                    Err(e) => {
-                                        error!("ESP32MANAGER EVENT PROCESSOR DEBUG: Failed to handle ESP32 event #{} for device {}: {}", event_count, device_id, e);
-                                        error!("ESP32MANAGER EVENT PROCESSOR DEBUG: This could cause the event processor to become unstable!");
-                                    }
-                                }
-                            }
-                            Esp32ManagerEvent::ConnectionStateChanged(device_id, state) => {
-                                info!("ESP32MANAGER EVENT PROCESSOR DEBUG: Processing connection state change #{} for device {}: {:?}", event_count, device_id, state);
-                                // TODO: Notify connected clients about state change
-                            }
-                        }
-                    }
-                    None => {
-                        warn!("ESP32MANAGER EVENT PROCESSOR DEBUG: Receiver channel closed after {} events", event_count);
-                        warn!("ESP32MANAGER EVENT PROCESSOR DEBUG: This means all event senders have been dropped!");
-                        crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", &format!("RECV_RETURNED_NONE - count: {}", event_count));
-                        crate::debug_logger::DebugLogger::log_event("MANAGER_EVENT_PROCESSOR", "BREAKING_FROM_LOOP");
-                        break;
-                    }
-                }
-            }
-
-            if event_count == 0 {
-                error!("ESP32MANAGER EVENT PROCESSOR DEBUG: Event processor ended WITHOUT processing any events!");
-                error!("ESP32MANAGER EVENT PROCESSOR DEBUG: This indicates the event processor was terminated immediately after startup!");
-            } else {
-                error!("ESP32MANAGER EVENT PROCESSOR DEBUG: Event processor ended after processing {} events!", event_count);
-            }
-            error!("ESP32MANAGER EVENT PROCESSOR DEBUG: ESP32Manager event processor task is now TERMINATED!");
-        });
-    }
 
 
     /// Handle ESP32 event by converting it to DeviceEvent and storing it
@@ -731,39 +637,9 @@ impl Esp32Manager {
     }
 
     /// Update device configuration if UDP port has changed (after ESP32 restart)
+    /// Note: This is now a placeholder since global config access was removed
     async fn update_device_config_for_udp_port_change(device_id: &str, from_addr: SocketAddr) {
-        let device_configs = unsafe {
-            GLOBAL_DEVICE_CONFIGS.as_ref()
-        };
-
-        if let Some(configs) = device_configs {
-            let mut configs_guard = configs.write().await;
-
-            if let Some(current_config) = configs_guard.get(device_id) {
-                // Check if the UDP port has changed
-                if current_config.udp_port != from_addr.port() {
-                    info!("UDP PORT CHANGED: Device {} UDP port changed from {} to {} - updating configuration for TCP connections",
-                        device_id, current_config.udp_port, from_addr.port());
-
-                    // Create updated config with new ports
-                    // ESP32 uses the same port for both TCP and UDP
-                    let mut updated_config = current_config.clone();
-                    updated_config.udp_port = from_addr.port();
-                    updated_config.tcp_port = from_addr.port(); // ESP32 uses same port for TCP and UDP
-
-                    // Update the configuration
-                    configs_guard.insert(device_id.to_string(), updated_config);
-
-                    info!("UDP PORT UPDATED: Device {} configuration updated - TCP and UDP now use port {}",
-                        device_id, from_addr.port());
-                } else {
-                    debug!("UDP PORT UNCHANGED: Device {} UDP port {} matches stored configuration",
-                        device_id, from_addr.port());
-                }
-            } else {
-                debug!("UDP PORT CHECK: No stored configuration found for device {}", device_id);
-            }
-        }
+        debug!("UDP port check for device {} on port {} - global config access removed", device_id, from_addr.port());
     }
 
     /// Handle UDP message with smart connection state detection to prevent redundant events
@@ -1089,104 +965,12 @@ impl Esp32Manager {
 pub fn create_esp32_manager(device_store: SharedDeviceStore) -> Arc<Esp32Manager> {
     let manager = Arc::new(Esp32Manager::new(device_store));
 
-    // Set global UDP connection states for TCP disconnect handling
-    set_global_udp_connection_states(Arc::clone(&manager.udp_connection_states));
-
-    // Set global device configs for UDP port updates
-    set_global_device_configs(Arc::clone(&manager.device_configs));
 
     manager
 }
 
-// Global device store reference for TCP bypass
-static mut GLOBAL_DEVICE_STORE: Option<SharedDeviceStore> = None;
 
-// Global UDP connection states reference for TCP disconnect handling
-static mut GLOBAL_UDP_CONNECTION_STATES: Option<Arc<RwLock<HashMap<String, bool>>>> = None;
 
-// Global device configs reference for UDP port updates
-static mut GLOBAL_DEVICE_CONFIGS: Option<Arc<RwLock<HashMap<String, Esp32DeviceConfig>>>> = None;
-
-/// Set global device store for TCP bypass access
-pub fn set_global_device_store(device_store: SharedDeviceStore) {
-    unsafe {
-        GLOBAL_DEVICE_STORE = Some(device_store);
-    }
-}
-
-/// Set global UDP connection states for TCP disconnect handling
-pub fn set_global_udp_connection_states(udp_states: Arc<RwLock<HashMap<String, bool>>>) {
-    unsafe {
-        GLOBAL_UDP_CONNECTION_STATES = Some(udp_states);
-    }
-}
-
-/// Set global device configs for UDP port updates
-pub fn set_global_device_configs(device_configs: Arc<RwLock<HashMap<String, Esp32DeviceConfig>>>) {
-    unsafe {
-        GLOBAL_DEVICE_CONFIGS = Some(device_configs);
-    }
-}
-
-/// Global TCP bypass function that can be called from ESP32Connection
-pub async fn handle_tcp_bypass_global(message: &str, device_id: &str) -> Result<(), String> {
-    let device_store = unsafe {
-        GLOBAL_DEVICE_STORE.as_ref()
-            .ok_or("Global device store not initialized")?
-    };
-
-    info!("GLOBAL TCP BYPASS: Processing message for device {}: {}", device_id, message);
-
-    // Use the existing TCP bypass logic
-    Esp32Manager::handle_tcp_message_bypass(message, device_id, device_store).await;
-
-    Ok(())
-}
-
-/// Global TCP disconnect function that can be called from ESP32Connection
-pub async fn handle_tcp_disconnect_global(device_id: &str) -> Result<(), String> {
-    let device_store = unsafe {
-        GLOBAL_DEVICE_STORE.as_ref()
-            .ok_or("Global device store not initialized")?
-    };
-
-    let udp_connection_states = unsafe {
-        GLOBAL_UDP_CONNECTION_STATES.as_ref()
-            .ok_or("Global UDP connection states not initialized")?
-    };
-
-    info!("GLOBAL TCP DISCONNECT: Processing disconnect for device {}", device_id);
-
-    // Mark device as disconnected in UDP connection states
-    // This ensures that when UDP messages arrive after restart, a reconnect event is sent
-    {
-        let mut states = udp_connection_states.write().await;
-        states.insert(device_id.to_string(), false);
-        info!("GLOBAL TCP DISCONNECT: Device {} marked as disconnected in UDP states", device_id);
-    }
-
-    // Send disconnect event directly to device store
-    let disconnect_event = crate::events::DeviceEvent::esp32_connection_status(
-        device_id.to_string(),
-        false, // disconnected
-        "unknown".to_string(), // IP not available here
-        0, // port not available
-        0, // UDP port not available
-    );
-
-    if let Err(e) = device_store.add_event(
-        device_id.to_string(),
-        disconnect_event,
-        "ESP32_CONNECTION".to_string(),
-        "TCP_DISCONNECT".to_string(),
-    ).await {
-        error!("GLOBAL TCP DISCONNECT: Failed to send disconnect event for device {}: {}", device_id, e);
-        return Err(format!("Failed to send disconnect event: {}", e));
-    }
-
-    info!("GLOBAL TCP DISCONNECT: Disconnect event sent successfully for device {}", device_id);
-    Ok(())
-}
 
 impl Esp32Manager {
     /// Start UDP timeout monitoring task

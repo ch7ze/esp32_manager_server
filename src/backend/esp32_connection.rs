@@ -3,6 +3,7 @@
 use crate::esp32_types::{
     Esp32Command, Esp32Event, Esp32DeviceConfig, ConnectionState, Esp32Result, Esp32Error
 };
+use crate::device_store::SharedDeviceStore;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -28,26 +29,12 @@ pub struct Esp32Connection {
     event_sender: mpsc::UnboundedSender<Esp32Event>,
     tcp_buffer: Arc<Mutex<String>>,
     shutdown_sender: Option<mpsc::UnboundedSender<()>>,
+    device_store: SharedDeviceStore,
 }
 
 impl Esp32Connection {
-    /// Handle TCP disconnect - centralized function
-    async fn handle_disconnect(connection_state: &Arc<RwLock<ConnectionState>>, device_id: &str) {
-        // Update state
-        {
-            let mut state = connection_state.write().await;
-            *state = ConnectionState::Disconnected;
-        }
-
-        // Send single disconnect event
-        if let Err(e) = crate::esp32_manager::handle_tcp_disconnect_global(device_id).await {
-            error!("Failed to send disconnect event for device {}: {}", device_id, e);
-        } else {
-            info!("Disconnect event sent for device {}", device_id);
-        }
-    }
     /// Create a new ESP32 connection manager
-    pub fn new(config: Esp32DeviceConfig, event_sender: mpsc::UnboundedSender<Esp32Event>) -> Self {
+    pub fn new(config: Esp32DeviceConfig, event_sender: mpsc::UnboundedSender<Esp32Event>, device_store: SharedDeviceStore) -> Self {
         info!("ESP32CONNECTION CREATION DEBUG: Creating new ESP32Connection for device {}", config.device_id);
         crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("NEW_CONNECTION_CREATED: {} - sender_closed: {}", config.device_id, event_sender.is_closed()));
 
@@ -58,6 +45,7 @@ impl Esp32Connection {
             event_sender,
             tcp_buffer: Arc::new(Mutex::new(String::new())),
             shutdown_sender: None,
+            device_store,
         }
     }
     
@@ -403,6 +391,7 @@ impl Esp32Connection {
         let _connection_state = Arc::clone(&self.connection_state);
         let device_id = self.config.device_id.clone();
         let _device_config = self.config.clone();
+        let device_store = self.device_store.clone();
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -447,13 +436,12 @@ impl Esp32Connection {
                             let mut buffer_guard = tcp_buffer.lock().await;
                             while let Some(json_str) = extract_complete_json(&mut buffer_guard) {
                                 info!("TCP JSON extracted: {}", json_str);
-                                // Process the TCP message using the global bypass function
+                                // Process the TCP message using direct DeviceStore bypass
                                 let device_id_clone = device_id.clone();
                                 let json_clone = json_str.clone();
+                                let device_store_clone = device_store.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) = crate::esp32_manager::handle_tcp_bypass_global(&json_clone, &device_id_clone).await {
-                                        warn!("Failed to process TCP message: {}", e);
-                                    }
+                                    crate::esp32_manager::Esp32Manager::handle_tcp_message_bypass(&json_clone, &device_id_clone, &device_store_clone).await;
                                 });
                             }
                         }
