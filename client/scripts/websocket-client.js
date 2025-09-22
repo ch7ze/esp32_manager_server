@@ -284,15 +284,6 @@ class WebSocketClient {
         });
     }
     
-    // ATOMIC: Register for canvas with atomic replay - prevents race conditions
-    // DISABLED: Backend doesn't support atomicRegisterWithReplay yet
-    // atomicRegisterWithReplay(canvasId) {
-    //     console.log('WebSocket: Sending atomic register request for canvas:', canvasId);
-    //     return this.send({
-    //         type: 'atomicRegisterWithReplay',
-    //         canvasId: canvasId
-    //     });
-    // }
     
     // Schedule reconnect attempt
     scheduleReconnect() {

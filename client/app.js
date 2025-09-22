@@ -32,14 +32,6 @@ const pages = {
         styles: [],
         requiresAuth: false
     },
-    'device_detail': {
-        title: 'ESP32 Device',
-        template: 'esp32_control.html',
-        defaultPath: '/devices/:id',
-        scripts: ['esp32_control.js'],
-        styles: [],
-        requiresAuth: false
-    },
     'esp32_control': {
         title: 'ESP32 Control',
         template: 'esp32_control.html',
@@ -163,24 +155,12 @@ async function renderPage() {
         pageName = 'register';
     } else if (path === 'docs') {
         pageName = 'docs';
-    } else if (path === 'hallo') {
-        pageName = 'hallo';
-    } else if (path === 'about') {
-        pageName = 'about';
-    } else if (path === 'drawing_board') {
-        pageName = 'drawing_board';
-    } else if (path === 'drawer_page') {
-        pageName = 'drawer_page';
     } else if (path === 'debug') {
         pageName = 'debug';
     } else if (path === 'admin') {
         pageName = 'admin';
     }
     
-    // Handle canvas detail pages
-    if (url.pathname.startsWith('/canvas/')) {
-        pageName = 'canvas_detail';
-    }
     
     // Handle device detail pages - redirect to ESP32 control
     if (url.pathname.startsWith('/devices/')) {

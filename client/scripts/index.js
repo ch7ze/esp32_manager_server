@@ -1,7 +1,6 @@
 // Execute immediately since DOM is already loaded in SPA context
 (function() {
     // Load ESP32 devices and canvas list (user info is now handled by shared navigation)
-    // loadUserInfo(); // Removed - now handled by app.js shared navigation
     loadEsp32DevicesList();
     loadCanvasList();
     
@@ -14,8 +13,6 @@
     // WebSocket Integration for live ESP32 updates
     setupWebSocketForESP32Discovery();
     
-    // User info and logout are now handled by shared navigation in app.js
-
     // Drawing functionality will be initialized on canvas detail pages only
     
     // ============================================================================

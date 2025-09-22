@@ -1069,11 +1069,6 @@ function refreshDevices() {
     location.reload();
 }
 
-function logout() {
-    fetch('/api/logout', { method: 'POST', credentials: 'include' })
-        .then(() => window.location.href = '/')
-        .catch(() => window.location.href = '/');
-}
 
 // Handle window resize for responsive layout
 window.addEventListener('resize', function() {
