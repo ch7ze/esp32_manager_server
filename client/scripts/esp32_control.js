@@ -607,6 +607,19 @@ function showDevicesContainer() {
     applyDynamicLayout(isLandscape);
 }
 
+function getCurrentActiveLayout() {
+    // Determine active layout based on screen width (same logic as CSS media queries)
+    const width = window.innerWidth;
+
+    if (width <= 768) {
+        return 'stack';  // Mobile
+    } else if (width <= 1399) {
+        return 'tabs';   // Tablet/Desktop
+    } else {
+        return 'grid';   // Wide Desktop
+    }
+}
+
 function applyDynamicLayout(isLandscape) {
     // Add or remove CSS class based on orientation
     const containers = document.querySelectorAll('.main-container');
@@ -923,21 +936,42 @@ window.initializeWebSocket = initializeWebSocket;
 function sendVariable(deviceId, variableName) {
     console.log(`ESP32 FRONTEND DEBUG: sendVariable called with deviceId: ${deviceId}, variableName: ${variableName}`);
 
-    // Find input element across all possible layouts (tabs, stack, grid)
-    const suffixes = ['tabs', 'stack', 'grid'];
+    // Get the currently active layout based on screen width
+    const activeLayout = getCurrentActiveLayout();
+    console.log(`ESP32 FRONTEND DEBUG: Active layout detected: ${activeLayout} (width: ${window.innerWidth}px)`);
+
+    // Try the active layout first
+    const activeContainerId = `${deviceId}-${activeLayout}-variables`;
+    const activeContainer = document.getElementById(activeContainerId);
+
     let inputEl = null;
     let buttonEl = null;
 
-    for (const suffix of suffixes) {
-        const containerId = `${deviceId}-${suffix}-variables`;
-        const container = document.getElementById(containerId);
+    if (activeContainer) {
+        inputEl = activeContainer.querySelector(`input[data-variable-name="${variableName}"]`);
+        buttonEl = activeContainer.querySelector(`button[data-variable-name="${variableName}"]`);
 
-        if (container) {
-            inputEl = container.querySelector(`input[data-variable-name="${variableName}"]`);
-            buttonEl = container.querySelector(`button[data-variable-name="${variableName}"]`);
-            if (inputEl && buttonEl) {
-                console.log(`ESP32 FRONTEND DEBUG: Found input and button in ${suffix} layout`);
-                break;
+        if (inputEl && buttonEl) {
+            console.log(`ESP32 FRONTEND DEBUG: Using ACTIVE layout: ${activeLayout}`);
+        }
+    }
+
+    // Fallback: try other layouts if active layout failed
+    if (!inputEl || !buttonEl) {
+        console.log(`ESP32 FRONTEND DEBUG: Active layout failed, trying fallback`);
+        const fallbackSuffixes = ['tabs', 'stack', 'grid'].filter(s => s !== activeLayout);
+
+        for (const suffix of fallbackSuffixes) {
+            const containerId = `${deviceId}-${suffix}-variables`;
+            const container = document.getElementById(containerId);
+
+            if (container) {
+                inputEl = container.querySelector(`input[data-variable-name="${variableName}"]`);
+                buttonEl = container.querySelector(`button[data-variable-name="${variableName}"]`);
+                if (inputEl && buttonEl) {
+                    console.log(`ESP32 FRONTEND DEBUG: Using FALLBACK layout: ${suffix}`);
+                    break;
+                }
             }
         }
     }
@@ -993,7 +1027,7 @@ function handleVariableChange(inputEl, deviceId, variableName) {
 }
 
 function reactivateVariableInput(deviceId, variableName, newValue) {
-    // Finde alle Input-Elemente für diese Variable in allen Layouts
+    // Update ALL layouts to keep them in sync
     const suffixes = ['tabs', 'stack', 'grid'];
 
     for (const suffix of suffixes) {
