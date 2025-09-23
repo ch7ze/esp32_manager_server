@@ -11,9 +11,9 @@
 .main-container.landscape-layout {
     flex-direction: row;
     gap: 25px;
-    height: calc(100vh - 120px); /* More available height */
-    overflow: hidden;
-    align-items: stretch; /* Ensure full height alignment */
+    height: calc(100vh - 120px); /* Fixed container height */
+    overflow: hidden; /* Prevent main container from scrolling */
+    align-items: flex-start; /* Don't stretch, align to top */
 }
 
 .main-container.landscape-layout .left-panel {
@@ -22,15 +22,18 @@
     flex-direction: column;
     gap: 15px; /* Reduced gap for more content */
     overflow-y: auto; /* Scroll if content too tall */
-    min-height: 0; /* Allow proper flexbox shrinking */
+    height: 100%; /* Take full height of container */
+    padding-right: 10px; /* Space for scrollbar */
+    /* Remove flex-shrink rule to allow natural content sizing */
 }
 
 .main-container.landscape-layout .right-panel {
     flex: 1.2; /* UDP monitor takes more space to span from device control to variable monitor end */
     display: flex;
     flex-direction: column;
-    height: 100%; /* Full height */
+    height: calc(100vh - 120px); /* Fixed height for UDP monitor */
     min-height: 0; /* Allow proper flexbox shrinking */
+    flex-shrink: 0; /* Don't shrink the UDP monitor */
 }
 
 .main-container.landscape-layout .udp-monitor-section {
@@ -61,51 +64,105 @@
     overflow-y: auto !important; /* Ensure scrolling */
 }
 
-/* Portrait layout - everything stacked vertically */
-.main-container.portrait-layout {
+/* Portrait layout for medium screens - UDP monitor on right like landscape, but variable monitor like narrow */
+.esp32-tabs .main-container.portrait-layout {
+    flex-direction: row;
+    gap: 25px;
+    height: calc(100vh - 120px); /* Fixed height to enable proper scrolling */
+    overflow: hidden; /* Prevent main container from scrolling */
+    align-items: stretch; /* Stretch to full height */
+}
+
+.esp32-tabs .main-container.portrait-layout .left-panel {
+    flex: 1.2;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    overflow-y: auto; /* Scroll if content too tall */
+    min-height: 0; /* Allow proper flexbox shrinking */
+    height: 100%; /* Take full height of parent */
+}
+
+.esp32-tabs .main-container.portrait-layout .right-panel {
+    flex: 1.2;
+    display: flex;
+    flex-direction: column;
+    height: 100%; /* Take full height of parent */
+    min-height: 0; /* Allow proper flexbox shrinking */
+}
+
+.esp32-tabs .main-container.portrait-layout .udp-monitor-section {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;
+    margin-top: 0;
+}
+
+.esp32-tabs .main-container.portrait-layout .udp-monitor-section .monitor-area {
+    flex: 1 !important;
+    min-height: 400px !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    line-height: 1.2 !important;
+    font-size: 0.8em !important;
+}
+
+/* Variable monitor in portrait layout (medium screens) behaves like narrow/stack layout */
+.esp32-tabs .main-container.portrait-layout .variable-monitor-section .monitor-area {
+    height: 200px !important; /* Same as narrow layout */
+    max-height: 200px !important;
+    overflow-y: auto !important;
+}
+
+/* Stack layout for very narrow screens - everything stacked vertically */
+.esp32-stack .main-container {
     flex-direction: column;
 }
 
-.main-container.portrait-layout .left-panel {
+.esp32-stack .main-container .left-panel {
     display: flex;
     flex-direction: column;
     gap: 15px;
 }
 
-.main-container.portrait-layout .variable-monitor-section .monitor-area {
-    height: 200px !important; /* More compact for better space usage */
+.esp32-stack .main-container .variable-monitor-section .monitor-area {
+    height: 200px !important;
     max-height: 200px !important;
     overflow-y: auto !important;
 }
 
-.main-container.portrait-layout .udp-monitor-section .monitor-area {
-    height: 400px !important; /* Optimized height for better content visibility */
-    max-height: 400px !important; /* Override default max-height */
+.esp32-stack .main-container .udp-monitor-section .monitor-area {
+    height: 400px !important;
+    max-height: 400px !important;
     overflow-y: auto !important;
 }
 
-/* Default mobile layout */
-@media (max-width: 768px) {
-    .main-container {
-        flex-direction: column !important;
-    }
-
-    .left-panel {
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
-    }
-}
 .esp32-device-card {
     background: rgba(255, 255, 255, 0.95);
     border: none;
     border-radius: 20px;
     margin-bottom: 25px;
-    min-height: 500px;
+    min-height: 500px; /* Increased minimum height for proper display */
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     backdrop-filter: blur(10px);
     transition: all 0.3s ease;
-    overflow: hidden;
+    overflow: visible; /* Allow content to expand */
+    flex-shrink: 0; /* Prevent shrinking below min-height */
+}
+
+/* Ensure device card content doesn't get compressed in landscape layout */
+.main-container.landscape-layout .esp32-device-card {
+    min-height: 500px !important; /* Force minimum height */
+    height: auto !important; /* Allow natural height expansion */
+}
+
+/* Ensure tab content has proper height */
+.main-container.landscape-layout .tab-content {
+    min-height: 400px !important; /* Ensure tab content has minimum height */
+    height: auto !important; /* Allow natural expansion */
 }
 
 .esp32-device-card:hover {
@@ -202,58 +259,6 @@
     100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0), 0 0 0 2px rgba(255, 255, 255, 0.3); }
 }
 
-.monitor-area {
-    background: #f9f9f7;
-    color: #2c2c2c;
-    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
-    font-size: 0.85em;
-    height: 200px;
-    overflow-y: auto;
-    border: 1px solid #d0d0d0;
-    padding: 15px;
-    margin-bottom: 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8);
-    position: relative;
-    /* Improved scrolling performance */
-    -webkit-overflow-scrolling: touch;
-    scroll-behavior: smooth;
-    /* Better text rendering for more content */
-    line-height: 1.3;
-    word-break: break-word;
-    /* Clean paper appearance without lines */
-}
-
-.monitor-area::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, #d0d0d0, #e0e0e0);
-    border-radius: 8px 8px 0 0;
-}
-
-.monitor-area::-webkit-scrollbar {
-    width: 8px;
-}
-
-.monitor-area::-webkit-scrollbar-track {
-    background: #f0f0f0;
-    border-radius: 4px;
-    border: 1px solid #e0e0e0;
-}
-
-.monitor-area::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #c0c0c0, #a0a0a0);
-    border-radius: 4px;
-    border: 1px solid #b0b0b0;
-}
-
-.monitor-area::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #a0a0a0, #808080);
-}
 
 .variable-control {
     background: linear-gradient(135deg, rgba(102, 126, 234, 0.05), rgba(118, 75, 162, 0.05));
@@ -263,6 +268,8 @@
     margin-bottom: 15px; /* Reduced margin for more content visibility */
     position: relative;
     overflow: hidden;
+    flex-shrink: 0; /* Prevent shrinking */
+    min-height: auto; /* Allow natural height */
 }
 
 .variable-control::before {
@@ -332,6 +339,13 @@
     margin-bottom: 20px;
     position: relative;
     overflow: hidden;
+    flex-shrink: 0; /* Prevent shrinking */
+}
+
+/* Ensure start options area doesn't get compressed in landscape layout */
+.main-container.landscape-layout .start-options-area {
+    min-height: auto !important; /* Allow natural height */
+    flex-shrink: 0 !important; /* Force no shrinking */
 }
 
 .start-options-area::before {
@@ -571,19 +585,13 @@
     backdrop-filter: blur(10px);
 }
 
-.esp32-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-    gap: 25px;
-    padding: 20px;
-}
 
 .esp32-stack {
     padding: 20px;
 }
 
-/* Responsive layout */
-@media (max-width: 768px) {
+/* Responsive layout for narrow screens including folded phones */
+@media (max-width: 799px) {
     .esp32-tabs {
         display: none !important;
         margin: 10px;
@@ -591,9 +599,6 @@
     .esp32-stack {
         display: block !important;
         padding: 10px;
-    }
-    .esp32-grid {
-        display: none !important;
     }
 
     .esp32-device-header {
@@ -625,25 +630,10 @@
     }
 }
 
-@media (min-width: 769px) and (max-width: 1399px) {
+@media (min-width: 800px) {
     .esp32-tabs {
         display: block !important;
     }
-    .esp32-stack {
-        display: none !important;
-    }
-    .esp32-grid {
-        display: none !important;
-    }
-}
-
-@media (min-width: 1400px) {
-    .esp32-grid {
-        display: grid !important;
-        grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
-        gap: 25px;
-    }
-    .esp32-tabs,
     .esp32-stack {
         display: none !important;
     }

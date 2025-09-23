@@ -346,7 +346,6 @@ function renderDevices() {
     document.getElementById('deviceTabs').innerHTML = '';
     document.getElementById('deviceTabContent').innerHTML = '';
     document.getElementById('esp32-stack').innerHTML = '';
-    document.getElementById('esp32-grid').innerHTML = '';
     
     const devices = Array.from(esp32Devices.values());
     const urlDeviceId = getDeviceIdFromUrl();
@@ -362,15 +361,9 @@ function renderDevices() {
     devicesToShow.forEach((device, index) => {
         createDeviceTabContent(device, index === 0);
         createDeviceStackContent(device);
-        createDeviceGridContent(device);
     });
 
     showDevicesContainer();
-
-    // Apply dynamic layout immediately after devices are created
-    const aspectRatio = window.innerWidth / window.innerHeight;
-    const isLandscape = aspectRatio > 1.2;
-    applyDynamicLayout(isLandscape);
 
     // Debug: Check if CSS is loaded and applied
     setTimeout(() => {
@@ -431,26 +424,6 @@ function createDeviceStackContent(device) {
     document.getElementById('esp32-stack').appendChild(stackItem);
 }
 
-function createDeviceGridContent(device) {
-    const gridItem = document.createElement('div');
-    gridItem.className = 'esp32-device-card';
-    gridItem.innerHTML = `
-        <div class="esp32-device-header">
-            <div>
-                <h5 class="mb-1">${device.name}</h5>
-                <div class="connection-status">
-                    <span class="status-dot ${getStatusClass(device.connected)}"></span>
-                    ${getStatusText(device.connected)}
-                </div>
-            </div>
-            <div class="device-users" id="${device.id}-grid-users"></div>
-        </div>
-        <div class="p-3">
-            ${createDeviceContent(device, 'grid')}
-        </div>
-    `;
-    document.getElementById('esp32-grid').appendChild(gridItem);
-}
 
 function createDeviceContent(device, suffix = '') {
     const idPrefix = suffix ? `${device.id}-${suffix}` : device.id;
@@ -588,36 +561,43 @@ function showDevicesContainer() {
     document.getElementById('no-devices-state').style.display = 'none';
 
     // Hide all layouts first
-    document.getElementById('esp32-grid').style.display = 'none';
     document.getElementById('esp32-tabs').style.display = 'none';
     document.getElementById('esp32-stack').style.display = 'none';
 
-    // Show appropriate layout based on screen size and aspect ratio
-    const aspectRatio = window.innerWidth / window.innerHeight;
-    const isLandscape = aspectRatio > 1.2; // Landscape if wider than 1.2:1
+    // Determine layout based on screen dimensions
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const aspectRatio = width / height;
 
-    if (window.innerWidth >= 1400) {
-        document.getElementById('esp32-grid').style.display = 'grid';
-    } else if (window.innerWidth >= 600) {
-        document.getElementById('esp32-tabs').style.display = 'block';
-    } else {
+    // Layout logic:
+    // 1. Very narrow (< 800px width): Stack layout
+    // 2. Wide screens or foldables unfolded (>= 800px width): Use tabs with landscape/portrait logic
+    // 3. For tabs: aspectRatio > 1.0 OR width > 1400 = landscape, otherwise portrait
+
+    if (width < 800) {
+        // Use stack layout for narrow screens (including folded phones)
+        document.getElementById('esp32-tabs').style.display = 'none';
         document.getElementById('esp32-stack').style.display = 'block';
-    }
+    } else {
+        // Use tabs layout for wide screens (including unfolded foldables)
+        document.getElementById('esp32-tabs').style.display = 'block';
+        document.getElementById('esp32-stack').style.display = 'none';
 
-    // Apply dynamic layout based on aspect ratio
-    applyDynamicLayout(isLandscape);
+        // Determine landscape vs portrait for tabs
+        // Landscape: true aspect ratio landscape OR very wide screens (like unfolded foldables)
+        const isLandscape = aspectRatio > 1.0 || width > 1400;
+        applyDynamicLayout(isLandscape);
+    }
 }
 
 function getCurrentActiveLayout() {
-    // Determine active layout based on screen width (same logic as CSS media queries)
+    // Determine active layout based on new logic
     const width = window.innerWidth;
 
-    if (width <= 768) {
-        return 'stack';  // Mobile
-    } else if (width <= 1399) {
-        return 'tabs';   // Tablet/Desktop
+    if (width < 800) {
+        return 'stack';  // Narrow screens including folded phones
     } else {
-        return 'grid';   // Wide Desktop
+        return 'tabs';   // Wide screens including unfolded foldables
     }
 }
 
@@ -696,18 +676,6 @@ function updateConnectionStatus(deviceId, connected) {
         }
     }
 
-    // Update connection status in grid layout - find by users div ID
-    const gridUsersDiv = document.getElementById(`${deviceId}-grid-users`);
-    if (gridUsersDiv) {
-        const gridCard = gridUsersDiv.closest('.esp32-device-card');
-        if (gridCard) {
-            const gridConnectionStatus = gridCard.querySelector('.connection-status');
-            if (gridConnectionStatus) {
-                gridConnectionStatus.innerHTML = `<span class="status-dot ${getStatusClass(connected)}"></span> ${getStatusText(connected)}`;
-                console.log(`ESP32 DEBUG: Updated grid connection status text to: ${getStatusText(connected)}`);
-            }
-        }
-    }
 
     // Variable Controls auch entsprechend dem Connection Status aktualisieren
     updateVariableControlsConnectionState(deviceId, connected);
@@ -716,8 +684,8 @@ function updateConnectionStatus(deviceId, connected) {
 function updateMonitorArea(deviceId, type) {
     const device = esp32Devices.get(deviceId);
 
-    // Update all monitor variants (tab, stack, grid)
-    const suffixes = ['tab', 'stack', 'grid'];
+    // Update all monitor variants (tab, stack)
+    const suffixes = ['tab', 'stack'];
     let updated = false;
 
     suffixes.forEach(suffix => {
@@ -747,8 +715,8 @@ function updateMonitorArea(deviceId, type) {
 
 function updateVariableMonitor(deviceId, name, value) {
 
-    // Update all variable monitor variants (tab, stack, grid)
-    const suffixes = ['tab', 'stack', 'grid'];
+    // Update all variable monitor variants (tab, stack)
+    const suffixes = ['tab', 'stack'];
     let updated = false;
 
     suffixes.forEach(suffix => {
@@ -787,8 +755,8 @@ function updateVariableMonitor(deviceId, name, value) {
 function updateStartOptions(deviceId, options) {
     console.log(`ESP32 DEBUG: updateStartOptions called for device ${deviceId} with options:`, options);
 
-    // Update all layout variants (tab, stack, grid)
-    const suffixes = ['tab', 'stack', 'grid'];
+    // Update all layout variants (tab, stack)
+    const suffixes = ['tab', 'stack'];
     let updated = false;
 
     suffixes.forEach(suffix => {
@@ -818,8 +786,8 @@ function updateStartOptions(deviceId, options) {
 }
 
 function updateVariableControls(deviceId, variables) {
-    // Update all layout variants (tab, stack, grid)
-    const suffixes = ['tab', 'stack', 'grid'];
+    // Update all layout variants (tab, stack)
+    const suffixes = ['tab', 'stack'];
     let updated = false;
 
     suffixes.forEach(suffix => {
@@ -873,7 +841,7 @@ function updateVariableControlsForContainer(containerEl, variables, deviceId) {
 
 function updateDeviceUsers(deviceId) {
     const device = esp32Devices.get(deviceId);
-    ['tabs', 'stack', 'grid'].forEach(layout => {
+    ['tabs', 'stack'].forEach(layout => {
         const usersEl = document.getElementById(`${deviceId}-${layout}-users`);
         if (usersEl) {
             if (device.users.length === 0) {
@@ -892,8 +860,8 @@ function updateDeviceUsers(deviceId) {
 function sendStartOption(deviceId) {
     console.log(`ESP32 DEBUG: sendStartOption called for device ${deviceId}`);
 
-    // Try to find select element from any layout (tab, stack, grid)
-    const suffixes = ['tab', 'stack', 'grid'];
+    // Try to find select element from any layout (tab, stack)
+    const suffixes = ['tab', 'stack'];
     let selectedValue = null;
     let foundElement = null;
 
@@ -986,7 +954,7 @@ function sendVariable(deviceId, variableName) {
 
     // Fallback: try other layouts if active layout failed
     if (!inputEl || !buttonEl) {
-        const fallbackSuffixes = ['tabs', 'stack', 'grid'].filter(s => s !== activeLayout);
+        const fallbackSuffixes = ['tabs', 'stack'].filter(s => s !== activeLayout);
 
         for (const suffix of fallbackSuffixes) {
             const containerId = `${deviceId}-${suffix}-variables`;
@@ -1053,7 +1021,7 @@ function handleVariableChange(inputEl, deviceId, variableName) {
 
 function reactivateVariableInput(deviceId, variableName, newValue) {
     // Update ALL layouts to keep them in sync
-    const suffixes = ['tabs', 'stack', 'grid'];
+    const suffixes = ['tabs', 'stack'];
 
     for (const suffix of suffixes) {
         const containerId = `${deviceId}-${suffix}-variables`;
@@ -1092,7 +1060,7 @@ function clearPendingVariableSendsForDevice(deviceId) {
 }
 
 function updateVariableControlsConnectionState(deviceId, connected) {
-    const suffixes = ['tabs', 'stack', 'grid'];
+    const suffixes = ['tabs', 'stack'];
 
     for (const suffix of suffixes) {
         const containerId = `${deviceId}-${suffix}-variables`;
@@ -1133,11 +1101,6 @@ function refreshDevices() {
 window.addEventListener('resize', function() {
     if (esp32Devices.size > 0) {
         showDevicesContainer();
-
-        // Also apply dynamic layout immediately
-        const aspectRatio = window.innerWidth / window.innerHeight;
-        const isLandscape = aspectRatio > 1.2;
-        applyDynamicLayout(isLandscape);
     }
 });
 
