@@ -10,41 +10,55 @@
 /* Landscape layout - left panel with everything except UDP, UDP on right */
 .main-container.landscape-layout {
     flex-direction: row;
-    gap: 30px;
-    height: calc(100vh - 150px); /* Full viewport height minus header/nav */
+    gap: 25px;
+    height: calc(100vh - 120px); /* More available height */
     overflow: hidden;
+    align-items: stretch; /* Ensure full height alignment */
 }
 
 .main-container.landscape-layout .left-panel {
-    flex: 1; /* Left panel takes available space */
+    flex: 1.2; /* Left panel takes more space for better content visibility */
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 15px; /* Reduced gap for more content */
     overflow-y: auto; /* Scroll if content too tall */
+    min-height: 0; /* Allow proper flexbox shrinking */
 }
 
 .main-container.landscape-layout .right-panel {
-    flex: 1.5; /* UDP monitor takes more space */
+    flex: 1.2; /* UDP monitor takes more space to span from device control to variable monitor end */
     display: flex;
     flex-direction: column;
+    height: 100%; /* Full height */
+    min-height: 0; /* Allow proper flexbox shrinking */
 }
 
 .main-container.landscape-layout .udp-monitor-section {
-    height: 100%; /* Take full available height */
+    height: 100%; /* Take full available height to span entire right side */
     display: flex;
     flex-direction: column;
+    /* Position UDP monitor to align with device controls and extend to variable monitor end */
+    align-self: stretch; /* Take full height of parent */
+    margin-top: 0; /* Align with start of device controls */
 }
 
 .main-container.landscape-layout .udp-monitor-section .monitor-area {
     flex: 1 !important; /* Take all remaining space */
-    min-height: 0 !important; /* Allow shrinking */
+    min-height: 400px !important; /* Increased minimum height for more content */
     height: auto !important; /* Override fixed height */
-    max-height: none !important; /* Override max-height */
+    max-height: none !important; /* Override max-height to allow full expansion */
+    overflow-y: auto !important; /* Ensure scrolling works */
+    /* Better scrolling performance */
+    -webkit-overflow-scrolling: touch;
+    /* Improved layout for more content display */
+    line-height: 1.2 !important; /* Tighter line spacing for more lines */
+    font-size: 0.8em !important; /* Slightly smaller font for more content */
 }
 
 .main-container.landscape-layout .variable-monitor-section .monitor-area {
-    height: 200px !important; /* Smaller variable monitor */
-    max-height: 200px !important; /* Override default max-height */
+    height: 180px !important; /* Compact variable monitor */
+    max-height: 180px !important; /* Override default max-height */
+    overflow-y: auto !important; /* Ensure scrolling */
 }
 
 /* Portrait layout - everything stacked vertically */
@@ -59,13 +73,15 @@
 }
 
 .main-container.portrait-layout .variable-monitor-section .monitor-area {
-    height: 250px !important;
-    max-height: 250px !important;
+    height: 200px !important; /* More compact for better space usage */
+    max-height: 200px !important;
+    overflow-y: auto !important;
 }
 
 .main-container.portrait-layout .udp-monitor-section .monitor-area {
-    height: 500px !important; /* Double height for UDP monitor in portrait */
-    max-height: 500px !important; /* Override default max-height */
+    height: 400px !important; /* Optimized height for better content visibility */
+    max-height: 400px !important; /* Override default max-height */
+    overflow-y: auto !important;
 }
 
 /* Default mobile layout */
@@ -187,18 +203,25 @@
 }
 
 .monitor-area {
-    background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
-    color: #00ff88;
+    background: #f9f9f7;
+    color: #2c2c2c;
     font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
     font-size: 0.85em;
     height: 200px;
     overflow-y: auto;
-    border: 2px solid rgba(102, 126, 234, 0.3);
+    border: 1px solid #d0d0d0;
     padding: 15px;
     margin-bottom: 20px;
-    border-radius: 12px;
-    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8);
     position: relative;
+    /* Improved scrolling performance */
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    /* Better text rendering for more content */
+    line-height: 1.3;
+    word-break: break-word;
+    /* Clean paper appearance without lines */
 }
 
 .monitor-area::before {
@@ -207,9 +230,9 @@
     top: 0;
     left: 0;
     right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, #00ff88, #667eea);
-    border-radius: 12px 12px 0 0;
+    height: 1px;
+    background: linear-gradient(90deg, #d0d0d0, #e0e0e0);
+    border-radius: 8px 8px 0 0;
 }
 
 .monitor-area::-webkit-scrollbar {
@@ -217,25 +240,27 @@
 }
 
 .monitor-area::-webkit-scrollbar-track {
-    background: #2a2a2a;
+    background: #f0f0f0;
     border-radius: 4px;
+    border: 1px solid #e0e0e0;
 }
 
 .monitor-area::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #00ff88, #667eea);
+    background: linear-gradient(180deg, #c0c0c0, #a0a0a0);
     border-radius: 4px;
+    border: 1px solid #b0b0b0;
 }
 
 .monitor-area::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #00cc6a, #5a6fd8);
+    background: linear-gradient(180deg, #a0a0a0, #808080);
 }
 
 .variable-control {
     background: linear-gradient(135deg, rgba(102, 126, 234, 0.05), rgba(118, 75, 162, 0.05));
     border: 2px solid rgba(102, 126, 234, 0.1);
     border-radius: 15px;
-    padding: 20px;
-    margin-bottom: 20px;
+    padding: 15px; /* Reduced padding for more compact layout */
+    margin-bottom: 15px; /* Reduced margin for more content visibility */
     position: relative;
     overflow: hidden;
 }
@@ -262,9 +287,9 @@
 .variable-item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-    padding: 15px;
+    gap: 10px; /* Reduced gap for more compact layout */
+    margin-bottom: 8px; /* Reduced margin for more items visible */
+    padding: 12px; /* Reduced padding for more compact feel */
     background: rgba(255, 255, 255, 0.8);
     border-radius: 12px;
     border: 2px solid rgba(102, 126, 234, 0.1);

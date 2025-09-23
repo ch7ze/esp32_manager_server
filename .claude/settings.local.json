@@ -29,7 +29,8 @@
       "Bash(grep:*)",
       "Bash(findstr:*)",
       "Bash(mkdir:*)",
-      "Bash(move:*)"
+      "Bash(move:*)",
+      "Bash(start http://localhost:3000/devices/test-esp32-001)"
     ],
     "deny": [],
     "ask": []

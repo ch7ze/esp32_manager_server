@@ -181,12 +181,9 @@ function registerForDevice(deviceId) {
 }
 
 function handleWebSocketMessage(message) {
-    console.log('ESP32 FRONTEND DEBUG: Received WebSocket message:', message);
     if (message.deviceId && message.eventsForDevice) {
-        console.log('ESP32 FRONTEND DEBUG: Processing', message.eventsForDevice.length, 'events for device', message.deviceId);
         handleDeviceEvents(message.deviceId, message.eventsForDevice);
     } else {
-        console.log('ESP32 FRONTEND DEBUG: Message format not recognized:', message);
     }
 }
 
@@ -202,7 +199,6 @@ function handleDeviceEvents(deviceId, events) {
 }
 
 function createDeviceUI(deviceId) {
-    console.log('ESP32 FRONTEND DEBUG: createDeviceUI called for device:', deviceId);
     // Create a more readable device name
     let deviceName = deviceId;
     if (deviceId.startsWith('esp32-')) {
@@ -227,10 +223,8 @@ function createDeviceUI(deviceId) {
 }
 
 function processDeviceEvent(deviceId, event) {
-    console.log('ESP32 FRONTEND DEBUG: Processing event for device', deviceId, ':', event);
     const device = esp32Devices.get(deviceId);
     if (!device) {
-        console.log('ESP32 FRONTEND DEBUG: Device not found:', deviceId);
         return;
     }
 
@@ -277,7 +271,6 @@ function processDeviceEvent(deviceId, event) {
         return;
     }
 
-    console.log('ESP32 FRONTEND DEBUG: Event type determined:', eventType, 'with data:', eventData);
     switch (eventType) {
         case 'esp32ConnectionStatus':
             device.connected = eventData.connected;
@@ -289,15 +282,15 @@ function processDeviceEvent(deviceId, event) {
             break;
 
         case 'esp32UdpBroadcast':
-            console.log('ESP32 FRONTEND DEBUG: Adding UDP message to device:', eventData.message);
             device.udpMessages.push(`[${new Date().toLocaleTimeString()}] ${eventData.message}`);
-            console.log('ESP32 FRONTEND DEBUG: UDP messages array now has', device.udpMessages.length, 'messages');
+            // Keep only the last 400 messages to prevent memory issues while allowing more display
+            if (device.udpMessages.length > 400) {
+                device.udpMessages = device.udpMessages.slice(-400);
+            }
             updateMonitorArea(deviceId, 'udp');
-            console.log('ESP32 FRONTEND DEBUG: Called updateMonitorArea for UDP');
             break;
 
         case 'esp32VariableUpdate':
-            console.log('ESP32 FRONTEND DEBUG: Updating variable:', eventData.variableName, '=', eventData.variableValue);
             device.variables.set(eventData.variableName, eventData.variableValue);
             updateVariableMonitor(deviceId, eventData.variableName, eventData.variableValue);
 
@@ -306,9 +299,7 @@ function processDeviceEvent(deviceId, event) {
             if (pendingVariableSends.has(variableKey)) {
                 pendingVariableSends.delete(variableKey);
                 reactivateVariableInput(deviceId, eventData.variableName, eventData.variableValue);
-                console.log('ESP32 FRONTEND DEBUG: Reactivated input for sent variable');
             }
-            console.log('ESP32 FRONTEND DEBUG: Called updateVariableMonitor');
             break;
 
         case 'esp32StartOptions':
@@ -379,8 +370,18 @@ function renderDevices() {
     // Apply dynamic layout immediately after devices are created
     const aspectRatio = window.innerWidth / window.innerHeight;
     const isLandscape = aspectRatio > 1.2;
-    console.log(`ESP32 LAYOUT DEBUG: Initial layout application - aspectRatio: ${aspectRatio}, isLandscape: ${isLandscape}`);
     applyDynamicLayout(isLandscape);
+
+    // Debug: Check if CSS is loaded and applied
+    setTimeout(() => {
+        const containers = document.querySelectorAll('.main-container');
+        containers.forEach((container, index) => {
+            const computedStyle = window.getComputedStyle(container);
+            console.log(`ESP32 CSS DEBUG: Container ${index} flex-direction:`, computedStyle.flexDirection);
+            console.log(`ESP32 CSS DEBUG: Container ${index} gap:`, computedStyle.gap);
+            console.log(`ESP32 CSS DEBUG: Container ${index} height:`, computedStyle.height);
+        });
+    }, 100);
 }
 
 function createDeviceTabContent(device, isActive) {
@@ -624,19 +625,39 @@ function applyDynamicLayout(isLandscape) {
     // Add or remove CSS class based on orientation
     const containers = document.querySelectorAll('.main-container');
 
-    console.log(`ESP32 LAYOUT DEBUG: Found ${containers.length} main containers, isLandscape: ${isLandscape}`);
 
-    containers.forEach(container => {
+    containers.forEach((container, index) => {
+        // Force remove both classes first
+        container.classList.remove('landscape-layout', 'portrait-layout');
+
         if (isLandscape) {
             container.classList.add('landscape-layout');
-            container.classList.remove('portrait-layout');
-            console.log(`ESP32 LAYOUT DEBUG: Added landscape-layout class`);
         } else {
             container.classList.add('portrait-layout');
-            container.classList.remove('landscape-layout');
-            console.log(`ESP32 LAYOUT DEBUG: Added portrait-layout class`);
         }
+
+        // Debug: Log current classes
     });
+
+    // Force CSS refresh by triggering a reflow
+    containers.forEach(container => {
+        container.style.display = 'none';
+        container.offsetHeight; // Trigger reflow
+        container.style.display = '';
+    });
+
+    // Additional debugging: Check if CSS file is loaded
+    const cssLinks = document.querySelectorAll('link[href*="esp32_control.css"]');
+    console.log(`ESP32 CSS DEBUG: Found ${cssLinks.length} CSS links for esp32_control.css`);
+
+    // Force CSS reload if needed
+    if (cssLinks.length > 0) {
+        cssLinks.forEach(link => {
+            const href = link.href;
+            link.href = href + '?v=' + Date.now();
+            console.log(`ESP32 CSS DEBUG: Reloaded CSS with cache buster`);
+        });
+    }
 }
 
 
@@ -693,7 +714,6 @@ function updateConnectionStatus(deviceId, connected) {
 }
 
 function updateMonitorArea(deviceId, type) {
-    console.log('ESP32 FRONTEND DEBUG: updateMonitorArea called for device:', deviceId, 'type:', type);
     const device = esp32Devices.get(deviceId);
 
     // Update all monitor variants (tab, stack, grid)
@@ -705,25 +725,27 @@ function updateMonitorArea(deviceId, type) {
         const monitorEl = document.getElementById(monitorId);
 
         if (monitorEl && type === 'udp') {
-            console.log(`ESP32 FRONTEND DEBUG: Updating ${suffix} UDP monitor with`, device.udpMessages.length, 'messages');
-            monitorEl.innerHTML = device.udpMessages.slice(-50).join('<br>');
-            monitorEl.scrollTop = monitorEl.scrollHeight;
+            // Check if user is scrolled to bottom before updating
+            const isScrolledToBottom = isElementScrolledToBottom(monitorEl);
+
+            monitorEl.innerHTML = device.udpMessages.slice(-200).join('<br>');
+
+            // Only auto-scroll if user was at bottom
+            if (isScrolledToBottom) {
+                monitorEl.scrollTop = monitorEl.scrollHeight;
+            }
             updated = true;
         }
     });
 
     if (updated) {
-        console.log('ESP32 FRONTEND DEBUG: UDP monitor updated successfully');
     } else {
-        console.log('ESP32 FRONTEND DEBUG: Cannot update UDP monitor - no elements found');
         // Debug: List all elements with similar IDs
         const allElements = document.querySelectorAll('[id*="monitor"]');
-        console.log('ESP32 FRONTEND DEBUG: All monitor elements found:', Array.from(allElements).map(el => el.id));
     }
 }
 
 function updateVariableMonitor(deviceId, name, value) {
-    console.log('ESP32 FRONTEND DEBUG: updateVariableMonitor called for device:', deviceId, 'variable:', name, 'value:', value);
 
     // Update all variable monitor variants (tab, stack, grid)
     const suffixes = ['tab', 'stack', 'grid'];
@@ -758,9 +780,7 @@ function updateVariableMonitor(deviceId, name, value) {
     });
 
     if (updated) {
-        console.log('ESP32 FRONTEND DEBUG: Variable monitor updated successfully');
     } else {
-        console.log('ESP32 FRONTEND DEBUG: Cannot update variable monitor - element not found');
     }
 }
 
@@ -924,6 +944,17 @@ function sendReset(deviceId) {
     }
 }
 
+// Helper function to check if element is scrolled to bottom
+function isElementScrolledToBottom(element) {
+    if (!element) return true; // Default to auto-scroll if element doesn't exist
+
+    // Allow for small tolerance (5px) to account for rounding errors
+    const tolerance = 5;
+    const isAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - tolerance;
+
+    return isAtBottom;
+}
+
 // Expose functions to global scope for HTML onclick handlers
 window.sendReset = sendReset;
 window.sendStartOption = sendStartOption;
@@ -934,11 +965,9 @@ window.refreshDevices = refreshDevices;
 window.initializeWebSocket = initializeWebSocket;
 
 function sendVariable(deviceId, variableName) {
-    console.log(`ESP32 FRONTEND DEBUG: sendVariable called with deviceId: ${deviceId}, variableName: ${variableName}`);
 
     // Get the currently active layout based on screen width
     const activeLayout = getCurrentActiveLayout();
-    console.log(`ESP32 FRONTEND DEBUG: Active layout detected: ${activeLayout} (width: ${window.innerWidth}px)`);
 
     // Try the active layout first
     const activeContainerId = `${deviceId}-${activeLayout}-variables`;
@@ -952,13 +981,11 @@ function sendVariable(deviceId, variableName) {
         buttonEl = activeContainer.querySelector(`button[data-variable-name="${variableName}"]`);
 
         if (inputEl && buttonEl) {
-            console.log(`ESP32 FRONTEND DEBUG: Using ACTIVE layout: ${activeLayout}`);
         }
     }
 
     // Fallback: try other layouts if active layout failed
     if (!inputEl || !buttonEl) {
-        console.log(`ESP32 FRONTEND DEBUG: Active layout failed, trying fallback`);
         const fallbackSuffixes = ['tabs', 'stack', 'grid'].filter(s => s !== activeLayout);
 
         for (const suffix of fallbackSuffixes) {
@@ -969,7 +996,6 @@ function sendVariable(deviceId, variableName) {
                 inputEl = container.querySelector(`input[data-variable-name="${variableName}"]`);
                 buttonEl = container.querySelector(`button[data-variable-name="${variableName}"]`);
                 if (inputEl && buttonEl) {
-                    console.log(`ESP32 FRONTEND DEBUG: Using FALLBACK layout: ${suffix}`);
                     break;
                 }
             }
@@ -1003,11 +1029,10 @@ function sendVariable(deviceId, variableName) {
             }]
         };
 
-        console.log(`ESP32 FRONTEND DEBUG: Sending variable ${variableName} = ${value} for device ${deviceId}`);
         esp32Websocket.send(JSON.stringify(message));
 
     } else {
-        console.error(`ESP32 FRONTEND DEBUG: Cannot send variable - inputEl: ${!!inputEl}, buttonEl: ${!!buttonEl}, websocket: ${!!esp32Websocket}`);
+        console.error(`Cannot send variable - inputEl: ${!!inputEl}, buttonEl: ${!!buttonEl}, websocket: ${!!esp32Websocket}`);
     }
 }
 

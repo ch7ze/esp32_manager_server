@@ -42,6 +42,7 @@ mod esp32_types; // esp32_types.rs - ESP32 communication types
 mod esp32_connection; // esp32_connection.rs - ESP32 TCP/UDP connection handling
 mod esp32_manager; // esp32_manager.rs - ESP32 device management
 mod mdns_discovery; // mdns_discovery.rs - mDNS-based ESP32 discovery
+mod mdns_server;    // mdns_server.rs - mDNS server for advertising esp-server.local
 mod esp32_discovery; // esp32_discovery.rs - ESP32 device discovery service
 mod debug_logger;   // debug_logger.rs - Debug event logging
 
@@ -90,6 +91,7 @@ pub struct AppState {
     pub device_store: SharedDeviceStore,
     pub esp32_manager: Arc<esp32_manager::Esp32Manager>,
     pub esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>,
+    pub mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>,
 }
 
 // ============================================================================
@@ -155,6 +157,25 @@ async fn main() {
             tracing::info!("ESP32 discovery service started successfully");
         }
     });
+
+    // Start mDNS Server for advertising esp-server.local
+    tracing::info!("Starting mDNS Server...");
+    let mdns_server = Arc::new(tokio::sync::Mutex::new(
+        mdns_server::MdnsServer::new().map_err(|e| {
+            tracing::error!("Failed to create mDNS server: {}", e);
+            e
+        }).unwrap()
+    ));
+
+    let mdns_service = mdns_server.clone();
+    tokio::spawn(async move {
+        let mut server = mdns_service.lock().await;
+        if let Err(e) = server.start_advertising(3000).await {
+            tracing::error!("mDNS server failed to start: {}", e);
+        } else {
+            tracing::info!("mDNS server started - esp-server.local advertised on port 3000");
+        }
+    });
     
     // Example: Add a test ESP32 device configuration for testing
     let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 43, 75));
@@ -193,7 +214,7 @@ async fn main() {
 
     // Create web app with all routes
     tracing::info!("Creating application routes...");
-    let app = create_app(db, device_store, esp32_manager, esp32_discovery).await;
+    let app = create_app(db, device_store, esp32_manager, esp32_discovery, mdns_server).await;
 
     // Start TCP listener on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
@@ -220,7 +241,7 @@ async fn main() {
 // Website feature: Defines all URLs and their handler functions
 // ============================================================================
 
-pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStore, esp32_manager: Arc<esp32_manager::Esp32Manager>, esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>) -> Router {
+pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStore, esp32_manager: Arc<esp32_manager::Esp32Manager>, esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>, mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>) -> Router {
     let mut app = Router::new();
 
     // AppState for all handlers
@@ -229,6 +250,7 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         device_store: device_store.clone(),
         esp32_manager: esp32_manager.clone(),
         esp32_discovery: esp32_discovery.clone(),
+        mdns_server: mdns_server.clone(),
     };
 
     // WebSocket State for WebSocket handlers

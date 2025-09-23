@@ -257,29 +257,44 @@ impl MdnsDiscovery {
     
     /// Determine if a discovered device is an ESP32
     fn is_esp32_device(hostname: &str, txt_records: &HashMap<String, String>, service_type: &str) -> bool {
-        // Check hostname for ESP32 indicators
+        // Filter out our own ESP32 Manager Server
         let hostname_lower = hostname.to_lowercase();
+        if hostname_lower.contains("esp-server") {
+            return false;
+        }
+
+        // Check if device has a MAC address in TXT records (real ESP32s should have this)
+        let has_mac_address = txt_records.contains_key("mac") ||
+                             txt_records.contains_key("MAC") ||
+                             txt_records.contains_key("macAddress");
+
+        // Only accept devices that have MAC addresses
+        if !has_mac_address {
+            return false;
+        }
+
+        // Check hostname for ESP32 indicators
         let hostname_indicators = [
             "esp32", "esp", "arduino", "nodemcu", "wemos", "devkit"
         ];
-        
+
         let hostname_matches = hostname_indicators.iter()
             .any(|indicator| hostname_lower.contains(indicator));
-        
+
         // For Arduino OTA service, assume it's likely an ESP32
         if service_type == "arduino" {
             return true;
         }
-        
+
         // Check TXT records for ESP32/Arduino indicators
         let txt_indicators = txt_records.values()
             .any(|value| {
                 let value_lower = value.to_lowercase();
-                value_lower.contains("esp32") || 
+                value_lower.contains("esp32") ||
                 value_lower.contains("arduino") ||
                 value_lower.contains("espressif")
             });
-        
+
         // Accept if hostname matches OR TXT records indicate ESP32
         hostname_matches || txt_indicators
     }

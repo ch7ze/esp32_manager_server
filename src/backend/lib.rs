@@ -9,6 +9,7 @@ pub mod esp32_types;
 pub mod esp32_connection;
 pub mod esp32_manager;
 pub mod esp32_discovery;
+pub mod mdns_server;
 
 // Re-export important types and functions
 pub use crate::auth::{User, UserStore, AuthResponse, LoginRequest, RegisterRequest, UpdateDisplayNameRequest};
