@@ -597,7 +597,7 @@ function getCurrentActiveLayout() {
     if (width < 800) {
         return 'stack';  // Narrow screens including folded phones
     } else {
-        return 'tabs';   // Wide screens including unfolded foldables
+        return 'tab';   // Wide screens including unfolded foldables (corrected from 'tabs' to 'tab')
     }
 }
 
@@ -954,7 +954,7 @@ function sendVariable(deviceId, variableName) {
 
     // Fallback: try other layouts if active layout failed
     if (!inputEl || !buttonEl) {
-        const fallbackSuffixes = ['tabs', 'stack'].filter(s => s !== activeLayout);
+        const fallbackSuffixes = ['tab', 'stack'].filter(s => s !== activeLayout);
 
         for (const suffix of fallbackSuffixes) {
             const containerId = `${deviceId}-${suffix}-variables`;
@@ -1021,7 +1021,7 @@ function handleVariableChange(inputEl, deviceId, variableName) {
 
 function reactivateVariableInput(deviceId, variableName, newValue) {
     // Update ALL layouts to keep them in sync
-    const suffixes = ['tabs', 'stack'];
+    const suffixes = ['tab', 'stack'];
 
     for (const suffix of suffixes) {
         const containerId = `${deviceId}-${suffix}-variables`;
@@ -1060,7 +1060,7 @@ function clearPendingVariableSendsForDevice(deviceId) {
 }
 
 function updateVariableControlsConnectionState(deviceId, connected) {
-    const suffixes = ['tabs', 'stack'];
+    const suffixes = ['tab', 'stack'];
 
     for (const suffix of suffixes) {
         const containerId = `${deviceId}-${suffix}-variables`;
