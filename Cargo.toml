@@ -8,6 +8,10 @@ edition = "2021"
 name = "drawing-app-backend"
 path = "src/backend/main.rs"
 
+[lib]
+name = "drawing_app_backend"
+path = "src/backend/lib.rs"
+
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
