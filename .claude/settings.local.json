@@ -30,7 +30,16 @@
       "Bash(findstr:*)",
       "Bash(mkdir:*)",
       "Bash(move:*)",
-      "Bash(start http://localhost:3000/devices/test-esp32-001)"
+      "Bash(start http://localhost:3000/devices/test-esp32-001)",
+      "WebSearch",
+      "Bash(pio run:*)",
+      "Bash(pio system:*)",
+      "Bash(npx jest:*)",
+      "Bash(npm test)",
+      "Bash(code:*)",
+      "Bash(npm --version)",
+      "mcp__ide__getDiagnostics",
+      "Bash(rustc --version)"
     ],
     "deny": [],
     "ask": []

@@ -10,6 +10,12 @@ const char* ESP32_OTA_PASSWORD = "55555555";
 IPAddress ESP32_OTA_UDP_TARGET_IP(192, 168, 137, 1); // Your PC's IP address
 const int ESP32_OTA_UDP_PORT = 3232;
 
+ static constexpr char *ssid = "Raspberry";
+ static constexpr char *password = "55555555";
+
+
+ inline IPAddress udpTargetIP(192, 168, 137, 1); // IP-Adresse des Zielcomputers (dein PC)
+
 
 
 // Hostname for OTA
@@ -35,8 +41,11 @@ void readSensors() {
 void blinkLED() {
     static bool ledState = false;
     static unsigned long lastBlink = 0;
+
+    
     
     if (millis() - lastBlink > ledBlinkDelay) {
+        std::cout << ota::makeVarInfo("ledBlinkDelay", ledBlinkDelay) << std::endl;
         ledState = !ledState;
         digitalWrite(LED_BUILTIN, ledState);
         lastBlink = millis();
@@ -65,6 +74,8 @@ void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
 
     neopixelWrite(LED_BUILTIN, 255, 0, 0); // Red during setup
+
+    ota::setInitialConfig({ssid, password, udpTargetIP});
     
     // Configure cout to use configurable streambuf for Serial and UDP output
     cs::configurableStreambuf.addOutputFunction(cs::serialOut);

@@ -38,6 +38,11 @@ socket2 = "0.5"
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winsock2", "ws2def"] }
 
+[dev-dependencies]
+reqwest = { version = "0.11", features = ["json"] }
+tokio-test = "0.4"
+futures-util = "0.3"
+
 
 [profile.dev]
 opt-level = 0          # Keine Optimierung für schnellere Kompilierung
