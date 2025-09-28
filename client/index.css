@@ -32,7 +32,7 @@ body {
 }
 
 .home-link {
-  font-weight: bold !important;
+  font-weight: bold;
 }
 
 .logout-button {
@@ -68,11 +68,16 @@ body {
 #loading-state {
   background: rgba(255, 255, 255, 0.95);
   border-radius: 15px;
+  -webkit-border-radius: 15px;
+  -moz-border-radius: 15px;
   padding: 40px;
   margin: 50px auto;
   max-width: 400px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  -webkit-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  -moz-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
   backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 #loading-state .spinner-border {
@@ -85,16 +90,29 @@ body {
 .esp32-device-card {
   background: rgba(255, 255, 255, 0.95);
   border-radius: 20px;
+  -webkit-border-radius: 20px;
+  -moz-border-radius: 20px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  -webkit-box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  -moz-box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
   backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.2);
   transition: all 0.3s ease;
+  -webkit-transition: all 0.3s ease;
+  -moz-transition: all 0.3s ease;
+  -ms-transition: all 0.3s ease;
   overflow: hidden;
 }
 
 .esp32-device-card:hover {
   transform: translateY(-5px);
+  -webkit-transform: translateY(-5px);
+  -moz-transform: translateY(-5px);
+  -ms-transform: translateY(-5px);
   box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
+  -webkit-box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
+  -moz-box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
 }
 
 /* Device Header */
@@ -366,9 +384,13 @@ body {
 .esp32-tabs {
   background: rgba(255, 255, 255, 0.95);
   border-radius: 20px;
+  -webkit-border-radius: 20px;
+  -moz-border-radius: 20px;
   margin: 20px;
   overflow: hidden;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  -webkit-box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  -moz-box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
 }
 
 /* Tab Styling */

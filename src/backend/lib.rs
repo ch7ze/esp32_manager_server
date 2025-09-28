@@ -146,8 +146,8 @@ async fn discovered_esp32_devices_handler(
         .map(|(name, device)| {
             json!({
                 "name": name,
-                "ip": device.ip_addr.to_string(),
-                "tcp_port": device.tcp_port,
+                "ip": device.device_config.ip_address.to_string(),
+                "tcp_port": device.device_config.tcp_port,
                 "udp_port": device.udp_port
             })
         })
@@ -163,7 +163,7 @@ async fn list_devices_handler(
     State(app_state): State<AppState>,
 ) -> Result<Json<Value>, StatusCode> {
     // Get devices from device store
-    let devices = app_state.device_store.list_devices().await;
+    let devices = app_state.device_store.get_active_devices().await;
 
     Ok(Json(json!({
         "devices": devices,

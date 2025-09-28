@@ -46,22 +46,25 @@
 }
 
 .main-container.landscape-layout .udp-monitor-section .monitor-area {
-    flex: 1 !important; /* Take all remaining space */
-    min-height: 400px !important; /* Increased minimum height for more content */
-    height: auto !important; /* Override fixed height */
-    max-height: none !important; /* Override max-height to allow full expansion */
-    overflow-y: auto !important; /* Ensure scrolling works */
+    flex: 1; /* Take all remaining space */
+    min-height: 400px; /* Increased minimum height for more content */
+    height: auto; /* Override fixed height */
+    max-height: none; /* Override max-height to allow full expansion */
+    overflow-y: auto; /* Ensure scrolling works */
     /* Better scrolling performance */
     -webkit-overflow-scrolling: touch;
+    -ms-overflow-style: -ms-autohiding-scrollbar;
     /* Improved layout for more content display */
-    line-height: 1.2 !important; /* Tighter line spacing for more lines */
-    font-size: 0.8em !important; /* Slightly smaller font for more content */
+    line-height: 1.2; /* Tighter line spacing for more lines */
+    font-size: 0.8em; /* Slightly smaller font for more content */
 }
 
 .main-container.landscape-layout .variable-monitor-section .monitor-area {
-    height: 180px !important; /* Compact variable monitor */
-    max-height: 180px !important; /* Override default max-height */
-    overflow-y: auto !important; /* Ensure scrolling */
+    height: 180px; /* Compact variable monitor */
+    max-height: 180px; /* Override default max-height */
+    overflow-y: auto; /* Ensure scrolling */
+    -webkit-overflow-scrolling: touch;
+    -ms-overflow-style: -ms-autohiding-scrollbar;
 }
 
 /* Portrait layout for medium screens - UDP monitor on right like landscape, but variable monitor like narrow */
@@ -100,21 +103,24 @@
 }
 
 .esp32-tabs .main-container.portrait-layout .udp-monitor-section .monitor-area {
-    flex: 1 !important;
-    min-height: 400px !important;
-    height: auto !important;
-    max-height: none !important;
-    overflow-y: auto !important;
+    flex: 1;
+    min-height: 400px;
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    line-height: 1.2 !important;
-    font-size: 0.8em !important;
+    -ms-overflow-style: -ms-autohiding-scrollbar;
+    line-height: 1.2;
+    font-size: 0.8em;
 }
 
 /* Variable monitor in portrait layout (medium screens) behaves like narrow/stack layout */
 .esp32-tabs .main-container.portrait-layout .variable-monitor-section .monitor-area {
-    height: 200px !important; /* Same as narrow layout */
-    max-height: 200px !important;
-    overflow-y: auto !important;
+    height: 200px; /* Same as narrow layout */
+    max-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    -ms-overflow-style: -ms-autohiding-scrollbar;
 }
 
 
@@ -130,15 +136,19 @@
 }
 
 .esp32-stack .main-container .variable-monitor-section .monitor-area {
-    height: 200px !important;
-    max-height: 200px !important;
-    overflow-y: auto !important;
+    height: 200px;
+    max-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    -ms-overflow-style: -ms-autohiding-scrollbar;
 }
 
 .esp32-stack .main-container .udp-monitor-section .monitor-area {
-    height: 400px !important;
-    max-height: 400px !important;
-    overflow-y: auto !important;
+    height: 400px;
+    max-height: 400px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    -ms-overflow-style: -ms-autohiding-scrollbar;
 }
 
 .esp32-device-card {
@@ -156,14 +166,14 @@
 
 /* Ensure device card content doesn't get compressed in landscape layout */
 .main-container.landscape-layout .esp32-device-card {
-    min-height: 500px !important; /* Force minimum height */
-    height: auto !important; /* Allow natural height expansion */
+    min-height: 500px; /* Force minimum height */
+    height: auto; /* Allow natural height expansion */
 }
 
 /* Ensure tab content has proper height */
 .main-container.landscape-layout .tab-content {
-    min-height: 400px !important; /* Ensure tab content has minimum height */
-    height: auto !important; /* Allow natural expansion */
+    min-height: 400px; /* Ensure tab content has minimum height */
+    height: auto; /* Allow natural expansion */
 }
 
 .esp32-device-card:hover {
@@ -232,20 +242,32 @@
 .status-connected {
     background-color: #28a745;
     animation: pulse-green 2s infinite;
+    -webkit-animation: pulse-green 2s infinite;
+    -moz-animation: pulse-green 2s infinite;
 }
 .status-connecting {
     background-color: #ffc107;
     animation: pulse-yellow 2s infinite;
+    -webkit-animation: pulse-yellow 2s infinite;
+    -moz-animation: pulse-yellow 2s infinite;
 }
 .status-disconnected {
     background-color: #dc3545;
     animation: pulse-red 2s infinite;
+    -webkit-animation: pulse-red 2s infinite;
+    -moz-animation: pulse-red 2s infinite;
 }
 
 @keyframes pulse-green {
     0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7), 0 0 0 2px rgba(255, 255, 255, 0.3); }
     70% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0), 0 0 0 2px rgba(255, 255, 255, 0.3); }
     100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0), 0 0 0 2px rgba(255, 255, 255, 0.3); }
+}
+
+@-webkit-keyframes pulse-green {
+    0% { -webkit-box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7), 0 0 0 2px rgba(255, 255, 255, 0.3); }
+    70% { -webkit-box-shadow: 0 0 0 10px rgba(40, 167, 69, 0), 0 0 0 2px rgba(255, 255, 255, 0.3); }
+    100% { -webkit-box-shadow: 0 0 0 0 rgba(40, 167, 69, 0), 0 0 0 2px rgba(255, 255, 255, 0.3); }
 }
 
 @keyframes pulse-yellow {
@@ -343,8 +365,8 @@
 
 /* Ensure start options area doesn't get compressed in landscape layout */
 .main-container.landscape-layout .start-options-area {
-    min-height: auto !important; /* Allow natural height */
-    flex-shrink: 0 !important; /* Force no shrinking */
+    min-height: auto; /* Allow natural height */
+    flex-shrink: 0; /* Force no shrinking */
 }
 
 .start-options-area::before {
@@ -399,7 +421,12 @@
 
 .btn-success:hover {
     transform: translateY(-2px);
+    -webkit-transform: translateY(-2px);
+    -moz-transform: translateY(-2px);
+    -ms-transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
+    -webkit-box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
+    -moz-box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
 }
 
 .btn-danger {
@@ -409,7 +436,12 @@
 
 .btn-danger:hover {
     transform: translateY(-2px);
+    -webkit-transform: translateY(-2px);
+    -moz-transform: translateY(-2px);
+    -ms-transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
+    -webkit-box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
+    -moz-box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
 }
 
 .btn-primary {
@@ -419,7 +451,12 @@
 
 .btn-primary:hover {
     transform: translateY(-2px);
+    -webkit-transform: translateY(-2px);
+    -moz-transform: translateY(-2px);
+    -ms-transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    -webkit-box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    -moz-box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
 }
 
 .btn-outline-primary {
@@ -432,7 +469,12 @@
 .btn-outline-primary:hover {
     background: #667eea;
     transform: translateY(-2px);
+    -webkit-transform: translateY(-2px);
+    -moz-transform: translateY(-2px);
+    -ms-transform: translateY(-2px);
     box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3);
+    -webkit-box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3);
+    -moz-box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3);
 }
 
 /* Form Controls */
@@ -590,13 +632,13 @@
 }
 
 /* Responsive layout for narrow screens including folded phones */
-@media (max-width: 799px) {
+@media (max-width: 768px) {
     .esp32-tabs {
-        display: none !important;
+        display: none;
         margin: 10px;
     }
     .esp32-stack {
-        display: block !important;
+        display: block;
         padding: 10px;
     }
 
@@ -616,12 +658,12 @@
     }
 }
 
-@media (min-width: 800px) {
+@media (min-width: 769px) {
     .esp32-tabs {
-        display: block !important;
+        display: block;
     }
     .esp32-stack {
-        display: none !important;
+        display: none;
     }
 }
 
