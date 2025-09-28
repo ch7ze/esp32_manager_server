@@ -76,9 +76,14 @@
         devicesList.forEach(device => {
             console.log('Device data:', device);
             console.log('MAC Address:', device.macAddress);
+            console.log('mDNS Hostname:', device.mdnsHostname);
+
+            // Use mDNS hostname for display name, fallback to deviceId
+            const displayName = device.mdnsHostname || device.deviceId;
+
             html += `
                 <div class="esp32-device" data-device-id="${device.deviceId}">
-                    <h4>${device.deviceId}</h4>
+                    <h4>${displayName}</h4>
                     <div class="esp32-device-info">
                         <span><strong>IP:</strong> ${device.deviceIp}</span>
                         <span><strong>TCP Port:</strong> ${device.tcpPort}</span>
@@ -154,13 +159,16 @@
                         loadEsp32DevicesList();
                         
                         // Show notification
-                        showESP32DiscoveryNotification(event.device_id, event.device_ip);
+                        showESP32DiscoveryNotification(event.device_id, event.device_ip, event.mdnsHostname);
                     }
                 });
             }
         }
         
-        function showESP32DiscoveryNotification(deviceId, deviceIp) {
+        function showESP32DiscoveryNotification(deviceId, deviceIp, mdnsHostname) {
+            // Use mDNS hostname for display name, fallback to deviceId
+            const displayName = mdnsHostname || deviceId;
+
             // Create notification element
             const notification = document.createElement('div');
             notification.style.cssText = `
@@ -180,7 +188,7 @@
             `;
             notification.innerHTML = `
                 <div style="font-weight: bold; margin-bottom: 4px;">🔍 ESP32 Gerät gefunden!</div>
-                <div><strong>${deviceId}</strong></div>
+                <div><strong>${displayName}</strong></div>
                 <div style="font-size: 12px; opacity: 0.8;">IP: ${deviceIp}</div>
             `;
             

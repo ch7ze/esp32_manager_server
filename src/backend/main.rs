@@ -1453,7 +1453,7 @@ async fn discovered_esp32_devices_handler(
                 "status": "discovered"
             });
 
-            // Add MAC address from mDNS data if available
+            // Add MAC address and mDNS hostname from mDNS data if available
             if let Some(ref mdns_data) = discovered_device.mdns_data {
                 tracing::info!("Found mDNS data with {} TXT records", mdns_data.txt_records.len());
                 if let Some(mac_address) = mdns_data.txt_records.get("mac") {
@@ -1462,6 +1462,11 @@ async fn discovered_esp32_devices_handler(
                 } else {
                     tracing::warn!("No 'mac' key found in TXT records: {:?}", mdns_data.txt_records.keys().collect::<Vec<_>>());
                 }
+
+                // Add mDNS hostname without .local suffix
+                let mdns_hostname = mdns_data.hostname.replace(".local", "").trim_end_matches('.').to_string();
+                device_json["mdnsHostname"] = json!(mdns_hostname);
+                tracing::info!("Adding mDNS hostname to JSON: {}", mdns_hostname);
             } else {
                 tracing::warn!("No mDNS data found for device: {}", device_id);
             }

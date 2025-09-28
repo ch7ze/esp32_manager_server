@@ -143,6 +143,9 @@ impl Esp32Discovery {
                         // Extract MAC address from mDNS data (original format with colons for display)
                         let mac_address = mdns_device.txt_records.get("mac").cloned();
 
+                        // Extract mDNS hostname without .local suffix
+                        let mdns_hostname = Some(mdns_device.hostname.replace(".local", "").trim_end_matches('.').to_string());
+
                         // Broadcast discovery event to all WebSocket clients
                         let discovery_event = DeviceEvent::esp32_device_discovered(
                             device_id_spawn.clone(),
@@ -151,6 +154,7 @@ impl Esp32Discovery {
                             device_config_spawn.udp_port,
                             discovered_at.to_rfc3339(),
                             mac_address,
+                            mdns_hostname,
                         );
                         
                         match device_store_spawn.broadcast_event("system", discovery_event, "system").await {

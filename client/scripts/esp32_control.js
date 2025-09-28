@@ -180,33 +180,58 @@ function registerForDevice(deviceId) {
     }
 }
 
-function handleWebSocketMessage(message) {
+async function handleWebSocketMessage(message) {
     if (message.deviceId && message.eventsForDevice) {
-        handleDeviceEvents(message.deviceId, message.eventsForDevice);
+        await handleDeviceEvents(message.deviceId, message.eventsForDevice);
     } else {
     }
 }
 
-function handleDeviceEvents(deviceId, events) {
+async function handleDeviceEvents(deviceId, events) {
     // Ensure device exists in our UI
     if (!esp32Devices.has(deviceId)) {
-        createDeviceUI(deviceId);
+        await createDeviceUI(deviceId);
     }
-    
+
     events.forEach(event => {
         processDeviceEvent(deviceId, event);
     });
 }
 
-function createDeviceUI(deviceId) {
-    // Create a more readable device name
+// Get device display name (mDNS hostname if available, fallback to formatted deviceId)
+async function getDeviceDisplayName(deviceId) {
+    try {
+        const response = await fetch('/api/esp32/discovered', {
+            method: 'GET',
+            credentials: 'include'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const device = data.devices?.find(d => d.deviceId === deviceId);
+
+            if (device && device.mdnsHostname) {
+                return device.mdnsHostname;
+            }
+        }
+    } catch (error) {
+        console.warn('Could not fetch device display name from API:', error);
+    }
+
+    // Fallback to formatted deviceId
     let deviceName = deviceId;
     if (deviceId.startsWith('esp32-')) {
         deviceName = deviceId.replace('esp32-', 'ESP32 ').replace(/-/g, ' ').toUpperCase();
     } else {
         deviceName = deviceId.replace('test-', '').replace(/-/g, ' ').toUpperCase();
     }
-    
+    return deviceName;
+}
+
+async function createDeviceUI(deviceId) {
+    // Try to get the mDNS hostname from discovered devices API
+    let deviceName = await getDeviceDisplayName(deviceId);
+
     const device = {
         id: deviceId,
         name: deviceName,

@@ -191,6 +191,8 @@ pub enum DeviceEvent {
         discovered_at: String,
         #[serde(rename = "macAddress")]
         mac_address: Option<String>,
+        #[serde(rename = "mdnsHostname")]
+        mdns_hostname: Option<String>,
     },
 }
 
@@ -268,8 +270,8 @@ impl DeviceEvent {
         DeviceEvent::Esp32DeviceInfo { device_id, device_name, firmware_version, uptime }
     }
     
-    pub fn esp32_device_discovered(device_id: String, device_ip: String, tcp_port: u16, udp_port: u16, discovered_at: String, mac_address: Option<String>) -> Self {
-        DeviceEvent::Esp32DeviceDiscovered { device_id, device_ip, tcp_port, udp_port, discovered_at, mac_address }
+    pub fn esp32_device_discovered(device_id: String, device_ip: String, tcp_port: u16, udp_port: u16, discovered_at: String, mac_address: Option<String>, mdns_hostname: Option<String>) -> Self {
+        DeviceEvent::Esp32DeviceDiscovered { device_id, device_ip, tcp_port, udp_port, discovered_at, mac_address, mdns_hostname }
     }
 }
 
