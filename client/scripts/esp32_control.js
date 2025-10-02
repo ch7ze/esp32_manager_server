@@ -298,11 +298,16 @@ function processDeviceEvent(deviceId, event) {
 
     switch (eventType) {
         case 'esp32ConnectionStatus':
+            const wasDisconnected = !device.connected;
             device.connected = eventData.connected;
             updateConnectionStatus(deviceId, eventData.connected);
             // Bei Disconnect alle pending Variable Sends löschen und Controls sperren
             if (!eventData.connected) {
                 clearPendingVariableSendsForDevice(deviceId);
+            }
+            // Bei Connect: Auto-Start prüfen
+            if (eventData.connected && wasDisconnected) {
+                handleAutoStart(deviceId);
             }
             break;
 
@@ -502,7 +507,6 @@ function createDeviceContent(device, suffix = '') {
                 <div class="right-panel">
                     <!-- UDP Monitor -->
                     <div class="udp-monitor-section">
-                        <h6><i class="bi bi-broadcast"></i> UDP Monitor</h6>
                         <div class="monitor-area" id="${idPrefix}-udp-monitor"></div>
                     </div>
                 </div>
@@ -666,6 +670,57 @@ function applyDynamicLayout(isLandscape) {
 }
 
 
+function handleAutoStart(deviceId) {
+    console.log(`ESP32 DEBUG: handleAutoStart called for device ${deviceId}`);
+
+    // Check if auto-start checkbox is checked
+    if (!isAutoStartEnabled(deviceId)) {
+        console.log(`ESP32 DEBUG: Auto-start not enabled for device ${deviceId}`);
+        return;
+    }
+
+    // Get selected start option
+    const suffixes = ['tab', 'stack'];
+    let selectedValue = null;
+
+    for (const suffix of suffixes) {
+        const selectId = `${deviceId}-${suffix}-start-select`;
+        const selectEl = document.getElementById(selectId);
+
+        if (selectEl && selectEl.value) {
+            selectedValue = selectEl.value;
+            console.log(`ESP32 DEBUG: Found selected value '${selectedValue}' for auto-start`);
+            break;
+        }
+    }
+
+    // If no option selected, don't auto-start
+    if (!selectedValue) {
+        console.log(`ESP32 DEBUG: No start option selected, skipping auto-start`);
+        return;
+    }
+
+    // Send start option automatically
+    console.log(`ESP32 DEBUG: Auto-starting with option '${selectedValue}'`);
+    sendStartOptionWithValue(deviceId, selectedValue);
+}
+
+function isAutoStartEnabled(deviceId) {
+    // Try to find auto-start checkbox from any layout (tab, stack)
+    const suffixes = ['tab', 'stack'];
+
+    for (const suffix of suffixes) {
+        const checkboxId = `${deviceId}-${suffix}-auto-start`;
+        const checkboxEl = document.getElementById(checkboxId);
+
+        if (checkboxEl) {
+            return checkboxEl.checked;
+        }
+    }
+
+    return false;
+}
+
 function updateConnectionStatus(deviceId, connected) {
     console.log(`ESP32 DEBUG: updateConnectionStatus called for device ${deviceId} connected: ${connected}`);
 
@@ -723,9 +778,11 @@ function updateMonitorArea(deviceId, type) {
 
             monitorEl.innerHTML = device.udpMessages.slice(-200).join('<br>');
 
-            // Only auto-scroll if user was at bottom
+            // Use requestAnimationFrame to scroll after DOM update
             if (isScrolledToBottom) {
-                monitorEl.scrollTop = monitorEl.scrollHeight;
+                requestAnimationFrame(() => {
+                    monitorEl.scrollTop = monitorEl.scrollHeight;
+                });
             }
             updated = true;
         }
@@ -903,8 +960,16 @@ function sendStartOption(deviceId) {
         }
     }
 
-    if (foundElement && selectedValue && esp32Websocket) {
-        console.log(`ESP32 DEBUG: Sending start option: ${selectedValue}`);
+    if (foundElement && selectedValue) {
+        sendStartOptionWithValue(deviceId, selectedValue);
+    } else {
+        console.error(`ESP32 DEBUG: Cannot send start option - no element found or no value selected`);
+    }
+}
+
+function sendStartOptionWithValue(deviceId, startOption) {
+    if (esp32Websocket && esp32Websocket.readyState === WebSocket.OPEN) {
+        console.log(`ESP32 DEBUG: Sending start option: ${startOption} to device ${deviceId}`);
         esp32Websocket.send(JSON.stringify({
             type: 'deviceEvent',
             deviceId: deviceId,
@@ -912,12 +977,12 @@ function sendStartOption(deviceId) {
                 event: 'esp32Command',
                 deviceId: deviceId,
                 command: {
-                    startOption: selectedValue
+                    startOption: startOption
                 }
             }]
         }));
     } else {
-        console.error(`ESP32 DEBUG: Cannot send start option - no element found or no value selected`);
+        console.error(`ESP32 DEBUG: Cannot send start option - WebSocket not open`);
     }
 }
 

@@ -4,13 +4,13 @@
 .main-container {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 10px; /* Reduced from 20px to 10px */
 }
 
 /* Landscape layout - left panel with everything except UDP, UDP on right */
 .main-container.landscape-layout {
     flex-direction: row;
-    gap: 25px;
+    gap: 15px; /* Reduced from 25px to 15px */
     height: calc(100vh - 120px); /* Fixed container height */
     overflow: hidden; /* Prevent main container from scrolling */
     align-items: flex-start; /* Don't stretch, align to top */
@@ -20,7 +20,7 @@
     flex: 1.2; /* Left panel takes more space for better content visibility */
     display: flex;
     flex-direction: column;
-    gap: 15px; /* Reduced gap for more content */
+    gap: 10px; /* Reduced from 15px to 10px */
     overflow-y: auto; /* Scroll if content too tall */
     height: 100%; /* Take full height of container */
     padding-right: 10px; /* Space for scrollbar */
@@ -70,7 +70,7 @@
 /* Portrait layout for medium screens - UDP monitor on right like landscape, but variable monitor like narrow */
 .esp32-tabs .main-container.portrait-layout {
     flex-direction: row;
-    gap: 25px;
+    gap: 15px; /* Reduced from 25px to 15px */
     height: calc(100vh - 120px); /* Fixed height to enable proper scrolling */
     overflow: hidden; /* Prevent main container from scrolling */
     align-items: stretch; /* Stretch to full height */
@@ -80,7 +80,7 @@
     flex: 1.2;
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 10px; /* Reduced from 15px to 10px */
     overflow-y: auto; /* Scroll if content too tall */
     min-height: 0; /* Allow proper flexbox shrinking */
     height: 100%; /* Take full height of parent */
@@ -132,7 +132,7 @@
 .esp32-stack .main-container .left-panel {
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 10px; /* Reduced from 15px to 10px */
 }
 
 .esp32-stack .main-container .variable-monitor-section .monitor-area {
@@ -287,8 +287,8 @@
     background: linear-gradient(135deg, rgba(102, 126, 234, 0.05), rgba(118, 75, 162, 0.05));
     border: 2px solid rgba(102, 126, 234, 0.1);
     border-radius: 15px;
-    padding: 15px; /* Reduced padding for more compact layout */
-    margin-bottom: 15px; /* Reduced margin for more content visibility */
+    padding: 8px 6px 6px 6px; /* Very compact: top, right, bottom, left */
+    margin-bottom: 0; /* Removed margin for more compact layout */
     position: relative;
     overflow: hidden;
     flex-shrink: 0; /* Prevent shrinking */
@@ -308,42 +308,64 @@
 .variable-control h6 {
     color: #667eea;
     font-weight: 600;
-    margin-bottom: 15px;
+    margin-bottom: 6px; /* Reduced from 8px to 6px */
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px; /* Reduced gap */
+    font-size: 0.95rem; /* Slightly smaller header */
 }
 
 .variable-item {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
-    margin-bottom: 8px; /* Reduced margin for more items visible */
-    padding: 12px; /* Reduced padding for more compact feel */
-    background: rgba(255, 255, 255, 0.8);
-    border-radius: 12px;
-    border: 2px solid rgba(102, 126, 234, 0.1);
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    gap: 3px; /* Further reduced for maximum compactness */
+    margin-bottom: 3px; /* Minimal margin between items */
+    padding: 5px 6px; /* Very compact padding */
+    background: rgba(255, 255, 255, 0.6); /* Subtle background */
+    border-radius: 6px; /* Smaller radius */
+    border: 1px solid rgba(102, 126, 234, 0.15); /* Thinner, more subtle border */
+    transition: all 0.2s ease; /* Faster transition */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); /* Very subtle shadow */
 }
 
 .variable-item:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-    border-color: rgba(102, 126, 234, 0.3);
+    background: rgba(255, 255, 255, 0.8); /* Slightly stronger background on hover */
+    border-color: rgba(102, 126, 234, 0.3); /* Highlight border on hover */
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12); /* Subtle shadow increase */
+    transform: none; /* No movement to save space */
 }
 
 .variable-name {
     font-weight: 600;
     color: #495057;
-    font-size: 0.95rem;
+    font-size: 0.9rem; /* Slightly smaller for compact layout */
+}
+
+.variable-input-row {
+    display: flex;
+    gap: 4px; /* Even smaller gap between input and button */
+    align-items: center;
+}
+
+.variable-input-row .form-control {
+    flex: 1; /* Input takes most space */
+    min-width: 0; /* Allow shrinking */
+}
+
+.variable-send-btn {
+    flex-shrink: 0; /* Button keeps size */
+    padding: 3px 6px; /* More compact button */
+    min-width: 28px; /* Smaller minimum button width */
+    font-size: 0.85rem; /* Smaller font for compact button */
 }
 
 .variable-value {
-    border-radius: 8px;
-    border: 2px solid rgba(102, 126, 234, 0.2);
-    transition: all 0.3s ease;
+    border-radius: 4px; /* Even smaller radius */
+    border: 1px solid rgba(102, 126, 234, 0.3); /* Thinner border */
+    transition: all 0.2s ease; /* Faster transition */
+    padding: 3px 6px; /* More compact padding */
+    font-size: 0.85rem; /* Smaller font for compactness */
 }
 
 .variable-value:focus {
@@ -356,8 +378,8 @@
     background: linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.08));
     border: 2px solid rgba(102, 126, 234, 0.15);
     border-radius: 15px;
-    padding: 20px;
-    margin-bottom: 20px;
+    padding: 12px; /* Reduced from 20px to 12px */
+    margin-bottom: 0; /* Removed margin for more compact layout */
     position: relative;
     overflow: hidden;
     flex-shrink: 0; /* Prevent shrinking */
@@ -382,10 +404,92 @@
 .start-options-area h6 {
     color: #28a745;
     font-weight: 600;
-    margin-bottom: 15px;
+    margin-bottom: 8px; /* Reduced from 15px to 8px */
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+/* Variable Monitor Section styling */
+.variable-monitor-section {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.05), rgba(118, 75, 162, 0.05));
+    border: 2px solid rgba(102, 126, 234, 0.1);
+    border-radius: 15px;
+    padding: 10px; /* Consistent padding all sides */
+    margin-bottom: 0; /* No margin for compact layout */
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.variable-monitor-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+}
+
+.variable-monitor-section h6 {
+    color: #667eea;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* UDP Monitor Section styling */
+.udp-monitor-section {
+    background: linear-gradient(135deg, rgba(40, 167, 69, 0.05), rgba(32, 201, 151, 0.05));
+    border: 2px solid rgba(40, 167, 69, 0.1);
+    border-radius: 15px;
+    padding: 0; /* No padding - monitor-area will handle it */
+    margin-bottom: 0; /* No margin for compact layout */
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.udp-monitor-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #28a745, #20c997);
+}
+
+.udp-monitor-section .monitor-area {
+    padding: 10px; /* Add padding to monitor area itself */
+    margin-top: 4px; /* Offset for the ::before gradient line */
+}
+
+/* Monitor Area Improvements - Full width, no border */
+.monitor-area {
+    background: transparent; /* Remove background */
+    border: none; /* Remove border */
+    border-radius: 0; /* Remove border radius */
+    padding: 5px; /* Small padding all around */
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em; /* Slightly smaller font for more content */
+    line-height: 1.3; /* Tighter line spacing */
+    overflow-y: auto;
+    overflow-x: hidden; /* Prevent horizontal scrolling */
+    word-break: break-word;
+    white-space: pre-wrap;
+    color: #333;
+    margin: 0;
+    flex: 1; /* Take available space in flex container */
+    min-height: 0; /* Allow shrinking */
+    box-sizing: border-box; /* Include padding in width calculation */
 }
 
 /* Modern Button Styling */
@@ -394,7 +498,7 @@
     font-weight: 500;
     transition: all 0.3s ease;
     border: none;
-    padding: 10px 20px;
+    padding: 8px 16px; /* Reduced from 10px 20px to 8px 16px */
     position: relative;
     overflow: hidden;
 }
@@ -482,7 +586,7 @@
     border-radius: 10px;
     border: 2px solid rgba(102, 126, 234, 0.2);
     transition: all 0.3s ease;
-    padding: 10px 15px;
+    padding: 6px 12px; /* Reduced from 10px 15px to 6px 12px */
 }
 
 .form-select:focus, .form-control:focus {
