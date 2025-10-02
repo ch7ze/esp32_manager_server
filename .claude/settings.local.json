@@ -39,7 +39,8 @@
       "Bash(code:*)",
       "Bash(npm --version)",
       "mcp__ide__getDiagnostics",
-      "Bash(rustc --version)"
+      "Bash(rustc --version)",
+      "Bash(npm start)"
     ],
     "deny": [],
     "ask": []

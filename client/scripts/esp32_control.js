@@ -4,8 +4,11 @@
     // Local state for this script execution
     let esp32Websocket = null;
     let esp32Devices = new Map();
+    let availableDevices = []; // All discovered devices
+    let openTabs = new Set(); // Currently open device tabs
     let currentUser = null;
     let pendingVariableSends = new Set(); // Track which variables are being sent
+    let monitorScrollStates = new Map(); // Track auto-scroll state per monitor
 
 // Get device ID from URL parameter
 function getDeviceIdFromUrl() {
@@ -19,7 +22,17 @@ function getDeviceIdFromUrl() {
 // Initialize page immediately (SPA context)
 (async function() {
     await initializeAuth();
+    await loadAvailableDevices();
     await initializeWebSocket();
+
+    // Check if there's a device ID in URL and open it automatically
+    const urlDeviceId = getDeviceIdFromUrl();
+    if (urlDeviceId) {
+        // Wait a bit for WebSocket to be ready
+        setTimeout(() => {
+            addDeviceTab(urlDeviceId);
+        }, 500);
+    }
 })();
 
 async function initializeAuth() {
@@ -27,7 +40,7 @@ async function initializeAuth() {
         const response = await fetch('/api/user-info', {
             credentials: 'include'
         });
-        
+
         if (response.ok) {
             currentUser = await response.json();
             // User info is now handled by shared navigation in app.js
@@ -51,6 +64,28 @@ async function initializeAuth() {
             display_name: "Guest User",
             canvas_permissions: {}
         };
+    }
+}
+
+async function loadAvailableDevices() {
+    try {
+        const response = await fetch('/api/esp32/discovered', {
+            method: 'GET',
+            credentials: 'include'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            availableDevices = data.devices || [];
+            console.log('Loaded available devices:', availableDevices);
+            renderDeviceSidebar();
+        } else {
+            console.error('Failed to fetch available devices:', response.status);
+            availableDevices = [];
+        }
+    } catch (error) {
+        console.error('Error loading available devices:', error);
+        availableDevices = [];
     }
 }
 
@@ -93,30 +128,128 @@ async function initializeWebSocket() {
 }
 
 async function requestDeviceList() {
-    // Check if we have a specific device identifier from URL (could be MAC or deviceId)
-    const urlDeviceIdentifier = getDeviceIdFromUrl();
-    if (urlDeviceIdentifier) {
-        console.log('Loading specific device from URL:', urlDeviceIdentifier);
-
-        // Check if this is a MAC address or deviceId by querying the discovered devices
-        try {
-            const actualDeviceId = await resolveDeviceIdentifier(urlDeviceIdentifier);
-            if (actualDeviceId) {
-                console.log('Successfully resolved to deviceId:', actualDeviceId);
-                registerForDevice(actualDeviceId);
-            } else {
-                console.log('Failed to resolve device identifier:', urlDeviceIdentifier);
-                showDeviceNotFound(urlDeviceIdentifier);
-            }
-        } catch (error) {
-            console.error('Error resolving device identifier:', error);
-            showNoDeviceIdError();
-        }
+    // Show the main layout with sidebar
+    if (availableDevices.length > 0) {
+        showMainLayout();
     } else {
-        // No device identifier in URL - show error message
-        showNoDeviceIdError();
+        showNoDevicesState();
     }
 }
+
+function renderDeviceSidebar() {
+    const sidebarList = document.getElementById('available-devices-list');
+    if (!sidebarList) return;
+
+    if (availableDevices.length === 0) {
+        sidebarList.innerHTML = '<p class="text-muted text-center">No devices found</p>';
+        return;
+    }
+
+    sidebarList.innerHTML = '';
+    availableDevices.forEach(device => {
+        const deviceItem = document.createElement('div');
+        deviceItem.className = 'device-list-item';
+        if (openTabs.has(device.deviceId)) {
+            deviceItem.classList.add('active');
+        }
+
+        const isConnected = esp32Devices.has(device.deviceId) && esp32Devices.get(device.deviceId).connected;
+
+        deviceItem.innerHTML = `
+            <span class="status-dot ${getStatusClass(isConnected)}"></span>
+            <div class="device-info">
+                <div class="device-name">${device.mdnsHostname || device.deviceId}</div>
+                <div class="device-mac">${device.macAddress || device.deviceId}</div>
+            </div>
+        `;
+
+        deviceItem.onclick = () => addDeviceTab(device.deviceId);
+        sidebarList.appendChild(deviceItem);
+    });
+}
+
+async function addDeviceTab(deviceId) {
+    if (openTabs.has(deviceId)) {
+        // Tab already open, just activate it
+        activateTab(deviceId);
+        updateUrlForDevice(deviceId);
+        return;
+    }
+
+    // Add to open tabs
+    openTabs.add(deviceId);
+
+    // Register for device events
+    registerForDevice(deviceId);
+
+    // Update sidebar to show active state
+    renderDeviceSidebar();
+
+    // Create device UI if not exists
+    if (!esp32Devices.has(deviceId)) {
+        await createDeviceUI(deviceId);
+    } else {
+        // Device already exists, just render
+        renderDevices();
+    }
+
+    // Update URL to reflect the newly opened device
+    updateUrlForDevice(deviceId);
+}
+
+function removeDeviceTab(deviceId) {
+    // Remove from open tabs
+    openTabs.delete(deviceId);
+
+    // Update sidebar
+    renderDeviceSidebar();
+
+    // Render devices to remove the tab
+    renderDevices();
+
+    // Optionally: unregister from device events to save bandwidth
+    // (you might want to keep listening if user wants to re-add the tab)
+}
+
+function activateTab(deviceId) {
+    const tabButton = document.getElementById(`${deviceId}-tab`);
+    if (tabButton) {
+        tabButton.click();
+    }
+}
+
+function updateUrlForDevice(deviceId) {
+    const newUrl = `/devices/${deviceId}`;
+    window.history.pushState({deviceId: deviceId}, '', newUrl);
+}
+
+function showMainLayout() {
+    document.getElementById('loading-state').style.display = 'none';
+    document.getElementById('no-devices-state').style.display = 'none';
+    document.getElementById('esp32-main-layout').style.display = 'flex';
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('esp32-sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    sidebar.classList.toggle('show');
+    overlay.classList.toggle('show');
+}
+
+function closeSidebar() {
+    const sidebar = document.getElementById('esp32-sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    sidebar.classList.remove('show');
+    overlay.classList.remove('show');
+}
+
+// Expose new functions to global scope
+window.toggleSidebar = toggleSidebar;
+window.closeSidebar = closeSidebar;
+window.addDeviceTab = addDeviceTab;
+window.removeDeviceTab = removeDeviceTab;
+window.updateUrlForDevice = updateUrlForDevice;
+window.switchToTab = switchToTab;
 
 // Resolve MAC address to deviceId by checking discovered devices
 async function resolveDeviceIdentifier(identifier) {
@@ -242,9 +375,16 @@ async function createDeviceUI(deviceId) {
         variables: new Map(),
         startOptions: []
     };
-    
+
     esp32Devices.set(deviceId, device);
-    renderDevices();
+
+    // Update sidebar to reflect connection status
+    renderDeviceSidebar();
+
+    // Only render if this device is in openTabs
+    if (openTabs.has(deviceId)) {
+        renderDevices();
+    }
 }
 
 function processDeviceEvent(deviceId, event) {
@@ -312,12 +452,13 @@ function processDeviceEvent(deviceId, event) {
             break;
 
         case 'esp32UdpBroadcast':
-            device.udpMessages.push(`[${new Date().toLocaleTimeString()}] ${eventData.message}`);
-            // Keep only the last 400 messages to prevent memory issues while allowing more display
-            if (device.udpMessages.length > 400) {
-                device.udpMessages = device.udpMessages.slice(-400);
+            const newMessage = `[${new Date().toLocaleTimeString()}] ${eventData.message}`;
+            device.udpMessages.push(newMessage);
+            // Keep only the last 500 messages to prevent memory issues
+            if (device.udpMessages.length > 500) {
+                device.udpMessages.shift(); // Remove oldest message
             }
-            updateMonitorArea(deviceId, 'udp');
+            appendToMonitor(deviceId, newMessage);
             break;
 
         case 'esp32VariableUpdate':
@@ -365,29 +506,27 @@ function processDeviceEvent(deviceId, event) {
 }
 
 function renderDevices() {
-    if (esp32Devices.size === 0) {
-        showNoDevicesState();
-        return;
-    }
-    
-    hideLoadingState();
-    
     // Clear existing content
     document.getElementById('deviceTabs').innerHTML = '';
     document.getElementById('deviceTabContent').innerHTML = '';
     document.getElementById('esp32-stack').innerHTML = '';
-    
-    const devices = Array.from(esp32Devices.values());
-    const urlDeviceId = getDeviceIdFromUrl();
-    
-    // If we have a specific device ID from URL, only show that device
-    const devicesToShow = urlDeviceId ? devices.filter(device => device.id === urlDeviceId) : devices;
-    
-    if (devicesToShow.length === 0 && urlDeviceId) {
-        showSpecificDeviceNotFound(urlDeviceId);
+
+    if (openTabs.size === 0) {
+        // Show empty state in tab area
+        document.getElementById('deviceTabContent').innerHTML = `
+            <div class="text-center p-5">
+                <i class="bi bi-arrow-left" style="font-size: 3rem; color: #667eea;"></i>
+                <h5 class="mt-3">No devices selected</h5>
+                <p class="text-muted">Select a device from the sidebar to start</p>
+            </div>
+        `;
         return;
     }
-    
+
+    const devicesToShow = Array.from(openTabs)
+        .map(deviceId => esp32Devices.get(deviceId))
+        .filter(device => device !== undefined);
+
     devicesToShow.forEach((device, index) => {
         createDeviceTabContent(device, index === 0);
         createDeviceStackContent(device);
@@ -412,25 +551,54 @@ function createDeviceTabContent(device, isActive) {
     const tab = document.createElement('li');
     tab.className = 'nav-item';
     tab.innerHTML = `
-        <button class="nav-link ${isActive ? 'active' : ''}" 
-                id="${device.id}-tab" 
-                data-bs-toggle="tab" 
-                data-bs-target="#${device.id}-content" 
-                type="button" 
-                role="tab">
+        <button class="nav-link ${isActive ? 'active' : ''}"
+                id="${device.id}-tab"
+                type="button"
+                role="tab"
+                onclick="switchToTab('${device.id}')">
             <span class="status-dot ${getStatusClass(device.connected)}"></span>
-            ${device.name}
+            <span>${device.name}</span>
+            <button class="tab-close-btn" onclick="event.stopPropagation(); removeDeviceTab('${device.id}')">
+                ×
+            </button>
         </button>
     `;
     document.getElementById('deviceTabs').appendChild(tab);
-    
+
     // Create tab content
     const content = document.createElement('div');
-    content.className = `tab-pane fade ${isActive ? 'show active' : ''}`;
+    content.className = `tab-pane ${isActive ? 'active' : ''}`;
     content.id = `${device.id}-content`;
     content.setAttribute('role', 'tabpanel');
     content.innerHTML = createDeviceContent(device, 'tab');
     document.getElementById('deviceTabContent').appendChild(content);
+}
+
+function switchToTab(deviceId) {
+    // Remove active class from all tabs
+    document.querySelectorAll('.nav-link').forEach(tab => {
+        tab.classList.remove('active');
+    });
+
+    // Remove active class from all tab contents
+    document.querySelectorAll('.tab-pane').forEach(content => {
+        content.classList.remove('active');
+    });
+
+    // Add active class to clicked tab
+    const activeTab = document.getElementById(`${deviceId}-tab`);
+    if (activeTab) {
+        activeTab.classList.add('active');
+    }
+
+    // Add active class to corresponding content
+    const activeContent = document.getElementById(`${deviceId}-content`);
+    if (activeContent) {
+        activeContent.classList.add('active');
+    }
+
+    // Update URL
+    updateUrlForDevice(deviceId);
 }
 
 function createDeviceStackContent(device) {
@@ -523,66 +691,10 @@ function getStatusText(connected) {
     return connected ? 'Connected' : 'Disconnected';
 }
 
-function hideLoadingState() {
-    document.getElementById('loading-state').style.display = 'none';
-}
-
 function showNoDevicesState() {
     document.getElementById('loading-state').style.display = 'none';
+    document.getElementById('esp32-main-layout').style.display = 'none';
     document.getElementById('no-devices-state').style.display = 'block';
-}
-
-function showNoDeviceIdError() {
-    document.getElementById('loading-state').style.display = 'none';
-    const noDevicesEl = document.getElementById('no-devices-state');
-    noDevicesEl.innerHTML = `
-        <div class="alert alert-danger">
-            <h4><i class="bi bi-exclamation-triangle"></i> No ESP32 Device Selected</h4>
-            <p>No ESP32 device ID found in the URL. This page requires a specific device to connect to.</p>
-            <p>Please select an ESP32 device from the main page.</p>
-            <a href="/" class="btn btn-primary spa-link">
-                <i class="bi bi-house"></i> Go to Home Page
-            </a>
-        </div>
-    `;
-    noDevicesEl.style.display = 'block';
-}
-
-function showDeviceNotFound(identifier) {
-    document.getElementById('loading-state').style.display = 'none';
-    const noDevicesEl = document.getElementById('no-devices-state');
-    noDevicesEl.innerHTML = `
-        <div class="alert alert-warning">
-            <h4><i class="bi bi-exclamation-triangle"></i> ESP32 Device Not Found</h4>
-            <p>No ESP32 device found with identifier "${identifier}".</p>
-            <p>The device may be offline or not yet discovered.</p>
-            <button class="btn btn-primary" onclick="refreshDevices()">
-                <i class="bi bi-arrow-clockwise"></i> Refresh
-            </button>
-            <a href="/" class="btn btn-secondary ms-2 spa-link">
-                <i class="bi bi-house"></i> Back to Home
-            </a>
-        </div>
-    `;
-    noDevicesEl.style.display = 'block';
-}
-
-function showSpecificDeviceNotFound(deviceId) {
-    document.getElementById('loading-state').style.display = 'none';
-    const noDevicesEl = document.getElementById('no-devices-state');
-    noDevicesEl.innerHTML = `
-        <div class="alert alert-warning">
-            <h4><i class="bi bi-exclamation-triangle"></i> ESP32 Device Not Found</h4>
-            <p>The ESP32 device with ID "${deviceId}" is not currently available or connected.</p>
-            <button class="btn btn-primary" onclick="refreshDevices()">
-                <i class="bi bi-arrow-clockwise"></i> Refresh
-            </button>
-            <a href="/" class="btn btn-secondary ms-2 spa-link">
-                <i class="bi bi-house"></i> Back to Home
-            </a>
-        </div>
-    `;
-    noDevicesEl.style.display = 'block';
 }
 
 function showDevicesContainer() {
@@ -724,6 +836,9 @@ function isAutoStartEnabled(deviceId) {
 function updateConnectionStatus(deviceId, connected) {
     console.log(`ESP32 DEBUG: updateConnectionStatus called for device ${deviceId} connected: ${connected}`);
 
+    // Update sidebar
+    renderDeviceSidebar();
+
     // Update status dots in tab buttons
     const escapedDeviceId = CSS.escape(deviceId);
     const tabStatusElements = document.querySelectorAll(`[id="${escapedDeviceId}-tab"] .status-dot`);
@@ -756,43 +871,77 @@ function updateConnectionStatus(deviceId, connected) {
         }
     }
 
-
     // Variable Controls auch entsprechend dem Connection Status aktualisieren
     updateVariableControlsConnectionState(deviceId, connected);
 }
 
-function updateMonitorArea(deviceId, type) {
-    const device = esp32Devices.get(deviceId);
 
-    // Update all monitor variants (tab, stack)
+// Simple append - just add new message to bottom
+// Smart append with PlatformIO-style auto-scroll behavior
+function appendToMonitor(deviceId, message) {
     const suffixes = ['tab', 'stack'];
-    let updated = false;
 
     suffixes.forEach(suffix => {
         const monitorId = `${deviceId}-${suffix}-udp-monitor`;
         const monitorEl = document.getElementById(monitorId);
 
-        if (monitorEl && type === 'udp') {
-            // Check if user is scrolled to bottom before updating
-            const isScrolledToBottom = isElementScrolledToBottom(monitorEl);
-
-            monitorEl.innerHTML = device.udpMessages.slice(-200).join('<br>');
-
-            // Use requestAnimationFrame to scroll after DOM update
-            if (isScrolledToBottom) {
-                requestAnimationFrame(() => {
-                    monitorEl.scrollTop = monitorEl.scrollHeight;
-                });
+        if (monitorEl) {
+            // Initialize scroll listener on first use
+            if (!monitorScrollStates.has(monitorId)) {
+                initializeMonitorScrollTracking(monitorId, monitorEl);
             }
-            updated = true;
+
+            // Get scroll state info
+            const scrollState = monitorScrollStates.get(monitorId);
+
+            // Remove old messages if limit exceeded
+            while (monitorEl.children.length >= 500) {
+                monitorEl.removeChild(monitorEl.firstChild);
+            }
+
+            // Add new message
+            const messageDiv = document.createElement('div');
+            messageDiv.textContent = message;
+            monitorEl.appendChild(messageDiv);
+
+            // Only auto-scroll if enabled
+            if (scrollState.autoScroll) {
+                scrollState.isProgrammaticScroll = true;
+                monitorEl.scrollTop = monitorEl.scrollHeight;
+            }
         }
     });
+}
 
-    if (updated) {
-    } else {
-        // Debug: List all elements with similar IDs
-        const allElements = document.querySelectorAll('[id*="monitor"]');
-    }
+// Initialize scroll tracking for a monitor
+function initializeMonitorScrollTracking(monitorId, monitorEl) {
+    // Create state object
+    const scrollState = {
+        autoScroll: true,
+        isProgrammaticScroll: false
+    };
+    monitorScrollStates.set(monitorId, scrollState);
+
+    // Track user scroll events
+    monitorEl.addEventListener('scroll', () => {
+        // Ignore programmatic scrolls
+        if (scrollState.isProgrammaticScroll) {
+            scrollState.isProgrammaticScroll = false;
+            return;
+        }
+
+        // This is a user-initiated scroll
+        // Update auto-scroll state based on current position
+        const isAtBottom = isScrolledToBottom(monitorEl);
+        scrollState.autoScroll = isAtBottom;
+    }, { passive: true });
+}
+
+// Check if element is scrolled to bottom (with small tolerance)
+function isScrolledToBottom(element) {
+    const threshold = 30; // pixels tolerance
+    const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+    return isAtBottom;
 }
 
 function updateVariableMonitor(deviceId, name, value) {
@@ -1000,17 +1149,6 @@ function sendReset(deviceId) {
             }]
         }));
     }
-}
-
-// Helper function to check if element is scrolled to bottom
-function isElementScrolledToBottom(element) {
-    if (!element) return true; // Default to auto-scroll if element doesn't exist
-
-    // Allow for small tolerance (5px) to account for rounding errors
-    const tolerance = 5;
-    const isAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - tolerance;
-
-    return isAtBottom;
 }
 
 // Expose functions to global scope for HTML onclick handlers
