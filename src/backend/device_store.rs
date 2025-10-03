@@ -108,16 +108,18 @@ pub struct ClientConnection {
     pub device_id: String,
     pub user_color: String,
     pub sender: mpsc::UnboundedSender<ServerMessage>,
+    pub subscription_type: crate::events::SubscriptionType,
 }
 
 impl ClientConnection {
     pub fn new(
         user_id: String,
         display_name: String,
-        client_id: String, 
+        client_id: String,
         device_id: String,
         user_color: String,
-        sender: mpsc::UnboundedSender<ServerMessage>
+        sender: mpsc::UnboundedSender<ServerMessage>,
+        subscription_type: crate::events::SubscriptionType,
     ) -> Self {
         Self {
             user_id,
@@ -126,6 +128,7 @@ impl ClientConnection {
             device_id,
             user_color,
             sender,
+            subscription_type,
         }
     }
     
@@ -265,7 +268,8 @@ impl DeviceEventStore {
         user_id: String,
         display_name: String,
         client_id: String,
-        sender: mpsc::UnboundedSender<ServerMessage>
+        sender: mpsc::UnboundedSender<ServerMessage>,
+        subscription_type: crate::events::SubscriptionType,
     ) -> Result<Vec<DeviceEvent>, String> {
         // ATOMIC OPERATION: Generate color and add connection in single critical section
         let (user_color, is_reconnection) = {
@@ -309,12 +313,13 @@ impl DeviceEventStore {
             
             // Create and add new connection atomically
             let connection = ClientConnection::new(
-                user_id.clone(), 
-                display_name.clone(), 
-                client_id.clone(), 
-                device_id.clone(), 
-                user_color.clone(), 
-                sender
+                user_id.clone(),
+                display_name.clone(),
+                client_id.clone(),
+                device_id.clone(),
+                user_color.clone(),
+                sender,
+                subscription_type.clone(),
             );
             device_connections.push(connection);
             
@@ -501,32 +506,45 @@ impl DeviceEventStore {
     
     /// Broadcast an event to all connected clients on a device (except sender)
     /// Multi-tab support: Sends to all clients including other tabs of same user
+    /// Subscription filtering: Light subscriptions only receive connection status events
     pub async fn broadcast_event(
-        &self, 
-        device_id: &str, 
-        event: DeviceEvent, 
+        &self,
+        device_id: &str,
+        event: DeviceEvent,
         sender_client_id: &str
     ) -> Result<(), String> {
         let connections = self.active_connections.read().await;
-        
+
         if let Some(device_connections) = connections.get(device_id) {
             debug!("Found {} WebSocket connections for device {}", device_connections.len(), device_id);
+
+            // Check if this event should be sent to light subscriptions
+            let is_connection_status = matches!(event, DeviceEvent::Esp32ConnectionStatus { .. });
+
             let message = ServerMessage::device_events(
                 device_id.to_string(),
                 vec![event]
             );
             debug!("Prepared WebSocket message for device {}: {:?}", device_id, message);
-            
+
             let mut successful_sends = 0;
             let mut failed_sends = 0;
-            
+            let mut skipped_light = 0;
+
             for connection in device_connections {
                 // Don't send event back to the exact sender client
                 // But do send to other tabs of the same user (different client_id)
                 if connection.client_id == sender_client_id {
                     continue;
                 }
-                
+
+                // Filter events based on subscription type
+                if connection.subscription_type == crate::events::SubscriptionType::Light && !is_connection_status {
+                    skipped_light += 1;
+                    debug!("Skipping non-connection event for light subscription client {}", connection.client_id);
+                    continue;
+                }
+
                 match connection.send_message(message.clone()) {
                     Ok(()) => successful_sends += 1,
                     Err(e) => {
@@ -535,11 +553,13 @@ impl DeviceEventStore {
                     }
                 }
             }
-            
-            info!("WEBSOCKET BROADCAST DEBUG: Broadcasted event to {} clients on device {} ({} failed)",
-                   successful_sends, device_id, failed_sends);
+
+            info!("WEBSOCKET BROADCAST DEBUG: Broadcasted event to {} clients on device {} ({} failed, {} skipped light)",
+                   successful_sends, device_id, failed_sends, skipped_light);
             if successful_sends > 0 {
                 info!("WEBSOCKET BROADCAST DEBUG: Event successfully sent to {} frontend clients for device {}", successful_sends, device_id);
+            } else if skipped_light > 0 {
+                debug!("WEBSOCKET BROADCAST DEBUG: Event skipped for {} light subscription clients on device {}", skipped_light, device_id);
             } else {
                 warn!("WEBSOCKET BROADCAST DEBUG: NO clients received the event for device {} - this is why frontend shows 'Disconnected'!", device_id);
             }

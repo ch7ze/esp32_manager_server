@@ -8,22 +8,40 @@ use serde::{Deserialize, Serialize};
 // CLIENT-SERVER COMMUNICATION MESSAGES
 // ============================================================================
 
+/// Subscription type for device events
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SubscriptionType {
+    /// Light subscription: only connection status events
+    Light,
+    /// Full subscription: all events (variables, UDP, connection status, etc.)
+    Full,
+}
+
+impl Default for SubscriptionType {
+    fn default() -> Self {
+        SubscriptionType::Full
+    }
+}
+
 /// WebSocket messages sent from Client to Server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMessage {
     #[serde(rename = "registerForDevice")]
-    RegisterForDevice { 
+    RegisterForDevice {
         #[serde(rename = "deviceId")]
-        device_id: String 
+        device_id: String,
+        #[serde(rename = "subscriptionType", default)]
+        subscription_type: SubscriptionType,
     },
     #[serde(rename = "unregisterForDevice")]
-    UnregisterForDevice { 
+    UnregisterForDevice {
         #[serde(rename = "deviceId")]
-        device_id: String 
+        device_id: String
     },
     #[serde(rename = "deviceEvent")]
-    DeviceEvent { 
+    DeviceEvent {
         #[serde(rename = "deviceId")]
         device_id: String,
         #[serde(rename = "eventsForDevice")]

@@ -79,6 +79,12 @@ async function loadAvailableDevices() {
             availableDevices = data.devices || [];
             console.log('Loaded available devices:', availableDevices);
             renderDeviceSidebar();
+
+            // Register all devices with 'light' subscription for connection status
+            // This will be called after WebSocket is connected
+            if (esp32Websocket && esp32Websocket.readyState === WebSocket.OPEN) {
+                registerAllDevicesLight();
+            }
         } else {
             console.error('Failed to fetch available devices:', response.status);
             availableDevices = [];
@@ -100,6 +106,8 @@ async function initializeWebSocket() {
             console.log('WebSocket connected');
             // Request list of ESP32 devices
             requestDeviceList();
+            // Register all available devices with 'light' subscription for status updates
+            registerAllDevicesLight();
         };
         
         esp32Websocket.onmessage = function(event) {
@@ -170,28 +178,28 @@ function renderDeviceSidebar() {
 
 async function addDeviceTab(deviceId) {
     if (openTabs.has(deviceId)) {
-        // Tab already open, just activate it
-        activateTab(deviceId);
-        updateUrlForDevice(deviceId);
+        // Tab already open, remove it (toggle behavior)
+        removeDeviceTab(deviceId);
         return;
     }
 
     // Add to open tabs
     openTabs.add(deviceId);
 
-    // Register for device events
-    registerForDevice(deviceId);
-
     // Update sidebar to show active state
     renderDeviceSidebar();
 
-    // Create device UI if not exists
+    // Create device UI if not exists BEFORE registering
+    // This ensures the DOM elements exist when events arrive
     if (!esp32Devices.has(deviceId)) {
         await createDeviceUI(deviceId);
     } else {
         // Device already exists, just render
         renderDevices();
     }
+
+    // Upgrade to 'full' subscription for this device (replaces any existing light subscription)
+    registerForDevice(deviceId, 'full');
 
     // Update URL to reflect the newly opened device
     updateUrlForDevice(deviceId);
@@ -207,8 +215,18 @@ function removeDeviceTab(deviceId) {
     // Render devices to remove the tab
     renderDevices();
 
-    // Optionally: unregister from device events to save bandwidth
-    // (you might want to keep listening if user wants to re-add the tab)
+    // Update URL to the first remaining tab or clear it
+    if (openTabs.size > 0) {
+        const firstTab = Array.from(openTabs)[0];
+        updateUrlForDevice(firstTab);
+    } else {
+        // No tabs left, stay on devices page without specific device
+        window.history.pushState({}, '', '/');
+    }
+
+    // Downgrade to 'light' subscription for this device (only connection status)
+    // This way we still see the connection status in the sidebar without full event stream
+    registerForDevice(deviceId, 'light');
 }
 
 function activateTab(deviceId) {
@@ -300,17 +318,35 @@ async function resolveDeviceIdentifier(identifier) {
     }
 }
 
-function registerForDevice(deviceId) {
-    console.log('Attempting to register for device:', deviceId);
+function registerForDevice(deviceId, subscriptionType = 'full') {
+    console.log(`Attempting to register for device: ${deviceId} with subscription: ${subscriptionType}`);
     if (esp32Websocket && esp32Websocket.readyState === WebSocket.OPEN) {
         console.log('WebSocket is open, sending registration request');
         esp32Websocket.send(JSON.stringify({
             type: 'registerForDevice',
-            deviceId: deviceId
+            deviceId: deviceId,
+            subscriptionType: subscriptionType
         }));
     } else {
         console.error('WebSocket not ready, readyState:', esp32Websocket?.readyState);
     }
+}
+
+// Register all available devices with 'light' subscription for connection status only
+function registerAllDevicesLight() {
+    console.log('Registering all devices with light subscription for status updates');
+    console.log('Available devices:', availableDevices);
+    console.log('Open tabs:', Array.from(openTabs));
+
+    availableDevices.forEach(device => {
+        // Only register devices that are not already opened in tabs
+        if (!openTabs.has(device.id)) {
+            console.log('Registering device with light subscription:', device.id);
+            registerForDevice(device.id, 'light');
+        } else {
+            console.log('Skipping device (already in tab):', device.id);
+        }
+    });
 }
 
 async function handleWebSocketMessage(message) {
@@ -373,7 +409,8 @@ async function createDeviceUI(deviceId) {
         udpMessages: [],
         tcpMessages: [],
         variables: new Map(),
-        startOptions: []
+        startOptions: [],
+        changeableVariables: [] // Store changeable variables for re-rendering
     };
 
     esp32Devices.set(deviceId, device);
@@ -479,6 +516,8 @@ function processDeviceEvent(deviceId, event) {
             break;
 
         case 'esp32ChangeableVariables':
+            // Store the changeable variables in the device object
+            device.changeableVariables = eventData.variables;
             updateVariableControls(deviceId, eventData.variables);
             break;
 
@@ -534,16 +573,20 @@ function renderDevices() {
 
     showDevicesContainer();
 
-    // Debug: Check if CSS is loaded and applied
+    // Restore variable controls and start options after re-rendering
     setTimeout(() => {
-        const containers = document.querySelectorAll('.main-container');
-        containers.forEach((container, index) => {
-            const computedStyle = window.getComputedStyle(container);
-            console.log(`ESP32 CSS DEBUG: Container ${index} flex-direction:`, computedStyle.flexDirection);
-            console.log(`ESP32 CSS DEBUG: Container ${index} gap:`, computedStyle.gap);
-            console.log(`ESP32 CSS DEBUG: Container ${index} height:`, computedStyle.height);
+        devicesToShow.forEach(device => {
+            // Restore variable controls if they exist
+            if (device.changeableVariables && device.changeableVariables.length > 0) {
+                updateVariableControls(device.id, device.changeableVariables);
+            }
+
+            // Restore start options if they exist
+            if (device.startOptions && device.startOptions.length > 0) {
+                updateStartOptions(device.id, device.startOptions);
+            }
         });
-    }, 100);
+    }, 50);
 }
 
 function createDeviceTabContent(device, isActive) {
@@ -551,17 +594,15 @@ function createDeviceTabContent(device, isActive) {
     const tab = document.createElement('li');
     tab.className = 'nav-item';
     tab.innerHTML = `
-        <button class="nav-link ${isActive ? 'active' : ''}"
-                id="${device.id}-tab"
-                type="button"
-                role="tab"
-                onclick="switchToTab('${device.id}')">
-            <span class="status-dot ${getStatusClass(device.connected)}"></span>
-            <span>${device.name}</span>
+        <div class="nav-link ${isActive ? 'active' : ''}" id="${device.id}-tab" role="tab">
+            <div class="tab-clickable" onclick="switchToTab('${device.id}')">
+                <span class="status-dot ${getStatusClass(device.connected)}"></span>
+                <span>${device.name}</span>
+            </div>
             <button class="tab-close-btn" onclick="event.stopPropagation(); removeDeviceTab('${device.id}')">
                 ×
             </button>
-        </button>
+        </div>
     `;
     document.getElementById('deviceTabs').appendChild(tab);
 

@@ -263,8 +263,8 @@ async fn handle_client_message(
     info!("Successfully parsed ClientMessage: {:?}", client_message);
     
     match client_message {
-        ClientMessage::RegisterForDevice { device_id } => {
-            info!("Processing RegisterForDevice request for device_id: {}", device_id);
+        ClientMessage::RegisterForDevice { device_id, subscription_type } => {
+            info!("Processing RegisterForDevice request for device_id: {} with subscription: {:?}", device_id, subscription_type);
             handle_register_for_device(
                 device_id,
                 device_store,
@@ -275,7 +275,8 @@ async fn handle_client_message(
                 display_name,
                 client_id,
                 tx,
-                registered_devices
+                registered_devices,
+                subscription_type,
             ).await
         }
         
@@ -315,6 +316,7 @@ async fn handle_register_for_device(
     client_id: &str,
     tx: &mpsc::UnboundedSender<ServerMessage>,
     registered_devices: &mut Vec<String>,
+    subscription_type: crate::events::SubscriptionType,
 ) -> Result<(), String> {
     info!("handle_register_for_device called - device_id: {}, user_id: {}, client_id: {}", device_id, user_id, client_id);
     // Check if user has permission to access this device (requires at least Read permission)
@@ -337,15 +339,16 @@ async fn handle_register_for_device(
     
     info!("User {} has access permission for device {}", user_id, device_id);
     
-    info!("Registering client {} for device {} (user: {})", client_id, device_id, user_id);
-    
+    info!("Registering client {} for device {} (user: {}) with subscription: {:?}", client_id, device_id, user_id, subscription_type);
+
     // Register client and get existing events for replay
     let existing_events = device_store.register_client(
         device_id.clone(),
         user_id.to_string(),
         display_name.to_string(),
         client_id.to_string(),
-        tx.clone()
+        tx.clone(),
+        subscription_type.clone(),
     ).await?;
     
     // Add to registered devices list
@@ -354,8 +357,10 @@ async fn handle_register_for_device(
     }
 
     // If this is an ESP32 device (MAC address format), try to add and connect it
-    if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
-        info!("Attempting to add and connect ESP32 device: {}", device_id);
+    // Only connect for FULL subscriptions - light subscriptions just need status
+    if (is_mac_address_format(&device_id) || is_mac_key_format(&device_id))
+        && subscription_type == crate::events::SubscriptionType::Full {
+        info!("Attempting to add and connect ESP32 device: {} (full subscription)", device_id);
 
         // First check if device is already added to manager
         let device_exists = esp32_manager.get_device_config(&device_id).await.is_some();
@@ -413,6 +418,8 @@ async fn handle_register_for_device(
                 // Don't fail the registration - user should still be able to see the device
             }
         }
+    } else if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
+        info!("Light subscription for ESP32 device {} - skipping connection, will only receive status updates", device_id);
     }
     
     // Send existing events to client for replay
