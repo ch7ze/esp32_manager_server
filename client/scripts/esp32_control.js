@@ -340,11 +340,32 @@ function registerAllDevicesLight() {
 
     availableDevices.forEach(device => {
         // Only register devices that are not already opened in tabs
-        if (!openTabs.has(device.id)) {
-            console.log('Registering device with light subscription:', device.id);
-            registerForDevice(device.id, 'light');
+        if (!openTabs.has(device.deviceId)) {
+            console.log('Registering device with light subscription:', device.deviceId);
+
+            // Create full device object if it doesn't exist yet
+            // This ensures connection status updates can be received and displayed
+            // We need the full object structure because when user opens tab later,
+            // it will reuse this object instead of creating a new one
+            if (!esp32Devices.has(device.deviceId)) {
+                const deviceName = device.mdnsHostname || device.deviceId;
+                esp32Devices.set(device.deviceId, {
+                    id: device.deviceId,
+                    name: deviceName,
+                    connected: false,
+                    users: [],
+                    udpMessages: [],
+                    tcpMessages: [],
+                    variables: new Map(),
+                    startOptions: [],
+                    changeableVariables: []
+                });
+                console.log('Created device object for light subscription:', device.deviceId);
+            }
+
+            registerForDevice(device.deviceId, 'light');
         } else {
-            console.log('Skipping device (already in tab):', device.id);
+            console.log('Skipping device (already in tab):', device.deviceId);
         }
     });
 }

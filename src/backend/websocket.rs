@@ -419,9 +419,98 @@ async fn handle_register_for_device(
             }
         }
     } else if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
-        info!("Light subscription for ESP32 device {} - skipping connection, will only receive status updates", device_id);
+        info!("Light subscription for ESP32 device {} - will add to manager but not connect", device_id);
+
+        // For light subscriptions, add device to manager (if not exists) but don't connect
+        let device_exists = esp32_manager.get_device_config(&device_id).await.is_some();
+
+        if !device_exists {
+            // Try to get device configuration from discovery data
+            info!("ESP32 device {} not in manager, trying to find it in discovery data for light subscription", device_id);
+
+            // Look up the device in discovery data
+            let discovery_config = {
+                let discovery = esp32_discovery.lock().await;
+                let discovered_devices = discovery.get_discovered_devices().await;
+                discovered_devices.get(&device_id).map(|d| d.device_config.clone())
+            };
+
+            let config = match discovery_config {
+                Some(discovered_config) => {
+                    info!("Found ESP32 device {} in discovery data: {}:{}",
+                          device_id, discovered_config.ip_address, discovered_config.tcp_port);
+                    discovered_config
+                }
+                None => {
+                    info!("ESP32 device {} not found in discovery data, using default config", device_id);
+                    // Fallback to default configuration
+                    crate::esp32_types::Esp32DeviceConfig::new(
+                        device_id.clone(),
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 100)), // Default fallback
+                        3232, // ESP32 TCP port
+                        3232, // ESP32 UDP port
+                    )
+                }
+            };
+
+            // Add the device to the manager (but don't connect it)
+            match esp32_manager.add_device(config.clone()).await {
+                Ok(()) => {
+                    info!("Successfully added ESP32 device {} to manager for light subscription", device_id);
+
+                    // Send initial disconnected status for newly added device
+                    let status_event = crate::events::DeviceEvent::esp32_connection_status(
+                        device_id.clone(),
+                        false, // Not connected yet
+                        config.ip_address.to_string(),
+                        config.tcp_port,
+                        config.udp_port
+                    );
+
+                    let status_response = ServerMessage::device_events(
+                        device_id.clone(),
+                        vec![status_event]
+                    );
+
+                    if let Err(e) = tx.send(status_response) {
+                        warn!("Failed to send initial disconnected status: {}", e);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to add ESP32 device {} to manager: {}", device_id, e);
+                }
+            }
+        } else {
+            // Device already exists, get and send current connection status
+            info!("ESP32 device {} already exists in manager, sending current status", device_id);
+
+            if let Some(config) = esp32_manager.get_device_config(&device_id).await {
+                if let Some(state) = esp32_manager.get_device_state(&device_id).await {
+                    let is_connected = state.is_connected();
+                    info!("Sending initial connection status for light subscription: device {} is {}",
+                          device_id, if is_connected { "connected" } else { "disconnected" });
+
+                    let status_event = crate::events::DeviceEvent::esp32_connection_status(
+                        device_id.clone(),
+                        is_connected,
+                        config.ip_address.to_string(),
+                        config.tcp_port,
+                        config.udp_port
+                    );
+
+                    let status_response = ServerMessage::device_events(
+                        device_id.clone(),
+                        vec![status_event]
+                    );
+
+                    if let Err(e) = tx.send(status_response) {
+                        warn!("Failed to send initial connection status for light subscription: {}", e);
+                    }
+                }
+            }
+        }
     }
-    
+
     // Send existing events to client for replay
     if !existing_events.is_empty() {
         let event_count = existing_events.len();
