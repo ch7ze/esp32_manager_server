@@ -162,8 +162,8 @@ async function renderPage() {
     }
     
     
-    // Handle device detail pages - redirect to ESP32 control
-    if (url.pathname.startsWith('/devices/')) {
+    // Handle device pages - redirect to ESP32 control
+    if (url.pathname.startsWith('/devices')) {
         pageName = 'esp32_control';
     }
     

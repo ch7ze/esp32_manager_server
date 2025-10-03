@@ -215,13 +215,13 @@ function removeDeviceTab(deviceId) {
     // Render devices to remove the tab
     renderDevices();
 
-    // Update URL to the first remaining tab or clear it
+    // Update URL to the first remaining tab or stay on /devices
     if (openTabs.size > 0) {
         const firstTab = Array.from(openTabs)[0];
         updateUrlForDevice(firstTab);
     } else {
         // No tabs left, stay on devices page without specific device
-        window.history.pushState({}, '', '/');
+        window.history.pushState({}, '', '/devices');
     }
 
     // Downgrade to 'light' subscription for this device (only connection status)

@@ -400,9 +400,11 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         .route("/debug", get(serve_spa_route))
         .route("/index", get(serve_spa_route))
         .route("/docs", get(serve_spa_route));
-    
+
     // Device routes - more specific to avoid catching static files
-    app = app.route("/devices/:device_id", get(serve_spa_route));
+    app = app
+        .route("/devices", get(serve_spa_route))
+        .route("/devices/:device_id", get(serve_spa_route));
 
     // Add middleware
     app = app.layer(
