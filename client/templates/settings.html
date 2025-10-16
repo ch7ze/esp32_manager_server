@@ -54,15 +54,6 @@
                                 <div class="form-text">Communication speed (default: 115200)</div>
                             </div>
 
-                            <!-- Auto-Connect Checkbox -->
-                            <div class="mb-3 form-check">
-                                <input type="checkbox" class="form-check-input" id="uart-autoconnect-check">
-                                <label class="form-check-label" for="uart-autoconnect-check">
-                                    Auto-connect on server startup
-                                </label>
-                                <div class="form-text">Automatically connect to this port when the server starts</div>
-                            </div>
-
                             <!-- Action Buttons -->
                             <div class="d-flex gap-2">
                                 <button type="button" class="btn btn-success" id="uart-connect-btn">
@@ -71,9 +62,9 @@
                                 <button type="button" class="btn btn-danger" id="uart-disconnect-btn" disabled>
                                     <i class="bi bi-plug-fill"></i> Disconnect
                                 </button>
-                                <button type="submit" class="btn btn-primary ms-auto">
-                                    <i class="bi bi-save"></i> Save Settings
-                                </button>
+                            </div>
+                            <div class="form-text mt-2">
+                                <i class="bi bi-info-circle"></i> Settings are automatically saved when you connect
                             </div>
                         </form>
                     </div>
@@ -116,8 +107,8 @@
                             <span id="status-baudrate" class="text-muted">-</span>
                         </div>
                         <div class="mb-0">
-                            <strong>Auto-Connect:</strong>
-                            <span id="status-autoconnect" class="text-muted">-</span>
+                            <strong>Auto-Reconnect:</strong>
+                            <span id="status-autoconnect" class="badge bg-success">Enabled</span>
                         </div>
                     </div>
                 </div>
@@ -145,7 +136,6 @@ async function initSettingsPage() {
     document.getElementById('refresh-ports-btn').addEventListener('click', refreshPorts);
     document.getElementById('uart-connect-btn').addEventListener('click', connectUart);
     document.getElementById('uart-disconnect-btn').addEventListener('click', disconnectUart);
-    document.getElementById('uart-settings-form').addEventListener('submit', saveSettings);
 }
 
 // Load available serial ports
@@ -195,7 +185,6 @@ async function loadSettings() {
                 document.getElementById('uart-port-select').value = data.port;
             }
             document.getElementById('uart-baudrate-select').value = data.baudRate || 115200;
-            document.getElementById('uart-autoconnect-check').checked = data.autoConnect || false;
 
             console.log('Settings loaded:', data);
         }
@@ -255,16 +244,13 @@ function updateStatusDisplay(status) {
         disconnectBtn.disabled = true;
     }
 
-    // Update auto-connect status
-    const autoconnectSpan = document.getElementById('status-autoconnect');
-    const autoconnectCheck = document.getElementById('uart-autoconnect-check');
-    autoconnectSpan.textContent = autoconnectCheck.checked ? 'Enabled' : 'Disabled';
 }
 
 // Connect to UART
 async function connectUart() {
     const port = document.getElementById('uart-port-select').value;
     const baudRate = parseInt(document.getElementById('uart-baudrate-select').value);
+    const autoConnect = true; // Always auto-connect
 
     if (!port) {
         showToast('Please select a serial port', 'error');
@@ -277,13 +263,13 @@ async function connectUart() {
         const response = await fetch('/api/uart/connect', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ port, baudRate })
+            body: JSON.stringify({ port, baudRate, autoConnect })
         });
 
         const data = await response.json();
 
         if (data.success) {
-            showToast('UART connected successfully', 'success');
+            showToast('UART connected and settings saved', 'success');
             await loadStatus();
         } else {
             showToast(data.message || 'Failed to connect', 'error');
@@ -315,37 +301,6 @@ async function disconnectUart() {
     } catch (error) {
         console.error('Failed to disconnect UART:', error);
         showToast('Failed to disconnect from UART', 'error');
-    }
-}
-
-// Save settings
-async function saveSettings(event) {
-    event.preventDefault();
-
-    const port = document.getElementById('uart-port-select').value || null;
-    const baudRate = parseInt(document.getElementById('uart-baudrate-select').value);
-    const autoConnect = document.getElementById('uart-autoconnect-check').checked;
-
-    console.log('Saving settings:', { port, baudRate, autoConnect });
-
-    try {
-        const response = await fetch('/api/uart/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ port, baudRate, autoConnect })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showToast('Settings saved successfully', 'success');
-            await loadStatus();
-        } else {
-            showToast('Failed to save settings', 'error');
-        }
-    } catch (error) {
-        console.error('Failed to save settings:', error);
-        showToast('Failed to save settings', 'error');
     }
 }
 

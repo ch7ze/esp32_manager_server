@@ -1623,20 +1623,38 @@ struct UartConnectRequest {
     port: String,
     #[serde(rename = "baudRate")]
     baud_rate: u32,
+    #[serde(rename = "autoConnect", default)]
+    auto_connect: bool,
 }
 
 async fn uart_connect_handler(
     State(app_state): State<AppState>,
     Json(req): Json<UartConnectRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    tracing::info!("UART connect request: port={}, baud_rate={}", req.port, req.baud_rate);
+    tracing::info!("UART connect request: port={}, baud_rate={}, auto_connect={}",
+        req.port, req.baud_rate, req.auto_connect);
 
+    // Try to connect first
     let mut uart = app_state.uart_connection.lock().await;
     match uart.connect(req.port.clone(), req.baud_rate).await {
         Ok(()) => {
+            drop(uart); // Release lock before database operation
+
+            // Save settings to database after successful connection
+            if let Err(e) = app_state.db.update_uart_settings(
+                Some(&req.port),
+                req.baud_rate,
+                req.auto_connect
+            ).await {
+                tracing::error!("Failed to save UART settings after connect: {}", e);
+                // Don't fail the connection just because settings save failed
+            } else {
+                tracing::info!("UART settings saved to database");
+            }
+
             Ok(Json(json!({
                 "success": true,
-                "message": format!("Connected to UART port {}", req.port)
+                "message": format!("Connected to UART port {} and settings saved", req.port)
             })))
         }
         Err(e) => {

@@ -153,13 +153,13 @@
         function handleESP32DiscoveryMessage(message) {
             if (message.deviceId === 'system' && message.eventsForDevice) {
                 message.eventsForDevice.forEach(event => {
-                    if (event.event === 'Esp32DeviceDiscovered') {
-                        console.log('New ESP32 device discovered via WebSocket:', event.device_id);
+                    if (event.event === 'esp32DeviceDiscovered') {
+                        console.log('New ESP32 device discovered via WebSocket:', event.deviceId);
                         // Reload the device list to show the new device
                         loadEsp32DevicesList();
-                        
+
                         // Show notification
-                        showESP32DiscoveryNotification(event.device_id, event.device_ip, event.mdnsHostname);
+                        showESP32DiscoveryNotification(event.deviceId, event.deviceIp, event.mdnsHostname);
                     }
                 });
             }

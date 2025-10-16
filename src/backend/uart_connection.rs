@@ -175,6 +175,7 @@ impl UartConnection {
                         Ok(Ok(bytes_read)) => {
                             // Got data from UART
                             let data = String::from_utf8_lossy(&read_buffer[..bytes_read]);
+                            info!("UART RAW DATA RECEIVED ({} bytes): {:?}", bytes_read, data);
                             buffer.push_str(&data);
 
                             // Process complete lines (messages end with \n or \r\n)
@@ -183,7 +184,7 @@ impl UartConnection {
                                 buffer.drain(..=line_end);
 
                                 if !line.is_empty() {
-                                    info!("UART RECEIVED: {}", line);
+                                    info!("UART COMPLETE LINE RECEIVED: {}", line);
 
                                     // Process the message
                                     let device_store_clone = device_store.clone();
@@ -191,7 +192,14 @@ impl UartConnection {
                                     tokio::spawn(async move {
                                         Self::handle_uart_message(&line_clone, &device_store_clone).await;
                                     });
+                                } else {
+                                    debug!("UART: Empty line after trim");
                                 }
+                            }
+
+                            // Show buffer status if data is incomplete
+                            if !buffer.is_empty() {
+                                debug!("UART BUFFER (incomplete): {:?}", buffer);
                             }
                         }
                         Ok(Err(e)) => {
@@ -224,6 +232,27 @@ impl UartConnection {
                 // Extract device_id from JSON
                 if let Some(device_id) = json.get("device_id").and_then(|v| v.as_str()) {
                     info!("UART message routed to device: {}", device_id);
+
+                    // Send device discovery event (so it appears in "Discovered Devices")
+                    use crate::events::DeviceEvent;
+                    use chrono::Utc;
+
+                    let discovery_event = DeviceEvent::esp32_device_discovered(
+                        device_id.to_string(),
+                        "0.0.0.0".to_string(),  // UART has no IP
+                        0,  // UART has no TCP port
+                        0,  // UART has no UDP port
+                        Utc::now().to_rfc3339(),
+                        None,  // No MAC address for UART
+                        Some(format!("uart-{}", device_id))  // Virtual hostname
+                    );
+
+                    let _ = device_store.add_event(
+                        "system".to_string(),
+                        discovery_event,
+                        "esp32_system".to_string(),
+                        "uart_listener".to_string()
+                    ).await;
 
                     // Use ESP32Manager's TCP message handler (works for UART too)
                     Esp32Manager::handle_tcp_message_bypass(message, device_id, device_store).await;

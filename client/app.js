@@ -55,6 +55,14 @@ const pages = {
         scripts: ['admin.js'],
         styles: [],
         requiresAuth: false
+    },
+    'settings': {
+        title: 'Settings',
+        template: 'settings.html',
+        defaultPath: 'settings.html',
+        scripts: [],
+        styles: [],
+        requiresAuth: false
     }
 };
 
@@ -159,9 +167,11 @@ async function renderPage() {
         pageName = 'debug';
     } else if (path === 'admin') {
         pageName = 'admin';
+    } else if (path === 'settings') {
+        pageName = 'settings';
     }
-    
-    
+
+
     // Handle device pages - redirect to ESP32 control
     if (url.pathname.startsWith('/devices')) {
         pageName = 'esp32_control';

@@ -569,9 +569,8 @@ impl Esp32Manager {
                         Ok(Ok((bytes_read, from_addr))) => {
                             let message = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
 
-                            // Always print to terminal
+                            // Print to terminal only (no logging)
                             println!("UDP Message from {}: {}", from_addr, message);
-                            info!("UDP Message from {}: {}", from_addr, message);
 
                             // Route message to specific ESP32 connection if registered
                             {
@@ -593,7 +592,6 @@ impl Esp32Manager {
                                     // Check if this looks like a TCP message that should be routed via UDP bypass
                                     if Self::is_tcp_message(&message) {
                                         if let Some(device_id) = Self::extract_device_id_from_tcp_message(&message) {
-                                            info!("TCP message from unregistered IP {} - auto-registering device {}", from_addr.ip(), device_id);
                                             // Auto-register this IP for the device
                                             {
                                                 let mut device_map = ip_to_device_id.write().await;
@@ -610,12 +608,9 @@ impl Esp32Manager {
                                             // Route the TCP message through UDP bypass
                                             debug!("TCP via UDP bypass: Routing message to device {} via direct bypass", device_id);
                                             Self::handle_udp_message_bypass_smart(&message, from_addr, &device_id, &device_store, &udp_connection_states).await;
-                                        } else {
-                                            info!("TCP message from unregistered IP {} but no device ID found", from_addr.ip());
                                         }
-                                    } else {
-                                        info!("No device registered for IP {}", from_addr.ip());
                                     }
+                                    // No logging for unregistered devices or non-TCP messages
                                 }
                             }
                         }
