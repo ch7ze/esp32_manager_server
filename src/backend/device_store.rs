@@ -167,19 +167,11 @@ impl DeviceEventStore {
         user_id: String,
         client_id: String
     ) -> Result<(), String> {
-        info!("DEVICE STORE ADD_EVENT DEBUG: Starting add_event for device {}, user {}, client {}", device_id, user_id, client_id);
-        info!("DEVICE STORE ADD_EVENT DEBUG: Event type: {:?}", event);
-
         // Validate event before storing
-        info!("DEVICE STORE ADD_EVENT DEBUG: Validating event for device {}", device_id);
         event.validate().map_err(|e| {
-            error!("DEVICE STORE ADD_EVENT DEBUG: Event validation failed for device {}: {}", device_id, e);
+            error!("Event validation failed for device {}: {}", device_id, e);
             format!("Invalid event: {}", e)
         })?;
-        info!("DEVICE STORE ADD_EVENT DEBUG: Event validation passed for device {}", device_id);
-
-        // Device events don't need special tracking like shape selection
-        info!("DEVICE STORE ADD_EVENT DEBUG: Creating event metadata for device {}", device_id);
 
         // Create event with metadata
         let event_with_metadata = EventWithMetadata {
@@ -191,29 +183,21 @@ impl DeviceEventStore {
         };
 
         // Store event
-        info!("DEVICE STORE ADD_EVENT DEBUG: Attempting to acquire write lock for device events storage");
         {
             let mut events = self.device_events.write().await;
-            info!("DEVICE STORE ADD_EVENT DEBUG: Acquired write lock, storing event for device {}", device_id);
             let device_events = events.entry(device_id.clone()).or_insert_with(Vec::new);
             device_events.push(event_with_metadata);
-            info!("DEVICE STORE ADD_EVENT DEBUG: Event stored for device {}, total events: {}", device_id, device_events.len());
         }
-        info!("DEVICE STORE ADD_EVENT DEBUG: Released write lock for device {}", device_id);
 
         // Broadcast to all connected clients (except sender)
-        info!("DEVICE STORE ADD_EVENT DEBUG: Starting WebSocket broadcast for device {}: {:?}", device_id, event);
         match self.broadcast_event(&device_id, event, &client_id).await {
-            Ok(()) => {
-                info!("DEVICE STORE ADD_EVENT DEBUG: WebSocket broadcast completed successfully for device {}", device_id);
-            }
+            Ok(()) => {}
             Err(e) => {
-                error!("DEVICE STORE ADD_EVENT DEBUG: WebSocket broadcast failed for device {}: {}", device_id, e);
+                error!("WebSocket broadcast failed for device {}: {}", device_id, e);
                 return Err(e);
             }
         }
 
-        info!("DEVICE STORE ADD_EVENT DEBUG: add_event completed successfully for device {}", device_id);
         Ok(())
     }
     
@@ -516,8 +500,6 @@ impl DeviceEventStore {
         let connections = self.active_connections.read().await;
 
         if let Some(device_connections) = connections.get(device_id) {
-            debug!("Found {} WebSocket connections for device {}", device_connections.len(), device_id);
-
             // Check if this event should be sent to light subscriptions
             let is_connection_status = matches!(event, DeviceEvent::Esp32ConnectionStatus { .. });
 
@@ -525,11 +507,9 @@ impl DeviceEventStore {
                 device_id.to_string(),
                 vec![event]
             );
-            debug!("Prepared WebSocket message for device {}: {:?}", device_id, message);
 
             let mut successful_sends = 0;
             let mut failed_sends = 0;
-            let mut skipped_light = 0;
 
             for connection in device_connections {
                 // Don't send event back to the exact sender client
@@ -540,8 +520,6 @@ impl DeviceEventStore {
 
                 // Filter events based on subscription type
                 if connection.subscription_type == crate::events::SubscriptionType::Light && !is_connection_status {
-                    skipped_light += 1;
-                    debug!("Skipping non-connection event for light subscription client {}", connection.client_id);
                     continue;
                 }
 
@@ -554,14 +532,8 @@ impl DeviceEventStore {
                 }
             }
 
-            info!("WEBSOCKET BROADCAST DEBUG: Broadcasted event to {} clients on device {} ({} failed, {} skipped light)",
-                   successful_sends, device_id, failed_sends, skipped_light);
-            if successful_sends > 0 {
-                info!("WEBSOCKET BROADCAST DEBUG: Event successfully sent to {} frontend clients for device {}", successful_sends, device_id);
-            } else if skipped_light > 0 {
-                debug!("WEBSOCKET BROADCAST DEBUG: Event skipped for {} light subscription clients on device {}", skipped_light, device_id);
-            } else {
-                warn!("WEBSOCKET BROADCAST DEBUG: NO clients received the event for device {} - this is why frontend shows 'Disconnected'!", device_id);
+            if successful_sends == 0 && failed_sends == 0 {
+                warn!("NO clients received the event for device {} - frontend may show 'Disconnected'!", device_id);
             }
             
             // TODO: Clean up failed connections in a background task

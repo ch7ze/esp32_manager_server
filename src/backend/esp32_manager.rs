@@ -580,11 +580,9 @@ impl Esp32Manager {
                                     {
                                         let mut tracker = udp_activity_tracker.write().await;
                                         tracker.insert(device_id.clone(), Instant::now());
-                                        debug!("UDP activity updated for device: {}", device_id);
                                     }
 
                                     // Use direct device store bypass - much more reliable than event processor
-                                    debug!("UDP: Routing message to device {} via direct bypass", device_id);
                                     Self::handle_udp_message_bypass_smart(&message, from_addr, device_id, &device_store, &udp_connection_states).await;
                                 } else {
                                     drop(device_map); // Drop read lock before getting write lock
@@ -776,7 +774,6 @@ impl Esp32Manager {
         let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
         for captures in re.captures_iter(message) {
             if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                debug!("UDP bypass: Extracted variable update - {}={}", name.as_str().trim(), value.as_str().trim());
                 let variable_event = crate::events::DeviceEvent::esp32_variable_update(
                     device_id.to_string(),
                     name.as_str().trim().to_string(),
@@ -790,7 +787,6 @@ impl Esp32Manager {
         let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
         for captures in numeric_re.captures_iter(message) {
             if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                debug!("UDP bypass: Extracted numeric variable - {}={}", name.as_str().trim(), value.as_str().trim());
                 let variable_event = crate::events::DeviceEvent::esp32_variable_update(
                     device_id.to_string(),
                     name.as_str().trim().to_string(),
@@ -808,7 +804,6 @@ impl Esp32Manager {
         device_id: &str,
         device_store: &SharedDeviceStore
     ) {
-        info!("TCP BYPASS: Processing TCP message for device {}: {}", device_id, message);
         DebugLogger::log_tcp_message(device_id, "RECEIVED", message);
 
         // Send connection status event directly to device store (TCP is connected)
@@ -834,7 +829,6 @@ impl Esp32Manager {
                     }
 
                     if !start_options.is_empty() {
-                        info!("TCP BYPASS: Extracted startOptions for {}: {:?}", device_id, start_options);
                         let start_options_event = crate::events::DeviceEvent::esp32_start_options(
                             device_id.to_string(),
                             start_options
@@ -860,7 +854,6 @@ impl Esp32Manager {
                     }
 
                     if !variables.is_empty() {
-                        info!("TCP BYPASS: Extracted changeableVariables for {}: {:?}", device_id, variables);
                         let changeable_vars_event = crate::events::DeviceEvent::esp32_changeable_variables(
                             device_id.to_string(),
                             variables
@@ -875,7 +868,6 @@ impl Esp32Manager {
                 let firmware_version = value.get("firmwareVersion").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
                 let uptime = value.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 
-                info!("TCP BYPASS: Extracted device info for {} - name: {}, firmware: {}, uptime: {}", device_id, device_name, firmware_version, uptime);
                 let device_info_event = crate::events::DeviceEvent::esp32_device_info(
                     device_id.to_string(),
                     Some(device_name.to_string()),
@@ -890,7 +882,6 @@ impl Esp32Manager {
         let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
         for captures in re.captures_iter(message) {
             if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                info!("TCP BYPASS: Extracted variable update for {} - {}={}", device_id, name.as_str().trim(), value.as_str().trim());
                 let variable_event = crate::events::DeviceEvent::esp32_variable_update(
                     device_id.to_string(),
                     name.as_str().trim().to_string(),
@@ -904,7 +895,6 @@ impl Esp32Manager {
         let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
         for captures in numeric_re.captures_iter(message) {
             if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                info!("TCP BYPASS: Extracted numeric variable for {} - {}={}", device_id, name.as_str().trim(), value.as_str().trim());
                 let variable_event = crate::events::DeviceEvent::esp32_variable_update(
                     device_id.to_string(),
                     name.as_str().trim().to_string(),
@@ -913,8 +903,6 @@ impl Esp32Manager {
                 let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
             }
         }
-
-        info!("TCP BYPASS: Finished processing message for device {}", device_id);
     }
 
     /// Check if a message looks like a TCP message with JSON structure

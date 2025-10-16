@@ -180,7 +180,6 @@ impl UartConnection {
                         Ok(Ok(bytes_read)) => {
                             // Got data from UART
                             let data = String::from_utf8_lossy(&read_buffer[..bytes_read]);
-                            info!("UART RAW DATA RECEIVED ({} bytes): {:?}", bytes_read, data);
                             buffer.push_str(&data);
 
                             // Process complete lines (messages end with \n or \r\n)
@@ -189,8 +188,6 @@ impl UartConnection {
                                 buffer.drain(..=line_end);
 
                                 if !line.is_empty() {
-                                    info!("UART COMPLETE LINE RECEIVED: {}", line);
-
                                     // Process the message
                                     let device_store_clone = device_store.clone();
                                     let uart_discovery_states_clone = Arc::clone(&uart_discovery_states);
@@ -198,14 +195,7 @@ impl UartConnection {
                                     tokio::spawn(async move {
                                         Self::handle_uart_message(&line_clone, &device_store_clone, &uart_discovery_states_clone).await;
                                     });
-                                } else {
-                                    debug!("UART: Empty line after trim");
                                 }
-                            }
-
-                            // Show buffer status if data is incomplete
-                            if !buffer.is_empty() {
-                                debug!("UART BUFFER (incomplete): {:?}", buffer);
                             }
                         }
                         Ok(Err(e)) => {
@@ -241,7 +231,6 @@ impl UartConnection {
             Ok(json) => {
                 // Extract device_id from JSON
                 if let Some(device_id) = json.get("device_id").and_then(|v| v.as_str()) {
-                    info!("UART message routed to device: {}", device_id);
 
                     // Check if device was previously discovered (analog to UDP connection state tracking)
                     let should_send_discovery_event = {
@@ -255,7 +244,6 @@ impl UartConnection {
                             true
                         } else {
                             // Device already discovered - no event needed
-                            debug!("UART: Device {} already discovered - skipping redundant event", device_id);
                             false
                         }
                     };
