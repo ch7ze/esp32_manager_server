@@ -1484,15 +1484,15 @@ async fn discovered_esp32_devices_handler(
     let _token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
 
     // Authentication is optional for ESP32 device discovery
-    // Get discovered devices from ESP32Discovery service
+    // Get discovered devices from ESP32Discovery service (TCP/mDNS devices)
     let discovered_devices = {
         let discovery = app_state.esp32_discovery.lock().await;
         discovery.get_discovered_devices().await
     };
 
-    tracing::info!("ESP32 Discovery API called - found {} devices", discovered_devices.len());
+    tracing::info!("ESP32 Discovery API called - found {} TCP devices", discovered_devices.len());
 
-    let devices_json: Vec<Value> = discovered_devices
+    let mut devices_json: Vec<Value> = discovered_devices
         .into_iter()
         .map(|(device_id, discovered_device)| {
             tracing::info!("Processing discovered device: {} with mDNS data: {:?}",
@@ -1503,7 +1503,8 @@ async fn discovered_esp32_devices_handler(
                 "deviceIp": discovered_device.device_config.ip_address.to_string(),
                 "tcpPort": discovered_device.device_config.tcp_port,
                 "udpPort": discovered_device.device_config.udp_port,
-                "status": "discovered"
+                "status": "discovered",
+                "connectionType": "tcp"
             });
 
             // Add MAC address and mDNS hostname from mDNS data if available
@@ -1527,6 +1528,39 @@ async fn discovered_esp32_devices_handler(
             device_json
         })
         .collect();
+
+    // Also get UART devices from device store events
+    let uart_devices = app_state.device_store.get_device_events("system").await;
+    let mut uart_device_ids = std::collections::HashSet::new();
+
+    for event in uart_devices {
+        if let crate::events::DeviceEvent::Esp32DeviceDiscovered {
+            device_id,
+            device_ip,
+            mdns_hostname,
+            ..
+        } = event {
+            // Only add UART devices (IP 0.0.0.0)
+            if device_ip == "0.0.0.0" && !uart_device_ids.contains(&device_id) {
+                uart_device_ids.insert(device_id.clone());
+
+                devices_json.push(json!({
+                    "deviceId": device_id,
+                    "deviceIp": device_ip,
+                    "tcpPort": 0,
+                    "udpPort": 0,
+                    "status": "discovered",
+                    "connectionType": "uart",
+                    "mdnsHostname": mdns_hostname
+                }));
+
+                tracing::info!("Added UART device to discovered list: {}", device_id);
+            }
+        }
+    }
+
+    tracing::info!("Total discovered devices: {} (TCP: {}, UART: {})",
+                   devices_json.len(), devices_json.len() - uart_device_ids.len(), uart_device_ids.len());
 
     Ok(Json(json!({
         "success": true,
