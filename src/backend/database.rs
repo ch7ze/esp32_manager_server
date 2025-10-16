@@ -187,6 +187,31 @@ impl DatabaseManager {
         .execute(&self.pool)
         .await?;
 
+        // UART Settings Tabelle erstellen
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS uart_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                port TEXT,
+                baud_rate INTEGER NOT NULL DEFAULT 115200,
+                auto_connect BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TEXT NOT NULL
+            )
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Insert default UART settings if not exists
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO uart_settings (id, port, baud_rate, auto_connect, updated_at)
+            VALUES (1, NULL, 115200, FALSE, datetime('now'))
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -756,5 +781,51 @@ impl DatabaseManager {
             }
             None => Ok(false),
         }
+    }
+
+    // ========================================================================
+    // UART SETTINGS METHODS
+    // ========================================================================
+
+    /// Get UART settings from database
+    pub async fn get_uart_settings(&self) -> Result<Option<(Option<String>, u32, bool)>, Box<dyn std::error::Error>> {
+        let row = sqlx::query(
+            "SELECT port, baud_rate, auto_connect FROM uart_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let port: Option<String> = row.try_get("port")?;
+                let baud_rate: i64 = row.try_get("baud_rate")?;
+                let auto_connect: bool = row.try_get("auto_connect")?;
+                Ok(Some((port, baud_rate as u32, auto_connect)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Update UART settings in database
+    pub async fn update_uart_settings(
+        &self,
+        port: Option<&str>,
+        baud_rate: u32,
+        auto_connect: bool
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        sqlx::query(
+            r#"
+            UPDATE uart_settings
+            SET port = ?, baud_rate = ?, auto_connect = ?, updated_at = datetime('now')
+            WHERE id = 1
+            "#
+        )
+        .bind(port)
+        .bind(baud_rate as i64)
+        .bind(auto_connect)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 }

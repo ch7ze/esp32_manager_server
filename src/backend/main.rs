@@ -15,6 +15,7 @@ use axum::{
 use axum_extra::extract::CookieJar; // For reading browser cookies
 
 // Serde for JSON serialization/deserialization
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};      // JSON handling
 
 // Standard Rust libraries
@@ -45,6 +46,7 @@ mod mdns_discovery; // mdns_discovery.rs - mDNS-based ESP32 discovery
 mod mdns_server;    // mdns_server.rs - mDNS server for advertising esp-server.local
 mod esp32_discovery; // esp32_discovery.rs - ESP32 device discovery service
 mod debug_logger;   // debug_logger.rs - Debug event logging
+mod uart_connection; // uart_connection.rs - UART/Serial connection handling
 
 // Import all authentication functions from auth.rs
 // These are used for Login/Register/Logout on the website
@@ -92,6 +94,7 @@ pub struct AppState {
     pub esp32_manager: Arc<esp32_manager::Esp32Manager>,
     pub esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>,
     pub mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>,
+    pub uart_connection: Arc<tokio::sync::Mutex<uart_connection::UartConnection>>,
 }
 
 // ============================================================================
@@ -212,9 +215,32 @@ async fn main() {
     });
     tracing::info!("Started WebSocket cleanup task");
 
+    // Initialize UART Connection
+    tracing::info!("Initializing UART connection...");
+    let uart_connection = Arc::new(tokio::sync::Mutex::new(
+        uart_connection::UartConnection::new(device_store.clone())
+    ));
+
+    // Try to auto-connect UART if settings exist
+    if let Ok(Some((port, baud_rate, auto_connect))) = db.get_uart_settings().await {
+        if auto_connect && port.is_some() {
+            let port_name = port.unwrap();
+            tracing::info!("Auto-connecting to UART port {} at {} baud", port_name, baud_rate);
+            let mut uart = uart_connection.lock().await;
+            match uart.connect(port_name.clone(), baud_rate).await {
+                Ok(()) => {
+                    tracing::info!("UART auto-connect successful: {}", port_name);
+                }
+                Err(e) => {
+                    tracing::warn!("UART auto-connect failed for port {}: {}", port_name, e);
+                }
+            }
+        }
+    }
+
     // Create web app with all routes
     tracing::info!("Creating application routes...");
-    let app = create_app(db, device_store, esp32_manager, esp32_discovery, mdns_server).await;
+    let app = create_app(db, device_store, esp32_manager, esp32_discovery, mdns_server, uart_connection).await;
 
     // Start TCP listener on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
@@ -241,7 +267,7 @@ async fn main() {
 // Website feature: Defines all URLs and their handler functions
 // ============================================================================
 
-pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStore, esp32_manager: Arc<esp32_manager::Esp32Manager>, esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>, mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>) -> Router {
+pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStore, esp32_manager: Arc<esp32_manager::Esp32Manager>, esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>, mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>, uart_connection: Arc<tokio::sync::Mutex<uart_connection::UartConnection>>) -> Router {
     let mut app = Router::new();
 
     // AppState for all handlers
@@ -251,6 +277,7 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         esp32_manager: esp32_manager.clone(),
         esp32_discovery: esp32_discovery.clone(),
         mdns_server: mdns_server.clone(),
+        uart_connection: uart_connection.clone(),
     };
 
     // WebSocket State for WebSocket handlers
@@ -321,11 +348,33 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         // GET /api/users/list - Get first users for scroll field
         .route("/api/users/list", get(list_users_handler))
         
-        // GET /api/docs - Get documentation content for SPA  
+        // GET /api/docs - Get documentation content for SPA
         .route("/api/docs", get(api_docs_handler))
         // GET /api/docs/:path - Get specific documentation files
         .route("/api/docs/*path", get(api_docs_file_handler))
-        
+
+        // ========================================
+        // UART SETTINGS API ROUTES
+        // ========================================
+
+        // GET /api/uart/settings - Get current UART settings
+        .route("/api/uart/settings", get(get_uart_settings_handler))
+
+        // POST /api/uart/settings - Update UART settings
+        .route("/api/uart/settings", post(update_uart_settings_handler))
+
+        // GET /api/uart/ports - List available serial ports
+        .route("/api/uart/ports", get(list_uart_ports_handler))
+
+        // POST /api/uart/connect - Connect to UART port
+        .route("/api/uart/connect", post(uart_connect_handler))
+
+        // POST /api/uart/disconnect - Disconnect from UART port
+        .route("/api/uart/disconnect", post(uart_disconnect_handler))
+
+        // GET /api/uart/status - Get UART connection status
+        .route("/api/uart/status", get(uart_status_handler))
+
         // with_state() gives all API routes access to both stores
         .with_state(app_state);
 
@@ -370,7 +419,8 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         .route("/drawing_board.html", get(serve_spa_route))
         .route("/drawer_page.html", get(serve_spa_route))
         .route("/esp32_control.html", get(serve_spa_route))
-        .route("/docs.html", get(serve_spa_route));
+        .route("/docs.html", get(serve_spa_route))
+        .route("/settings.html", get(serve_spa_route));
 
 
     // Serve static files directly from 'client' directory with development-friendly caching
@@ -399,7 +449,8 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         .route("/drawer_page", get(serve_spa_route))
         .route("/debug", get(serve_spa_route))
         .route("/index", get(serve_spa_route))
-        .route("/docs", get(serve_spa_route));
+        .route("/docs", get(serve_spa_route))
+        .route("/settings", get(serve_spa_route));
 
     // Device routes - more specific to avoid catching static files
     app = app
@@ -1480,5 +1531,157 @@ async fn discovered_esp32_devices_handler(
     Ok(Json(json!({
         "success": true,
         "devices": devices_json
+    })))
+}
+
+// ============================================================================
+// UART SETTINGS HANDLERS - API handlers for UART configuration
+// ============================================================================
+
+// GET /api/uart/settings - Get current UART settings
+async fn get_uart_settings_handler(
+    State(app_state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    match app_state.db.get_uart_settings().await {
+        Ok(Some((port, baud_rate, auto_connect))) => {
+            Ok(Json(json!({
+                "success": true,
+                "port": port,
+                "baudRate": baud_rate,
+                "autoConnect": auto_connect
+            })))
+        }
+        Ok(None) => {
+            Ok(Json(json!({
+                "success": true,
+                "port": null,
+                "baudRate": 115200,
+                "autoConnect": false
+            })))
+        }
+        Err(e) => {
+            tracing::error!("Failed to get UART settings: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+// POST /api/uart/settings - Update UART settings
+#[derive(Debug, Deserialize)]
+struct UpdateUartSettingsRequest {
+    port: Option<String>,
+    #[serde(rename = "baudRate")]
+    baud_rate: u32,
+    #[serde(rename = "autoConnect")]
+    auto_connect: bool,
+}
+
+async fn update_uart_settings_handler(
+    State(app_state): State<AppState>,
+    Json(req): Json<UpdateUartSettingsRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    tracing::info!("Updating UART settings: port={:?}, baud_rate={}, auto_connect={}",
+        req.port, req.baud_rate, req.auto_connect);
+
+    match app_state.db.update_uart_settings(
+        req.port.as_deref(),
+        req.baud_rate,
+        req.auto_connect
+    ).await {
+        Ok(()) => {
+            Ok(Json(json!({
+                "success": true,
+                "message": "UART settings updated successfully"
+            })))
+        }
+        Err(e) => {
+            tracing::error!("Failed to update UART settings: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+// GET /api/uart/ports - List available serial ports
+async fn list_uart_ports_handler() -> Result<Json<Value>, StatusCode> {
+    match uart_connection::UartConnection::list_ports() {
+        Ok(ports) => {
+            Ok(Json(json!({
+                "success": true,
+                "ports": ports
+            })))
+        }
+        Err(e) => {
+            tracing::error!("Failed to list UART ports: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+// POST /api/uart/connect - Connect to UART port
+#[derive(Debug, Deserialize)]
+struct UartConnectRequest {
+    port: String,
+    #[serde(rename = "baudRate")]
+    baud_rate: u32,
+}
+
+async fn uart_connect_handler(
+    State(app_state): State<AppState>,
+    Json(req): Json<UartConnectRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    tracing::info!("UART connect request: port={}, baud_rate={}", req.port, req.baud_rate);
+
+    let mut uart = app_state.uart_connection.lock().await;
+    match uart.connect(req.port.clone(), req.baud_rate).await {
+        Ok(()) => {
+            Ok(Json(json!({
+                "success": true,
+                "message": format!("Connected to UART port {}", req.port)
+            })))
+        }
+        Err(e) => {
+            tracing::error!("Failed to connect to UART port: {}", e);
+            Ok(Json(json!({
+                "success": false,
+                "message": format!("Failed to connect: {}", e)
+            })))
+        }
+    }
+}
+
+// POST /api/uart/disconnect - Disconnect from UART port
+async fn uart_disconnect_handler(
+    State(app_state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    tracing::info!("UART disconnect request");
+
+    let mut uart = app_state.uart_connection.lock().await;
+    match uart.disconnect().await {
+        Ok(()) => {
+            Ok(Json(json!({
+                "success": true,
+                "message": "Disconnected from UART port"
+            })))
+        }
+        Err(e) => {
+            tracing::error!("Failed to disconnect from UART port: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+// GET /api/uart/status - Get UART connection status
+async fn uart_status_handler(
+    State(app_state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    let uart = app_state.uart_connection.lock().await;
+    let is_connected = uart.is_connected().await;
+    let settings = uart.get_settings().await;
+
+    Ok(Json(json!({
+        "success": true,
+        "connected": is_connected,
+        "port": settings.as_ref().map(|s| &s.port),
+        "baudRate": settings.map(|s| s.baud_rate).unwrap_or(115200)
     })))
 }
