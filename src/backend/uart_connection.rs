@@ -4,6 +4,7 @@
 use crate::device_store::SharedDeviceStore;
 use crate::esp32_manager::Esp32Manager;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
@@ -43,6 +44,8 @@ pub struct UartConnection {
     shutdown_sender: Option<mpsc::UnboundedSender<()>>,
     /// Connection status
     is_connected: Arc<RwLock<bool>>,
+    /// Discovery state tracking to prevent redundant events (device_id -> has_been_discovered)
+    uart_discovery_states: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 impl UartConnection {
@@ -54,6 +57,7 @@ impl UartConnection {
             device_store,
             shutdown_sender: None,
             is_connected: Arc::new(RwLock::new(false)),
+            uart_discovery_states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -139,6 +143,7 @@ impl UartConnection {
         let serial_stream = Arc::clone(&self.serial_stream);
         let device_store = self.device_store.clone();
         let is_connected = Arc::clone(&self.is_connected);
+        let uart_discovery_states = Arc::clone(&self.uart_discovery_states);
 
         tokio::spawn(async move {
             info!("UART listener task started");
@@ -188,9 +193,10 @@ impl UartConnection {
 
                                     // Process the message
                                     let device_store_clone = device_store.clone();
+                                    let uart_discovery_states_clone = Arc::clone(&uart_discovery_states);
                                     let line_clone = line.clone();
                                     tokio::spawn(async move {
-                                        Self::handle_uart_message(&line_clone, &device_store_clone).await;
+                                        Self::handle_uart_message(&line_clone, &device_store_clone, &uart_discovery_states_clone).await;
                                     });
                                 } else {
                                     debug!("UART: Empty line after trim");
@@ -224,8 +230,12 @@ impl UartConnection {
         });
     }
 
-    /// Handle incoming UART message
-    async fn handle_uart_message(message: &str, device_store: &SharedDeviceStore) {
+    /// Handle incoming UART message with smart discovery state tracking (analog to UDP)
+    async fn handle_uart_message(
+        message: &str,
+        device_store: &SharedDeviceStore,
+        uart_discovery_states: &Arc<RwLock<HashMap<String, bool>>>
+    ) {
         // Parse JSON message to extract device_id
         match serde_json::from_str::<serde_json::Value>(message) {
             Ok(json) => {
@@ -233,26 +243,47 @@ impl UartConnection {
                 if let Some(device_id) = json.get("device_id").and_then(|v| v.as_str()) {
                     info!("UART message routed to device: {}", device_id);
 
-                    // Send device discovery event (so it appears in "Discovered Devices")
-                    use crate::events::DeviceEvent;
-                    use chrono::Utc;
+                    // Check if device was previously discovered (analog to UDP connection state tracking)
+                    let should_send_discovery_event = {
+                        let mut states = uart_discovery_states.write().await;
+                        let was_discovered = states.get(device_id).copied().unwrap_or(false);
 
-                    let discovery_event = DeviceEvent::esp32_device_discovered(
-                        device_id.to_string(),
-                        "0.0.0.0".to_string(),  // UART has no IP
-                        0,  // UART has no TCP port
-                        0,  // UART has no UDP port
-                        Utc::now().to_rfc3339(),
-                        None,  // No MAC address for UART
-                        Some(format!("uart-{}", device_id))  // Virtual hostname
-                    );
+                        if !was_discovered {
+                            // Device not yet discovered - mark as discovered
+                            states.insert(device_id.to_string(), true);
+                            info!("UART DISCOVERY: Device {} discovered for the first time", device_id);
+                            true
+                        } else {
+                            // Device already discovered - no event needed
+                            debug!("UART: Device {} already discovered - skipping redundant event", device_id);
+                            false
+                        }
+                    };
 
-                    let _ = device_store.add_event(
-                        "system".to_string(),
-                        discovery_event,
-                        "esp32_system".to_string(),
-                        "uart_listener".to_string()
-                    ).await;
+                    // Only send discovery event if device is new (first time seen via UART)
+                    if should_send_discovery_event {
+                        use crate::events::DeviceEvent;
+                        use chrono::Utc;
+
+                        let discovery_event = DeviceEvent::esp32_device_discovered(
+                            device_id.to_string(),
+                            "0.0.0.0".to_string(),  // UART has no IP
+                            0,  // UART has no TCP port
+                            0,  // UART has no UDP port
+                            Utc::now().to_rfc3339(),
+                            None,  // No MAC address for UART
+                            Some(format!("uart-{}", device_id))  // Virtual hostname
+                        );
+
+                        let _ = device_store.add_event(
+                            "system".to_string(),
+                            discovery_event,
+                            "esp32_system".to_string(),
+                            "uart_listener".to_string()
+                        ).await;
+
+                        info!("UART DISCOVERY: Discovery event sent for device {}", device_id);
+                    }
 
                     // Use ESP32Manager's TCP message handler (works for UART too)
                     Esp32Manager::handle_tcp_message_bypass(message, device_id, device_store).await;
