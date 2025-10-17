@@ -105,7 +105,6 @@ pub struct ClientConnection {
     pub user_id: String,
     pub display_name: String,
     pub client_id: String,
-    pub device_id: String,
     pub user_color: String,
     pub sender: mpsc::UnboundedSender<ServerMessage>,
     pub subscription_type: crate::events::SubscriptionType,
@@ -116,7 +115,7 @@ impl ClientConnection {
         user_id: String,
         display_name: String,
         client_id: String,
-        device_id: String,
+        _device_id: String,
         user_color: String,
         sender: mpsc::UnboundedSender<ServerMessage>,
         subscription_type: crate::events::SubscriptionType,
@@ -125,7 +124,6 @@ impl ClientConnection {
             user_id,
             display_name,
             client_id,
-            device_id,
             user_color,
             sender,
             subscription_type,
@@ -556,16 +554,6 @@ impl DeviceEventStore {
         Ok(())
     }
     
-    /// Get the base user identifier from a client_id (for multi-tab support)
-    fn get_user_hash_from_client_id(client_id: &str) -> Option<String> {
-        // Extract user hash from client_id format: "client-{hash}-{uuid}"
-        if let Some(parts) = client_id.strip_prefix("client-") {
-            if let Some(hash_end) = parts.rfind('-') {
-                return Some(format!("client-{}", &parts[..hash_end]));
-            }
-        }
-        None
-    }
     
     // ========================================================================
     // CLEANUP & MAINTENANCE

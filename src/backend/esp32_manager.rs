@@ -850,19 +850,23 @@ impl Esp32Manager {
 
             true // JSON parsing succeeded
         } else {
-            false // JSON parsing failed, use regex fallback
+            false // JSON parsing failed
         };
 
-        // Regex fallback for legacy/non-JSON messages
-        // Skip if JSON was successfully parsed to avoid duplicate events
-        if !json_parsed {
-            // Parse for string variable updates: {"name": "value"}
-            let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
-            for captures in re.captures_iter(message) {
-                if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+        // Parse simple key-value variable updates using regex
+        // This handles messages like {"ledBlinkDelay":"1000"} or {"var":123}
+        // These are valid JSON but not structured like startOptions/changeableVariables
+        // Parse for string variable updates: {"name": "value"}
+        let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
+        for captures in re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                let name_str = name.as_str().trim();
+                // Skip known structured fields to avoid duplicates
+                if name_str != "deviceName" && name_str != "firmwareVersion"
+                    && name_str != "name" && name_str != "value" {
                     let variable_event = crate::events::DeviceEvent::esp32_variable_update(
                         device_id.to_string(),
-                        name.as_str().trim().to_string(),
+                        name_str.to_string(),
                         value.as_str().trim().to_string(),
                     );
                     let _ = device_store.add_event(
@@ -873,14 +877,18 @@ impl Esp32Manager {
                     ).await;
                 }
             }
+        }
 
-            // Parse for numeric variable updates: {"name": 123}
-            let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
-            for captures in numeric_re.captures_iter(message) {
-                if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+        // Parse for numeric variable updates: {"name": 123}
+        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
+        for captures in numeric_re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                let name_str = name.as_str().trim();
+                // Skip known structured fields to avoid duplicates
+                if name_str != "uptime" && name_str != "value" {
                     let variable_event = crate::events::DeviceEvent::esp32_variable_update(
                         device_id.to_string(),
-                        name.as_str().trim().to_string(),
+                        name_str.to_string(),
                         value.as_str().trim().to_string(),
                     );
                     let _ = device_store.add_event(

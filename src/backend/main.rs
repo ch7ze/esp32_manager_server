@@ -15,7 +15,7 @@ use axum::{
 use axum_extra::extract::CookieJar; // For reading browser cookies
 
 // Serde for JSON serialization/deserialization
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};      // JSON handling
 
 // Standard Rust libraries

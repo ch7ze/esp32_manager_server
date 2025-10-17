@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::sleep;
-use tokio_serial::{SerialPort, SerialPortBuilderExt, SerialStream};
+use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{info, warn, error, debug};
 
 // ============================================================================
