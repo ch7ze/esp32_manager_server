@@ -146,33 +146,47 @@ impl Esp32Discovery {
                         // Extract mDNS hostname without .local suffix
                         let mdns_hostname = Some(mdns_device.hostname.replace(".local", "").trim_end_matches('.').to_string());
 
+                        // Create UDP device config with MAC address as device_id
+                        let (final_device_id, udp_device_config) = if let Some(ref mac) = mac_address {
+                            let config = crate::esp32_types::Esp32DeviceConfig::new_udp(
+                                mac.clone(), // MAC address IS the device_id
+                                device_config_spawn.ip_address,
+                                device_config_spawn.udp_port,
+                            );
+                            (mac.clone(), config)
+                        } else {
+                            // No MAC address - use original device_id
+                            (device_id_spawn.clone(), device_config_spawn.clone())
+                        };
+
                         // Broadcast discovery event to all WebSocket clients
                         let discovery_event = DeviceEvent::esp32_device_discovered(
-                            device_id_spawn.clone(),
+                            final_device_id.clone(),
                             device_config_spawn.ip_address.to_string(),
                             device_config_spawn.tcp_port,
                             device_config_spawn.udp_port,
                             discovered_at.to_rfc3339(),
-                            mac_address,
+                            mac_address.clone(),
                             mdns_hostname,
                         );
-                        
+
                         match device_store_spawn.broadcast_event("system", discovery_event, "system").await {
-                            Ok(_) => tracing::info!("ESP32 discovery WebSocket event sent for: {}", device_id_spawn),
+                            Ok(_) => tracing::info!("ESP32 discovery WebSocket event sent for: {}", final_device_id),
                             Err(e) => tracing::warn!("Failed to broadcast ESP32 discovery event: {}", e),
                         }
 
-                        tracing::info!("ESP32 device discovered via mDNS: {} at {}", device_id_spawn, ip);
+                        tracing::info!("ESP32 device discovered via mDNS: {} (original: {}, MAC: {:?}) at {}",
+                            final_device_id, device_id_spawn, mac_address, ip);
 
                         // Automatically add device to manager if available (but don't connect yet)
                         if let Some(manager) = &esp32_manager_spawn {
-                            tracing::info!("Adding discovered ESP32 to manager: {}", device_id_spawn);
+                            tracing::info!("Adding discovered ESP32 to manager: {} (MAC as device_id)", final_device_id);
 
-                            // Add device to manager for later connection
-                            if let Err(e) = manager.add_device(device_config_spawn.clone()).await {
+                            // Add UDP device with MAC as device_id
+                            if let Err(e) = manager.add_device(udp_device_config).await {
                                 tracing::warn!("Failed to add discovered device to manager: {}", e);
                             } else {
-                                tracing::info!("Successfully added ESP32 {} to manager (not connected yet)", device_id_spawn);
+                                tracing::info!("Successfully added ESP32 {} to manager (not connected yet)", final_device_id);
                             }
                         }
                     });

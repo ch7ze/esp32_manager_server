@@ -173,6 +173,17 @@ impl Esp32Event {
 // ESP32 DEVICE CONFIGURATION
 // ============================================================================
 
+/// Device source type - indicates how the device is connected
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DeviceSource {
+    /// Device connected via UDP (identified by MAC address)
+    Udp { mac_address: String },
+    /// Device connected via UART (identified by device_id in messages)
+    Uart,
+    /// Device connected via TCP (identified by IP address)
+    Tcp,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Esp32DeviceConfig {
     pub device_id: String,
@@ -183,6 +194,8 @@ pub struct Esp32DeviceConfig {
     pub auto_connect: bool,
     pub auto_start_option: Option<String>,
     pub udp_timeout_seconds: u64,
+    /// Device source (UDP with MAC, UART, or TCP)
+    pub device_source: DeviceSource,
 }
 
 impl Esp32DeviceConfig {
@@ -196,6 +209,37 @@ impl Esp32DeviceConfig {
             auto_connect: false,
             auto_start_option: None,
             udp_timeout_seconds: 10, // Default: 10 seconds UDP timeout
+            device_source: DeviceSource::Tcp, // Default to TCP for backward compatibility
+        }
+    }
+
+    /// Create UART device config (IP is dummy 0.0.0.0)
+    pub fn new_uart(device_id: String) -> Self {
+        Self {
+            device_name: device_id.clone(),
+            device_id,
+            ip_address: "0.0.0.0".parse().unwrap(),
+            tcp_port: 0,
+            udp_port: 0,
+            auto_connect: false,
+            auto_start_option: None,
+            udp_timeout_seconds: 30, // Default: 30 seconds timeout for UART
+            device_source: DeviceSource::Uart,
+        }
+    }
+
+    /// Create UDP device config (MAC address is the device_id)
+    pub fn new_udp(mac_address: String, ip_address: IpAddr, udp_port: u16) -> Self {
+        Self {
+            device_name: mac_address.clone(),
+            device_id: mac_address.clone(), // MAC address IS the device_id
+            ip_address,
+            tcp_port: 0, // UDP devices don't use TCP
+            udp_port,
+            auto_connect: false,
+            auto_start_option: None,
+            udp_timeout_seconds: 30, // Default: 30 seconds UDP timeout
+            device_source: DeviceSource::Udp { mac_address }, // MAC also stored in DeviceSource
         }
     }
     

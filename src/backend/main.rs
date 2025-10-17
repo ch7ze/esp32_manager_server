@@ -215,10 +215,14 @@ async fn main() {
     });
     tracing::info!("Started WebSocket cleanup task");
 
-    // Initialize UART Connection
+    // Initialize UART Connection with shared state trackers from ESP32Manager
     tracing::info!("Initializing UART connection...");
     let uart_connection = Arc::new(tokio::sync::Mutex::new(
-        uart_connection::UartConnection::new(device_store.clone())
+        uart_connection::UartConnection::new(
+            device_store.clone(),
+            esp32_manager.get_unified_connection_states(),
+            esp32_manager.get_unified_activity_tracker(),
+        )
     ));
 
     // Try to auto-connect UART if settings exist

@@ -36,10 +36,10 @@ pub struct Esp32Manager {
     ip_to_device_id: Arc<RwLock<HashMap<IpAddr, String>>>,
     /// Global mutex to prevent race conditions during device connections
     connection_mutex: Arc<Mutex<()>>,
-    /// UDP activity tracking for device connectivity monitoring
-    udp_activity_tracker: Arc<RwLock<HashMap<String, Instant>>>,
-    /// Connection state tracking to prevent redundant events (device_id -> is_connected)
-    udp_connection_states: Arc<RwLock<HashMap<String, bool>>>,
+    /// Unified activity tracking for UDP and UART devices (not TCP)
+    unified_activity_tracker: Arc<RwLock<HashMap<String, Instant>>>,
+    /// Unified connection state tracking to prevent redundant events (device_id -> is_connected)
+    unified_connection_states: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 /// Metadata about the message source
@@ -60,8 +60,8 @@ impl Esp32Manager {
             central_udp_socket: Arc::new(Mutex::new(None)),
             ip_to_device_id: Arc::new(RwLock::new(HashMap::new())),
             connection_mutex: Arc::new(Mutex::new(())),
-            udp_activity_tracker: Arc::new(RwLock::new(HashMap::new())),
-            udp_connection_states: Arc::new(RwLock::new(HashMap::new())),
+            unified_activity_tracker: Arc::new(RwLock::new(HashMap::new())),
+            unified_connection_states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -76,8 +76,8 @@ impl Esp32Manager {
 
 
 
-        // Start UDP timeout monitoring task
-        self.start_udp_timeout_monitor().await;
+        // Start unified timeout monitoring task (for UDP and UART, not TCP)
+        self.start_unified_timeout_monitor().await;
 
         info!("ESP32 Manager started");
     }
@@ -253,18 +253,18 @@ impl Esp32Manager {
                 crate::debug_logger::DebugLogger::log_event("ESP32_MANAGER", &format!("REGISTERING_UDP_ROUTING: {} -> {}", device_id, config.ip_address));
                 self.register_esp32_for_udp(device_id.to_string(), config.ip_address).await;
 
-                // Initialize UDP activity tracking for connected device
+                // Initialize unified activity tracking for connected device
                 {
-                    let mut tracker = self.udp_activity_tracker.write().await;
+                    let mut tracker = self.unified_activity_tracker.write().await;
                     tracker.insert(device_id.to_string(), Instant::now());
-                    info!("UDP activity tracking initialized for device: {}", device_id);
+                    info!("Unified activity tracking initialized for device: {}", device_id);
                 }
 
-                // Mark device as connected in UDP connection states
+                // Mark device as connected in unified connection states
                 {
-                    let mut states = self.udp_connection_states.write().await;
+                    let mut states = self.unified_connection_states.write().await;
                     states.insert(device_id.to_string(), true);
-                    info!("UDP connection state set to connected for device: {}", device_id);
+                    info!("Unified connection state set to connected for device: {}", device_id);
                 }
             }
 
@@ -562,8 +562,8 @@ impl Esp32Manager {
         let socket = Arc::clone(&self.central_udp_socket);
         let ip_to_device_id = Arc::clone(&self.ip_to_device_id);
         let device_store = Arc::clone(&self.device_store);
-        let udp_activity_tracker = Arc::clone(&self.udp_activity_tracker);
-        let udp_connection_states = Arc::clone(&self.udp_connection_states);
+        let unified_activity_tracker = Arc::clone(&self.unified_activity_tracker);
+        let unified_connection_states = Arc::clone(&self.unified_connection_states);
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -583,14 +583,18 @@ impl Esp32Manager {
                             {
                                 let device_map = ip_to_device_id.read().await;
                                 if let Some(device_id) = device_map.get(&from_addr.ip()) {
-                                    // Update UDP activity tracking
-                                    {
-                                        let mut tracker = udp_activity_tracker.write().await;
-                                        tracker.insert(device_id.clone(), Instant::now());
-                                    }
-
-                                    // Use direct device store bypass - much more reliable than event processor
-                                    Self::handle_udp_message_bypass_smart(&message, from_addr, device_id, &device_store, &udp_connection_states).await;
+                                    // Use unified message handler with activity tracking
+                                    Self::handle_message_unified(
+                                        &message,
+                                        device_id,
+                                        MessageSource::Udp {
+                                            ip: from_addr.ip().to_string(),
+                                            port: from_addr.port(),
+                                        },
+                                        &device_store,
+                                        &unified_connection_states,
+                                        Some(&unified_activity_tracker),
+                                    ).await;
                                 } else {
                                     drop(device_map); // Drop read lock before getting write lock
 
@@ -603,16 +607,19 @@ impl Esp32Manager {
                                                 device_map.insert(from_addr.ip(), device_id.clone());
                                             }
 
-                                            // Update UDP activity tracking
-                                            {
-                                                let mut tracker = udp_activity_tracker.write().await;
-                                                tracker.insert(device_id.clone(), Instant::now());
-                                                debug!("UDP activity updated for auto-registered device: {}", device_id);
-                                            }
-
-                                            // Route the TCP message through UDP bypass
-                                            debug!("TCP via UDP bypass: Routing message to device {} via direct bypass", device_id);
-                                            Self::handle_udp_message_bypass_smart(&message, from_addr, &device_id, &device_store, &udp_connection_states).await;
+                                            // Route the TCP message through unified handler
+                                            debug!("TCP via UDP bypass: Routing message to device {} via unified handler", device_id);
+                                            Self::handle_message_unified(
+                                                &message,
+                                                &device_id,
+                                                MessageSource::Udp {
+                                                    ip: from_addr.ip().to_string(),
+                                                    port: from_addr.port(),
+                                                },
+                                                &device_store,
+                                                &unified_connection_states,
+                                                Some(&unified_activity_tracker),
+                                            ).await;
                                         }
                                     }
                                     // No logging for unregistered devices or non-TCP messages
@@ -653,7 +660,8 @@ impl Esp32Manager {
         device_id: &str,
         source: MessageSource,
         device_store: &SharedDeviceStore,
-        connection_states: &Arc<RwLock<HashMap<String, bool>>>
+        connection_states: &Arc<RwLock<HashMap<String, bool>>>,
+        activity_tracker: Option<&Arc<RwLock<HashMap<String, Instant>>>>,
     ) {
         let source_name = match &source {
             MessageSource::Uart => "UART",
@@ -662,6 +670,16 @@ impl Esp32Manager {
         };
 
         debug!("{} MESSAGE: Processing for device {}: {}", source_name, device_id, message);
+
+        // Update activity tracker for UDP and UART (not TCP)
+        let should_track_activity = matches!(source, MessageSource::Uart | MessageSource::Udp { .. });
+        if should_track_activity {
+            if let Some(tracker) = activity_tracker {
+                let mut tracker_guard = tracker.write().await;
+                tracker_guard.insert(device_id.to_string(), Instant::now());
+                debug!("{} ACTIVITY: Updated activity timestamp for device {}", source_name, device_id);
+            }
+        }
 
         // Smart connection state tracking - send event only on state change
         let should_send_connected_event = {
@@ -881,13 +899,16 @@ impl Esp32Manager {
     // LEGACY BYPASS FUNCTIONS (call unified handler)
     // ========================================================================
 
-    /// Handle UDP message - now calls unified handler
+    /// Handle UDP message - DEPRECATED: Use handle_message_unified directly
+    /// This is kept for backward compatibility only
+    #[allow(dead_code)]
     pub async fn handle_udp_message_bypass_smart(
         message: &str,
         from_addr: SocketAddr,
         device_id: &str,
         device_store: &SharedDeviceStore,
-        udp_connection_states: &Arc<RwLock<HashMap<String, bool>>>
+        udp_connection_states: &Arc<RwLock<HashMap<String, bool>>>,
+        activity_tracker: Option<&Arc<RwLock<HashMap<String, Instant>>>>,
     ) {
         Self::handle_message_unified(
             message,
@@ -898,10 +919,12 @@ impl Esp32Manager {
             },
             device_store,
             udp_connection_states,
+            activity_tracker,
         ).await;
     }
 
-    /// Handle TCP message - now calls unified handler with shared connection states
+    /// Handle TCP message - now calls unified handler
+    /// TCP messages do NOT use activity tracking (no timeout for TCP)
     pub async fn handle_tcp_message_bypass(
         message: &str,
         device_id: &str,
@@ -909,7 +932,7 @@ impl Esp32Manager {
     ) {
         DebugLogger::log_tcp_message(device_id, "RECEIVED", message);
 
-        // Use shared connection states (stored in device_store or create temporary)
+        // Use temporary connection states for TCP (no global tracking)
         let tcp_connection_states: Arc<RwLock<HashMap<String, bool>>> = Arc::new(RwLock::new(HashMap::new()));
 
         Self::handle_message_unified(
@@ -921,6 +944,7 @@ impl Esp32Manager {
             },
             device_store,
             &tcp_connection_states,
+            None, // No activity tracking for TCP
         ).await;
     }
 
@@ -975,43 +999,56 @@ pub fn create_esp32_manager(device_store: SharedDeviceStore) -> Arc<Esp32Manager
 
 
 impl Esp32Manager {
-    /// Start UDP timeout monitoring task
-    async fn start_udp_timeout_monitor(&self) {
-        let udp_activity_tracker = Arc::clone(&self.udp_activity_tracker);
+    /// Start unified timeout monitoring task for UDP and UART (not TCP)
+    async fn start_unified_timeout_monitor(&self) {
+        let unified_activity_tracker = Arc::clone(&self.unified_activity_tracker);
         let device_configs = Arc::clone(&self.device_configs);
         let device_store = self.device_store.clone();
-        let udp_connection_states = Arc::clone(&self.udp_connection_states);
+        let unified_connection_states = Arc::clone(&self.unified_connection_states);
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(5)); // Check every 5 seconds
-            info!("UDP timeout monitor started");
+            info!("Unified timeout monitor started (UDP and UART)");
 
             loop {
                 interval.tick().await;
 
-                let configs = device_configs.read().await;
-                let mut tracker = udp_activity_tracker.write().await;
+                let mut configs = device_configs.write().await;
+                let mut tracker = unified_activity_tracker.write().await;
                 let now = Instant::now();
 
-                // Check each device for UDP timeout
+                // Collect all devices from activity tracker (includes unregistered UART devices)
+                let tracked_devices: Vec<String> = tracker.keys().cloned().collect();
+
+                // Auto-register UART devices that are in tracker but not in configs
+                for device_id in &tracked_devices {
+                    if !configs.contains_key(device_id) {
+                        info!("UNIFIED MONITOR: Auto-registering UART device: {}", device_id);
+                        let uart_config = crate::esp32_types::Esp32DeviceConfig::new_uart(device_id.clone());
+                        configs.insert(device_id.clone(), uart_config);
+                    }
+                }
+
+                // Check each device for timeout
+                // Only devices in the activity tracker are checked (UDP/UART messages update tracker)
                 for (device_id, config) in configs.iter() {
                     if let Some(last_activity) = tracker.get(device_id) {
                         let elapsed = now.duration_since(*last_activity);
                         let timeout = Duration::from_secs(config.udp_timeout_seconds);
 
                         if elapsed > timeout {
-                            warn!("UDP TIMEOUT: Device {} has been inactive for {}s (timeout: {}s)",
-                                  device_id, elapsed.as_secs(), config.udp_timeout_seconds);
+                            warn!("UNIFIED TIMEOUT: Device {} ({:?}) has been inactive for {}s (timeout: {}s)",
+                                  device_id, config.device_source, elapsed.as_secs(), config.udp_timeout_seconds);
 
                             // Only send disconnect event if device was connected
                             let should_send_disconnect = {
-                                let mut states = udp_connection_states.write().await;
+                                let mut states = unified_connection_states.write().await;
                                 let was_connected = states.get(device_id).copied().unwrap_or(false);
 
                                 if was_connected {
                                     // Mark as disconnected
                                     states.insert(device_id.clone(), false);
-                                    info!("UDP TIMEOUT: Device {} marked as disconnected", device_id);
+                                    info!("UNIFIED TIMEOUT: Device {} marked as disconnected", device_id);
                                     true
                                 } else {
                                     // Already disconnected - no event needed
@@ -1033,14 +1070,14 @@ impl Esp32Manager {
                                     device_id.clone(),
                                     disconnect_event,
                                     "ESP32_SYSTEM".to_string(),
-                                    "UDP_TIMEOUT".to_string(),
+                                    "UNIFIED_TIMEOUT".to_string(),
                                 ).await {
-                                    error!("Failed to send UDP timeout disconnect event for device {}: {}", device_id, e);
+                                    error!("Failed to send unified timeout disconnect event for device {}: {}", device_id, e);
                                 } else {
-                                    info!("UDP TIMEOUT: Disconnect event sent for device {}", device_id);
+                                    info!("UNIFIED TIMEOUT: Disconnect event sent for device {}", device_id);
                                 }
                             } else {
-                                debug!("UDP TIMEOUT: Device {} already marked as disconnected - skipping redundant event", device_id);
+                                debug!("UNIFIED TIMEOUT: Device {} already marked as disconnected - skipping redundant event", device_id);
                             }
 
                             // Remove from tracker to avoid spam
@@ -1054,9 +1091,19 @@ impl Esp32Manager {
 
     /// Update UDP activity for a device
     pub async fn update_udp_activity(&self, device_id: &str) {
-        let mut tracker = self.udp_activity_tracker.write().await;
+        let mut tracker = self.unified_activity_tracker.write().await;
         tracker.insert(device_id.to_string(), Instant::now());
-        debug!("UDP activity updated for device: {}", device_id);
+        debug!("Unified activity updated for device: {}", device_id);
+    }
+
+    /// Get shared connection states for external use (e.g., UART)
+    pub fn get_unified_connection_states(&self) -> Arc<RwLock<HashMap<String, bool>>> {
+        Arc::clone(&self.unified_connection_states)
+    }
+
+    /// Get shared activity tracker for external use (e.g., UART)
+    pub fn get_unified_activity_tracker(&self) -> Arc<RwLock<HashMap<String, Instant>>> {
+        Arc::clone(&self.unified_activity_tracker)
     }
 }
 

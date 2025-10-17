@@ -44,20 +44,27 @@ pub struct UartConnection {
     shutdown_sender: Option<mpsc::UnboundedSender<()>>,
     /// Connection status
     is_connected: Arc<RwLock<bool>>,
-    /// Discovery state tracking to prevent redundant events (device_id -> has_been_discovered)
-    uart_discovery_states: Arc<RwLock<HashMap<String, bool>>>,
+    /// Unified connection states (shared with ESP32Manager)
+    unified_connection_states: Arc<RwLock<HashMap<String, bool>>>,
+    /// Unified activity tracker (shared with ESP32Manager)
+    unified_activity_tracker: Arc<RwLock<HashMap<String, std::time::Instant>>>,
 }
 
 impl UartConnection {
-    /// Create new UART connection manager
-    pub fn new(device_store: SharedDeviceStore) -> Self {
+    /// Create new UART connection manager with shared state trackers
+    pub fn new(
+        device_store: SharedDeviceStore,
+        unified_connection_states: Arc<RwLock<HashMap<String, bool>>>,
+        unified_activity_tracker: Arc<RwLock<HashMap<String, std::time::Instant>>>,
+    ) -> Self {
         Self {
             settings: Arc::new(RwLock::new(None)),
             serial_stream: Arc::new(RwLock::new(None)),
             device_store,
             shutdown_sender: None,
             is_connected: Arc::new(RwLock::new(false)),
-            uart_discovery_states: Arc::new(RwLock::new(HashMap::new())),
+            unified_connection_states,
+            unified_activity_tracker,
         }
     }
 
@@ -143,7 +150,8 @@ impl UartConnection {
         let serial_stream = Arc::clone(&self.serial_stream);
         let device_store = self.device_store.clone();
         let is_connected = Arc::clone(&self.is_connected);
-        let uart_discovery_states = Arc::clone(&self.uart_discovery_states);
+        let unified_connection_states = Arc::clone(&self.unified_connection_states);
+        let unified_activity_tracker = Arc::clone(&self.unified_activity_tracker);
 
         tokio::spawn(async move {
             info!("UART listener task started");
@@ -190,10 +198,11 @@ impl UartConnection {
                                 if !line.is_empty() {
                                     // Process the message
                                     let device_store_clone = device_store.clone();
-                                    let uart_discovery_states_clone = Arc::clone(&uart_discovery_states);
+                                    let unified_connection_states_clone = Arc::clone(&unified_connection_states);
+                                    let unified_activity_tracker_clone = Arc::clone(&unified_activity_tracker);
                                     let line_clone = line.clone();
                                     tokio::spawn(async move {
-                                        Self::handle_uart_message(&line_clone, &device_store_clone, &uart_discovery_states_clone).await;
+                                        Self::handle_uart_message(&line_clone, &device_store_clone, &unified_connection_states_clone, &unified_activity_tracker_clone).await;
                                     });
                                 }
                             }
@@ -220,11 +229,12 @@ impl UartConnection {
         });
     }
 
-    /// Handle incoming UART message with smart discovery state tracking (analog to UDP)
+    /// Handle incoming UART message with unified state tracking
     async fn handle_uart_message(
         message: &str,
         device_store: &SharedDeviceStore,
-        uart_discovery_states: &Arc<RwLock<HashMap<String, bool>>>
+        unified_connection_states: &Arc<RwLock<HashMap<String, bool>>>,
+        unified_activity_tracker: &Arc<RwLock<HashMap<String, std::time::Instant>>>,
     ) {
         info!("UART MESSAGE RECEIVED: {}", message);
 
@@ -235,27 +245,22 @@ impl UartConnection {
                 if let Some(device_id) = json.get("device_id").and_then(|v| v.as_str()) {
                     info!("UART MESSAGE: Parsed device_id: {}", device_id);
 
-                    // Check if device was previously discovered (analog to UDP connection state tracking)
+                    // Check if device needs discovery and registration (first time seen)
                     let should_send_discovery_event = {
-                        let mut states = uart_discovery_states.write().await;
-                        let was_discovered = states.get(device_id).copied().unwrap_or(false);
-
-                        if !was_discovered {
-                            // Device not yet discovered - mark as discovered
-                            states.insert(device_id.to_string(), true);
-                            info!("UART DISCOVERY: Device {} discovered for the first time", device_id);
-                            true
-                        } else {
-                            // Device already discovered - no event needed
-                            false
-                        }
+                        let states = unified_connection_states.read().await;
+                        !states.contains_key(device_id)
                     };
 
-                    // Only send discovery event if device is new (first time seen via UART)
+                    // Register and send discovery event if device is new
                     if should_send_discovery_event {
                         use crate::events::DeviceEvent;
                         use chrono::Utc;
 
+                        // Note: UART device will be auto-registered by the unified_timeout_monitor
+                        // when it sees the device in unified_activity_tracker
+                        info!("UART DISCOVERY: New UART device detected: {}", device_id);
+
+                        // Send discovery event
                         let discovery_event = DeviceEvent::esp32_device_discovered(
                             device_id.to_string(),
                             "0.0.0.0".to_string(),  // UART has no IP
@@ -276,14 +281,15 @@ impl UartConnection {
                         info!("UART DISCOVERY: Discovery event sent for device {}", device_id);
                     }
 
-                    // Use ESP32Manager's unified message handler
+                    // Use ESP32Manager's unified message handler with activity tracking
                     info!("UART MESSAGE: Forwarding to unified handler for device {}", device_id);
                     Esp32Manager::handle_message_unified(
                         message,
                         device_id,
                         crate::esp32_manager::MessageSource::Uart,
                         device_store,
-                        uart_discovery_states,
+                        unified_connection_states,
+                        Some(unified_activity_tracker),
                     ).await;
                     info!("UART MESSAGE: Finished processing for device {}", device_id);
                 } else {
