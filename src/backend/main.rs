@@ -286,6 +286,7 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         db: db.clone(),
         esp32_manager: esp32_manager.clone(),
         esp32_discovery: esp32_discovery.clone(),
+        uart_connection: uart_connection.clone(),
     };
 
     // ========================================

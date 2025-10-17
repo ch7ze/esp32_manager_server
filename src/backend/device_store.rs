@@ -267,8 +267,18 @@ impl DeviceEventStore {
             
             // Only remove connection if it's the exact same client_id (true reconnection)
             // Multi-tab support: different client_ids from same user should coexist
+            let before_count = device_connections.len();
             device_connections.retain(|conn| conn.client_id != client_id);
-            
+            let after_count = device_connections.len();
+
+            if before_count > after_count {
+                info!("SUBSCRIPTION UPDATE: Removed {} old connection(s) for client_id {} on device {}",
+                      before_count - after_count, client_id, device_id);
+            } else {
+                info!("SUBSCRIPTION NEW: No previous connection found for client_id {} on device {}",
+                      client_id, device_id);
+            }
+
             // Check if this is a reconnection (user already has a color)
             let is_reconnection = existing_user_color.is_some();
             
@@ -305,6 +315,8 @@ impl DeviceEventStore {
                 sender,
                 subscription_type.clone(),
             );
+            info!("SUBSCRIPTION REGISTER: Adding connection for client_id {} on device {} with subscription: {:?}",
+                  client_id, device_id, subscription_type);
             device_connections.push(connection);
             
             (user_color, is_reconnection)
@@ -520,6 +532,8 @@ impl DeviceEventStore {
 
                 // Filter events based on subscription type
                 if connection.subscription_type == crate::events::SubscriptionType::Light && !is_connection_status {
+                    debug!("SUBSCRIPTION FILTER: Skipping non-connection event for Light subscription client {} on device {}",
+                           connection.client_id, device_id);
                     continue;
                 }
 

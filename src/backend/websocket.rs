@@ -32,6 +32,7 @@ pub struct WebSocketState {
     pub db: Arc<DatabaseManager>,
     pub esp32_manager: Arc<crate::esp32_manager::Esp32Manager>,
     pub esp32_discovery: Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
+    pub uart_connection: Arc<tokio::sync::Mutex<crate::uart_connection::UartConnection>>,
 }
 
 // ============================================================================
@@ -156,6 +157,7 @@ async fn handle_websocket_connection(
                     &db,
                     &state.esp32_manager,
                     &state.esp32_discovery,
+                    &state.uart_connection,
                     &user_id,
                     &display_name,
                     &client_id,
@@ -223,6 +225,7 @@ async fn handle_client_message(
     db: &Arc<DatabaseManager>,
     esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
     esp32_discovery: &Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
+    uart_connection: &Arc<tokio::sync::Mutex<crate::uart_connection::UartConnection>>,
     user_id: &str,
     display_name: &str,
     client_id: &str,
@@ -296,6 +299,7 @@ async fn handle_client_message(
                 device_store,
                 db,
                 esp32_manager,
+                uart_connection,
                 user_id,
                 client_id,
                 registered_devices
@@ -356,11 +360,13 @@ async fn handle_register_for_device(
         registered_devices.push(device_id.clone());
     }
 
-    // If this is an ESP32 device (MAC address format), try to add and connect it
+    // If this is an ESP32 device (MAC address format or UART device), try to add and connect it
     // Only connect for FULL subscriptions - light subscriptions just need status
-    if (is_mac_address_format(&device_id) || is_mac_key_format(&device_id))
-        && subscription_type == crate::events::SubscriptionType::Full {
-        info!("Attempting to add and connect ESP32 device: {} (full subscription)", device_id);
+    let is_esp32_tcp_device = is_mac_address_format(&device_id) || is_mac_key_format(&device_id);
+    let is_uart_device = device_id.starts_with("esp32-");
+
+    if is_esp32_tcp_device && subscription_type == crate::events::SubscriptionType::Full {
+        info!("Attempting to add and connect TCP/UDP ESP32 device: {} (full subscription)", device_id);
 
         // First check if device is already added to manager
         let device_exists = esp32_manager.get_device_config(&device_id).await.is_some();
@@ -418,8 +424,12 @@ async fn handle_register_for_device(
                 // Don't fail the registration - user should still be able to see the device
             }
         }
-    } else if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
-        info!("Light subscription for ESP32 device {} - will add to manager but not connect", device_id);
+    } else if is_uart_device && subscription_type == crate::events::SubscriptionType::Full {
+        info!("Full subscription for UART device: {} - device is already connected via UART", device_id);
+        // UART devices are always connected if UART connection is active
+        // No additional connection logic needed - just log it
+    } else if is_esp32_tcp_device {
+        info!("Light subscription for TCP/UDP ESP32 device {} - will add to manager but not connect", device_id);
 
         // For light subscriptions, add device to manager (if not exists) but don't connect
         let device_exists = esp32_manager.get_device_config(&device_id).await.is_some();
@@ -567,6 +577,7 @@ async fn handle_device_events(
     device_store: &SharedDeviceStore,
     db: &Arc<DatabaseManager>,
     esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
+    uart_connection: &Arc<tokio::sync::Mutex<crate::uart_connection::UartConnection>>,
     user_id: &str,
     client_id: &str,
     registered_devices: &[String],
@@ -580,8 +591,12 @@ async fn handle_device_events(
     }
     
     // Check write permissions for device operations
-    // Allow access to ESP32 devices (identified by MAC address format) for all users
-    let has_write_permission = if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
+    // Allow access to ESP32 devices (identified by MAC address format or esp32-XX format for UART) for all users
+    let is_esp32_device = is_mac_address_format(&device_id)
+        || is_mac_key_format(&device_id)
+        || device_id.starts_with("esp32-");  // UART devices use esp32-XX format
+
+    let has_write_permission = if is_esp32_device {
         true  // Allow all users to control ESP32 devices
     } else {
         db.user_has_device_permission(&device_id, user_id, "W").await
@@ -597,24 +612,44 @@ async fn handle_device_events(
     // Process each event
     for event in events {
         debug!("Processing event from client {} for device {}: {:?}", client_id, device_id, event);
-        
+
         // Check if this is an ESP32 command event
         if let DeviceEvent::Esp32Command { command, .. } = &event {
-            // Handle ESP32 command via ESP32 manager
-            if let Err(e) = esp32_manager.handle_websocket_command(
-                &device_id,
-                command.clone(),
-                user_id,
-                client_id,
-            ).await {
-                error!("Failed to handle ESP32 command for device {}: {}", device_id, e);
-                return Err(format!("ESP32 command failed: {}", e));
+            // Route command based on device type
+            if device_id.starts_with("esp32-") {
+                // UART device - route to UART connection
+                info!("Routing command to UART device: {}", device_id);
+
+                let command_json = serde_json::to_string(&command)
+                    .map_err(|e| format!("Failed to serialize command: {}", e))?;
+
+                let uart_conn = uart_connection.lock().await;
+                if let Err(e) = uart_conn.send_command(&device_id, &command_json).await {
+                    error!("Failed to send UART command to device {}: {}", device_id, e);
+                    return Err(format!("UART command failed: {}", e));
+                }
+
+                info!("UART command sent successfully to device {}", device_id);
+            } else {
+                // TCP/UDP device - route to ESP32 manager
+                info!("Routing command to TCP/UDP device: {}", device_id);
+
+                if let Err(e) = esp32_manager.handle_websocket_command(
+                    &device_id,
+                    command.clone(),
+                    user_id,
+                    client_id,
+                ).await {
+                    error!("Failed to handle ESP32 command for device {}: {}", device_id, e);
+                    return Err(format!("ESP32 command failed: {}", e));
+                }
+
+                debug!("ESP32 command processed successfully for device {}", device_id);
             }
-            
-            debug!("ESP32 command processed successfully for device {}", device_id);
-            continue; // ESP32 manager handles the event broadcasting
+
+            continue; // Command handlers handle the event broadcasting
         }
-        
+
         // Add event to store (this will also broadcast to other clients)
         device_store.add_event(device_id.clone(), event, user_id.to_string(), client_id.to_string()).await?;
     }

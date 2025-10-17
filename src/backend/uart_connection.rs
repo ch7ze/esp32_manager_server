@@ -226,11 +226,14 @@ impl UartConnection {
         device_store: &SharedDeviceStore,
         uart_discovery_states: &Arc<RwLock<HashMap<String, bool>>>
     ) {
+        info!("UART MESSAGE RECEIVED: {}", message);
+
         // Parse JSON message to extract device_id
         match serde_json::from_str::<serde_json::Value>(message) {
             Ok(json) => {
                 // Extract device_id from JSON
                 if let Some(device_id) = json.get("device_id").and_then(|v| v.as_str()) {
+                    info!("UART MESSAGE: Parsed device_id: {}", device_id);
 
                     // Check if device was previously discovered (analog to UDP connection state tracking)
                     let should_send_discovery_event = {
@@ -274,7 +277,9 @@ impl UartConnection {
                     }
 
                     // Use ESP32Manager's TCP message handler (works for UART too)
+                    info!("UART MESSAGE: Forwarding to ESP32Manager::handle_tcp_message_bypass for device {}", device_id);
                     Esp32Manager::handle_tcp_message_bypass(message, device_id, device_store).await;
+                    info!("UART MESSAGE: Finished processing for device {}", device_id);
                 } else {
                     warn!("UART message missing device_id field: {}", message);
                 }
@@ -282,6 +287,31 @@ impl UartConnection {
             Err(e) => {
                 warn!("Failed to parse UART message as JSON: {} - Error: {}", message, e);
             }
+        }
+    }
+
+    /// Send command to UART device
+    pub async fn send_command(&self, device_id: &str, command_json: &str) -> Result<(), String> {
+        info!("Sending UART command to device {}: {}", device_id, command_json);
+
+        let mut stream_guard = self.serial_stream.write().await;
+        if let Some(stream) = stream_guard.as_mut() {
+            use tokio::io::AsyncWriteExt;
+
+            // Send command as JSON string with newline
+            let command_with_newline = format!("{}\n", command_json);
+            stream.write_all(command_with_newline.as_bytes())
+                .await
+                .map_err(|e| format!("Failed to write to UART: {}", e))?;
+
+            stream.flush()
+                .await
+                .map_err(|e| format!("Failed to flush UART: {}", e))?;
+
+            info!("UART command sent successfully to device {}", device_id);
+            Ok(())
+        } else {
+            Err("UART connection not established".to_string())
         }
     }
 

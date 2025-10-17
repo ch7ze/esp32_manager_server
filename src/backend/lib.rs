@@ -21,6 +21,7 @@ pub mod esp32_discovery;
 pub mod mdns_discovery;
 pub mod mdns_server;
 pub mod debug_logger;
+pub mod uart_connection;
 
 // Re-export key types for tests
 pub use database::DatabaseManager;

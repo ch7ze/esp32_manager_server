@@ -804,6 +804,7 @@ impl Esp32Manager {
         device_id: &str,
         device_store: &SharedDeviceStore
     ) {
+        info!("TCP_BYPASS: Processing message for device {}: {}", device_id, message);
         DebugLogger::log_tcp_message(device_id, "RECEIVED", message);
 
         // Send connection status event directly to device store (TCP is connected)
@@ -815,6 +816,16 @@ impl Esp32Manager {
             3232  // Default UDP port
         );
         let _ = device_store.add_event(device_id.to_string(), connection_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
+
+        // Send UDP broadcast event for the raw message (same as UDP handler does)
+        // This ensures UART/TCP messages appear in the frontend monitor
+        let broadcast_event = crate::events::DeviceEvent::esp32_udp_broadcast(
+            device_id.to_string(),
+            message.to_string(),
+            "0.0.0.0".to_string(),
+            0
+        );
+        let _ = device_store.add_event(device_id.to_string(), broadcast_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
 
         // Enhanced JSON parsing for structured data (matching C# RemoteAccess.cs behavior)
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
