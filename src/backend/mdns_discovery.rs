@@ -161,11 +161,6 @@ impl MdnsDiscovery {
         }
     }
     
-    /// Get all discovered devices
-    pub async fn get_discovered_devices(&self) -> HashMap<String, MdnsEsp32Device> {
-        self.discovered_devices.read().await.clone()
-    }
-    
     /// Handle mDNS service events
     async fn handle_service_event<F>(
         event: ServiceEvent,
@@ -297,11 +292,6 @@ impl MdnsDiscovery {
 
         // Accept if hostname matches OR TXT records indicate ESP32
         hostname_matches || txt_indicators
-    }
-    
-    /// Get running state
-    pub fn is_running(&self) -> bool {
-        self.is_running
     }
 }
 

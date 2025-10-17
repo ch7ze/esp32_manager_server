@@ -130,41 +130,12 @@ pub struct Esp32Variable {
 }
 
 impl Esp32Event {
-    pub fn variable_update(name: String, value: String) -> Self {
-        Self::VariableUpdate { name, value }
-    }
-    
-    pub fn start_options(options: Vec<String>) -> Self {
-        Self::StartOptions { options }
-    }
-    
-    pub fn changeable_variables(variables: Vec<Esp32Variable>) -> Self {
-        Self::ChangeableVariables { variables }
-    }
-    
-    pub fn udp_broadcast(message: String, from_addr: SocketAddr) -> Self {
-        Self::UdpBroadcast {
-            message,
-            from_ip: from_addr.ip().to_string(),
-            from_port: from_addr.port(),
-        }
-    }
-    
     pub fn connection_status(connected: bool, device_ip: IpAddr, tcp_port: u16, udp_port: u16) -> Self {
         Self::ConnectionStatus {
             connected,
             device_ip: device_ip.to_string(),
             tcp_port,
             udp_port,
-        }
-    }
-    
-    pub fn device_info(device_id: String) -> Self {
-        Self::DeviceInfo {
-            device_id,
-            device_name: None,
-            firmware_version: None,
-            uptime: None,
         }
     }
 }

@@ -643,11 +643,6 @@ impl Esp32Manager {
         Ok(())
     }
 
-    /// Update device configuration if UDP port has changed (after ESP32 restart)
-    /// Note: This is now a placeholder since global config access was removed
-    async fn update_device_config_for_udp_port_change(device_id: &str, from_addr: SocketAddr) {
-        debug!("UDP port check for device {} on port {} - global config access removed", device_id, from_addr.port());
-    }
 
     // ========================================================================
     // UNIFIED MESSAGE PROCESSING (UART, TCP, UDP)
@@ -757,7 +752,7 @@ impl Esp32Manager {
         source_name: &str,
     ) {
         // Try JSON parsing first (structured data)
-        let json_parsed = if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
+        let _json_parsed = if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
             // Handle startOptions array
             if let Some(options_array) = value.get("startOptions") {
                 if let Some(options) = options_array.as_array() {

@@ -1,11 +1,9 @@
 // Authentication module for user management and ESP32 device management
 
 use axum::http::HeaderValue;
-use bcrypt::{hash, verify, DEFAULT_COST};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 // JWT secret key - should be loaded from environment variable in production
 const JWT_SECRET: &[u8] = b"your-secret-key-should-be-much-longer-and-random";
@@ -144,20 +142,6 @@ pub fn validate_jwt(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> 
 // Website feature: Secure password storage
 // ============================================================================
 
-// Hashes a password with Bcrypt (slow and secure)
-// Website feature: Called during registration
-pub fn hash_password(password: &str) -> Result<String, bcrypt::BcryptError> {
-    // DEFAULT_COST = 12 rounds (2^12 = 4096 hashing iterations)
-    // Higher cost = more secure but slower
-    hash(password, DEFAULT_COST)
-}
-
-// Checks if a password matches the hash
-// Website feature: Called during login
-pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::BcryptError> {
-    // Bcrypt hashes the password with the same salt and compares
-    verify(password, hash)
-}
 
 // ============================================================================
 // USER IMPLEMENTATION - Methods for user objects
@@ -165,34 +149,7 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::Bcryp
 // ============================================================================
 
 // impl block defines methods for the User struct
-impl User {
-    // Creates a new user with hashed password
-    // Website feature: Called during registration
-    pub fn new(email: String, display_name: String, password: &str) -> Result<Self, bcrypt::BcryptError> {
-        // Hash password (? = propagates error upwards)
-        let password_hash = hash_password(password)?;
-        
-        Ok(User {
-            id: Uuid::new_v4().to_string(), // Generate random UUID (immutable)
-            email,
-            display_name,
-            password_hash,
-        })
-    }
-
-    // Checks if the given password is correct
-    // Website feature: Called during login
-    pub fn verify_password(&self, password: &str) -> Result<bool, bcrypt::BcryptError> {
-        // Delegiert an die globale verify_password Funktion
-        verify_password(password, &self.password_hash)
-    }
-
-    // Aktualisiert den Anzeigenamen des Users
-    // Website-Feature: Wird für Profil-Updates verwendet
-    pub fn update_display_name(&mut self, new_display_name: String) {
-        self.display_name = new_display_name;
-    }
-}
+impl User {}
 
 
 // ============================================================================

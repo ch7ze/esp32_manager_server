@@ -11,17 +11,6 @@ use std::{fs, time::UNIX_EPOCH};
 // Website-Feature: Alle URLs (/, /login, /register, etc.) zeigen die gleiche HTML
 // ============================================================================
 
-// Serviert die richtige Template-Datei basierend auf der URL
-// Website-Feature: Single Page Application (SPA) Support
-pub async fn handle_spa_route() -> Response<Body> {
-    handle_spa_route_with_cache_control("no-cache, must-revalidate").await
-}
-
-// Serviert SPA Route mit angegebener Cache-Control
-pub async fn handle_spa_route_with_cache_control(cache_control: &str) -> Response<Body> {
-    handle_template_file("client/index.html", cache_control).await
-}
-
 // Serviert eine spezifische Template-Datei
 pub async fn handle_template_file(file_path: &str, cache_control: &str) -> Response<Body> {
     

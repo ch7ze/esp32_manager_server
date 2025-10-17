@@ -716,17 +716,6 @@ fn is_mac_address_format(device_id: &str) -> bool {
     true
 }
 
-/// Konvertiert MAC-Adresse von Doppelpunkt zu Bindestrich für Datenbankschlüssel
-/// Beispiel: "AA:BB:CC:DD:EE:FF" -> "AA-BB-CC-DD-EE-FF"
-fn mac_to_key(mac_address: &str) -> String {
-    mac_address.replace(':', "-")
-}
-
-/// Konvertiert Datenbankschlüssel zurück zu MAC-Adresse für Anzeige
-/// Beispiel: "AA-BB-CC-DD-EE-FF" -> "AA:BB:CC:DD:EE:FF"
-fn key_to_mac(key: &str) -> String {
-    key.replace('-', ":")
-}
 
 /// Check if a device_id is in MAC key format (XX-XX-XX-XX-XX-XX)
 /// Used to identify ESP32 devices that use MAC address with dashes as device_id

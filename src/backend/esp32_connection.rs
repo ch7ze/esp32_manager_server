@@ -468,11 +468,6 @@ impl Esp32Connection {
     // ========================================================================
     // UTILITY METHODS
     // ========================================================================
-
-    /// Get event sender for central UDP routing
-    pub fn get_event_sender(&self) -> Option<&mpsc::UnboundedSender<Esp32Event>> {
-        Some(&self.event_sender)
-    }
 }
 
 // ============================================================================
