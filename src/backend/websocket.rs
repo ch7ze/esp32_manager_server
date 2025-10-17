@@ -273,6 +273,7 @@ async fn handle_client_message(
                 device_store,
                 esp32_manager,
                 esp32_discovery,
+                uart_connection,
                 db,
                 user_id,
                 display_name,
@@ -314,6 +315,7 @@ async fn handle_register_for_device(
     device_store: &SharedDeviceStore,
     esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
     esp32_discovery: &Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
+    uart_connection: &Arc<tokio::sync::Mutex<crate::uart_connection::UartConnection>>,
     db: &Arc<DatabaseManager>,
     user_id: &str,
     display_name: &str,
@@ -427,7 +429,23 @@ async fn handle_register_for_device(
     } else if is_uart_device && subscription_type == crate::events::SubscriptionType::Full {
         info!("Full subscription for UART device: {} - device is already connected via UART", device_id);
         // UART devices are always connected if UART connection is active
-        // No additional connection logic needed - just log it
+
+        // Send tab opened notification to UART device
+        let tab_opened_message = serde_json::json!({
+            "device_id": device_id,
+            "event": "tabOpened"
+        });
+
+        let message_str = serde_json::to_string(&tab_opened_message)
+            .map_err(|e| format!("Failed to serialize tab opened message: {}", e))?;
+
+        let uart_conn = uart_connection.lock().await;
+        if let Err(e) = uart_conn.send_command(&device_id, &message_str).await {
+            warn!("Failed to send tab opened notification to UART device {}: {}", device_id, e);
+            // Don't fail the registration - user should still be able to see the device
+        } else {
+            info!("Tab opened notification sent to UART device {}", device_id);
+        }
     } else if is_esp32_tcp_device {
         info!("Light subscription for TCP/UDP ESP32 device {} - will add to manager but not connect", device_id);
 

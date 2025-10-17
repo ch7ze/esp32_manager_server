@@ -117,7 +117,12 @@ impl Esp32Manager {
         let device_event_sender = self.create_direct_device_sender(device_id.clone());
 
         info!("Direct event sender created for device {} - closed: {}", device_id, device_event_sender.is_closed());
-        let connection = Esp32Connection::new(config, device_event_sender, self.device_store.clone());
+        let connection = Esp32Connection::new(
+            config,
+            device_event_sender,
+            self.device_store.clone(),
+            self.get_unified_connection_states()
+        );
 
         {
             let mut connections = self.connections.write().await;
@@ -209,7 +214,12 @@ impl Esp32Manager {
 
             // Create new ESP32Connection with fresh direct sender
             let direct_sender = self.create_direct_device_sender(device_id.to_string());
-            let new_connection = Esp32Connection::new(config.clone(), direct_sender, self.device_store.clone());
+            let new_connection = Esp32Connection::new(
+                config.clone(),
+                direct_sender,
+                self.device_store.clone(),
+                self.get_unified_connection_states()
+            );
             let connection_arc = Arc::new(Mutex::new(new_connection));
 
             // Replace the connection
@@ -903,15 +913,14 @@ impl Esp32Manager {
 
     /// Handle TCP message - calls unified handler
     /// TCP messages do NOT use activity tracking (no timeout for TCP)
+    /// but DO use unified connection states to prevent redundant events
     pub async fn handle_tcp_message_bypass(
         message: &str,
         device_id: &str,
-        device_store: &SharedDeviceStore
+        device_store: &SharedDeviceStore,
+        unified_connection_states: &Arc<RwLock<HashMap<String, bool>>>,
     ) {
         DebugLogger::log_tcp_message(device_id, "RECEIVED", message);
-
-        // Use temporary connection states for TCP (no global tracking)
-        let tcp_connection_states: Arc<RwLock<HashMap<String, bool>>> = Arc::new(RwLock::new(HashMap::new()));
 
         Self::handle_message_unified(
             message,
@@ -921,8 +930,8 @@ impl Esp32Manager {
                 port: 3232,
             },
             device_store,
-            &tcp_connection_states,
-            None, // No activity tracking for TCP
+            unified_connection_states,  // Use shared state (prevents redundant events)
+            None,  // No activity tracking for TCP (no timeout)
         ).await;
     }
 

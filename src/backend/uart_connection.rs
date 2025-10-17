@@ -281,17 +281,24 @@ impl UartConnection {
                         info!("UART DISCOVERY: Discovery event sent for device {}", device_id);
                     }
 
-                    // Use ESP32Manager's unified message handler with activity tracking
-                    info!("UART MESSAGE: Forwarding to unified handler for device {}", device_id);
-                    Esp32Manager::handle_message_unified(
-                        message,
-                        device_id,
-                        crate::esp32_manager::MessageSource::Uart,
-                        device_store,
-                        unified_connection_states,
-                        Some(unified_activity_tracker),
-                    ).await;
-                    info!("UART MESSAGE: Finished processing for device {}", device_id);
+                    // Remove device_id field from JSON and forward the rest
+                    let mut json_without_device_id = json.clone();
+                    if let Some(obj) = json_without_device_id.as_object_mut() {
+                        obj.remove("device_id");
+                        let modified_message = serde_json::to_string(&json_without_device_id)
+                            .unwrap_or_else(|_| message.to_string());
+
+                        info!("UART MESSAGE: Forwarding to unified handler for device {} (device_id removed)", device_id);
+                        Esp32Manager::handle_message_unified(
+                            &modified_message,
+                            device_id,
+                            crate::esp32_manager::MessageSource::Uart,
+                            device_store,
+                            unified_connection_states,
+                            Some(unified_activity_tracker),
+                        ).await;
+                        info!("UART MESSAGE: Finished processing for device {}", device_id);
+                    }
                 } else {
                     warn!("UART message missing device_id field: {}", message);
                 }
