@@ -276,9 +276,15 @@ impl UartConnection {
                         info!("UART DISCOVERY: Discovery event sent for device {}", device_id);
                     }
 
-                    // Use ESP32Manager's TCP message handler (works for UART too)
-                    info!("UART MESSAGE: Forwarding to ESP32Manager::handle_tcp_message_bypass for device {}", device_id);
-                    Esp32Manager::handle_tcp_message_bypass(message, device_id, device_store).await;
+                    // Use ESP32Manager's unified message handler
+                    info!("UART MESSAGE: Forwarding to unified handler for device {}", device_id);
+                    Esp32Manager::handle_message_unified(
+                        message,
+                        device_id,
+                        crate::esp32_manager::MessageSource::Uart,
+                        device_store,
+                        uart_discovery_states,
+                    ).await;
                     info!("UART MESSAGE: Finished processing for device {}", device_id);
                 } else {
                     warn!("UART message missing device_id field: {}", message);

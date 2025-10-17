@@ -42,6 +42,13 @@ pub struct Esp32Manager {
     udp_connection_states: Arc<RwLock<HashMap<String, bool>>>,
 }
 
+/// Metadata about the message source
+#[derive(Debug, Clone)]
+pub enum MessageSource {
+    Uart,
+    Tcp { ip: String, port: u16 },
+    Udp { ip: String, port: u16 },
+}
 
 impl Esp32Manager {
     /// Create new ESP32 manager
@@ -635,7 +642,246 @@ impl Esp32Manager {
         debug!("UDP port check for device {} on port {} - global config access removed", device_id, from_addr.port());
     }
 
-    /// Handle UDP message with smart connection state detection to prevent redundant events
+    // ========================================================================
+    // UNIFIED MESSAGE PROCESSING (UART, TCP, UDP)
+    // ========================================================================
+
+    /// Central unified message handler for all message types (UART, TCP, UDP)
+    /// This ensures consistent processing regardless of the message origin
+    pub async fn handle_message_unified(
+        message: &str,
+        device_id: &str,
+        source: MessageSource,
+        device_store: &SharedDeviceStore,
+        connection_states: &Arc<RwLock<HashMap<String, bool>>>
+    ) {
+        let source_name = match &source {
+            MessageSource::Uart => "UART",
+            MessageSource::Tcp { .. } => "TCP",
+            MessageSource::Udp { .. } => "UDP",
+        };
+
+        debug!("{} MESSAGE: Processing for device {}: {}", source_name, device_id, message);
+
+        // Smart connection state tracking - send event only on state change
+        let should_send_connected_event = {
+            let mut states = connection_states.write().await;
+            let was_connected = states.get(device_id).copied().unwrap_or(false);
+
+            if !was_connected {
+                states.insert(device_id.to_string(), true);
+                info!("{} CONNECT: Device {} is now connected (was: disconnected)", source_name, device_id);
+                true
+            } else {
+                false
+            }
+        };
+
+        // Send connection event only if state changed
+        if should_send_connected_event {
+            let (ip, tcp_port, udp_port) = match &source {
+                MessageSource::Uart => ("0.0.0.0".to_string(), 0, 0),
+                MessageSource::Tcp { ip, port } => (ip.clone(), *port, 0),
+                MessageSource::Udp { ip, port } => (ip.clone(), 0, *port),
+            };
+
+            let connection_event = crate::events::DeviceEvent::esp32_connection_status(
+                device_id.to_string(),
+                true,
+                ip,
+                tcp_port,
+                udp_port,
+            );
+
+            if let Err(e) = device_store.add_event(
+                device_id.to_string(),
+                connection_event,
+                "esp32_system".to_string(),
+                format!("{}_connect", source_name.to_lowercase()),
+            ).await {
+                error!("Failed to send {} connection event for device {}: {}", source_name, device_id, e);
+            } else {
+                info!("{} CONNECT: Connection event sent for device {}", source_name, device_id);
+            }
+        } else {
+            debug!("{}: Device {} already connected - skipping redundant event", source_name, device_id);
+        }
+
+        // Send broadcast event with actual source info
+        let (ip, port) = match &source {
+            MessageSource::Uart => ("0.0.0.0".to_string(), 0),
+            MessageSource::Tcp { ip, port } | MessageSource::Udp { ip, port } => (ip.clone(), *port),
+        };
+
+        let broadcast_event = crate::events::DeviceEvent::esp32_udp_broadcast(
+            device_id.to_string(),
+            message.to_string(),
+            ip,
+            port,
+        );
+        let _ = device_store.add_event(
+            device_id.to_string(),
+            broadcast_event,
+            "esp32_system".to_string(),
+            format!("{}_message", source_name.to_lowercase()),
+        ).await;
+
+        // Parse JSON and extract structured data
+        Self::parse_and_process_json_data(message, device_id, device_store, source_name).await;
+
+        // Parse variable updates with regex
+        Self::parse_and_process_variable_updates(message, device_id, device_store, source_name).await;
+    }
+
+    /// Parse JSON data and create appropriate events
+    async fn parse_and_process_json_data(
+        message: &str,
+        device_id: &str,
+        device_store: &SharedDeviceStore,
+        source_name: &str,
+    ) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
+            // Handle startOptions array
+            if let Some(options_array) = value.get("startOptions") {
+                if let Some(options) = options_array.as_array() {
+                    let mut start_options = Vec::new();
+                    for option in options {
+                        if let Some(option_str) = option.as_str() {
+                            start_options.push(option_str.to_string());
+                        }
+                    }
+
+                    if !start_options.is_empty() {
+                        debug!("{}: Extracted startOptions: {:?}", source_name, start_options);
+                        let start_options_event = crate::events::DeviceEvent::esp32_start_options(
+                            device_id.to_string(),
+                            start_options
+                        );
+                        let _ = device_store.add_event(
+                            device_id.to_string(),
+                            start_options_event,
+                            "esp32_system".to_string(),
+                            format!("{}_data", source_name.to_lowercase())
+                        ).await;
+                    }
+                }
+            }
+
+            // Handle changeableVariables array
+            if let Some(vars_array) = value.get("changeableVariables") {
+                if let Some(vars) = vars_array.as_array() {
+                    let mut variables = Vec::new();
+                    for var in vars {
+                        if let (Some(name), Some(value)) = (var.get("name"), var.get("value")) {
+                            if let (Some(name_str), Some(value_num)) = (name.as_str(), value.as_u64()) {
+                                variables.push(serde_json::json!({
+                                    "name": name_str,
+                                    "value": value_num
+                                }));
+                            }
+                        }
+                    }
+
+                    if !variables.is_empty() {
+                        debug!("{}: Extracted changeableVariables: {:?}", source_name, variables);
+                        let changeable_vars_event = crate::events::DeviceEvent::esp32_changeable_variables(
+                            device_id.to_string(),
+                            variables
+                        );
+                        let _ = device_store.add_event(
+                            device_id.to_string(),
+                            changeable_vars_event,
+                            "esp32_system".to_string(),
+                            format!("{}_data", source_name.to_lowercase())
+                        ).await;
+                    }
+                }
+            }
+
+            // Handle device information
+            if let Some(device_name) = value.get("deviceName").and_then(|v| v.as_str()) {
+                let firmware_version = value.get("firmwareVersion").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                let uptime = value.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+                debug!("{}: Extracted device info - name: {}, firmware: {}, uptime: {}", source_name, device_name, firmware_version, uptime);
+                let device_info_event = crate::events::DeviceEvent::esp32_device_info(
+                    device_id.to_string(),
+                    Some(device_name.to_string()),
+                    Some(firmware_version),
+                    Some(uptime as u64)
+                );
+                let _ = device_store.add_event(
+                    device_id.to_string(),
+                    device_info_event,
+                    "esp32_system".to_string(),
+                    format!("{}_data", source_name.to_lowercase())
+                ).await;
+            }
+
+            // Handle status information
+            if let Some(status) = value.get("status") {
+                if let Some(status_obj) = status.as_object() {
+                    if let Some(running) = status_obj.get("running").and_then(|v| v.as_bool()) {
+                        debug!("{}: Device {} status - running: {}", source_name, device_id, running);
+                    }
+
+                    if let Some(memory_free) = status_obj.get("memoryFree").and_then(|v| v.as_u64()) {
+                        debug!("{}: Device {} memory free: {} bytes", source_name, device_id, memory_free);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parse variable updates using regex
+    async fn parse_and_process_variable_updates(
+        message: &str,
+        device_id: &str,
+        device_store: &SharedDeviceStore,
+        source_name: &str,
+    ) {
+        // Parse for string variable updates: {"name": "value"}
+        let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
+        for captures in re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
+                    device_id.to_string(),
+                    name.as_str().trim().to_string(),
+                    value.as_str().trim().to_string(),
+                );
+                let _ = device_store.add_event(
+                    device_id.to_string(),
+                    variable_event,
+                    "esp32_system".to_string(),
+                    format!("{}_data", source_name.to_lowercase())
+                ).await;
+            }
+        }
+
+        // Parse for numeric variable updates: {"name": 123}
+        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
+        for captures in numeric_re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
+                    device_id.to_string(),
+                    name.as_str().trim().to_string(),
+                    value.as_str().trim().to_string(),
+                );
+                let _ = device_store.add_event(
+                    device_id.to_string(),
+                    variable_event,
+                    "esp32_system".to_string(),
+                    format!("{}_data", source_name.to_lowercase())
+                ).await;
+            }
+        }
+    }
+
+    // ========================================================================
+    // LEGACY BYPASS FUNCTIONS (call unified handler)
+    // ========================================================================
+
+    /// Handle UDP message - now calls unified handler
     pub async fn handle_udp_message_bypass_smart(
         message: &str,
         from_addr: SocketAddr,
@@ -643,277 +889,39 @@ impl Esp32Manager {
         device_store: &SharedDeviceStore,
         udp_connection_states: &Arc<RwLock<HashMap<String, bool>>>
     ) {
-        debug!("UDP bypass: Processing message from {} for device {}: {}", from_addr, device_id, message);
-
-        // Update device configuration if UDP port has changed (important for TCP connections after ESP32 restart)
-        Self::update_device_config_for_udp_port_change(device_id, from_addr).await;
-
-        // Check if device was previously disconnected (or never seen before)
-        let should_send_connected_event = {
-            let mut states = udp_connection_states.write().await;
-            let was_connected = states.get(device_id).copied().unwrap_or(false);
-
-            if !was_connected {
-                // Device was disconnected or new - mark as connected
-                states.insert(device_id.to_string(), true);
-                info!("UDP RECONNECT: Device {} is now connected (was: disconnected)", device_id);
-                true
-            } else {
-                // Device was already connected - no event needed
-                false
-            }
-        };
-
-        // Only send connection event if state changed from disconnected to connected
-        if should_send_connected_event {
-            let connection_event = crate::events::DeviceEvent::esp32_connection_status(
-                device_id.to_string(),
-                true, // connected = true since we're receiving UDP
-                from_addr.ip().to_string(),
-                0, // no TCP port available
-                from_addr.port() // UDP port
-            );
-            if let Err(e) = device_store.add_event(device_id.to_string(), connection_event, "esp32_system".to_string(), "udp_reconnect".to_string()).await {
-                error!("Failed to send UDP reconnect event for device {}: {}", device_id, e);
-            } else {
-                info!("UDP RECONNECT: Connected event sent for device {}", device_id);
-            }
-        } else {
-            debug!("UDP: Device {} already marked as connected - skipping redundant event", device_id);
-        }
-
-        // Send UDP broadcast event directly to device store
-        let broadcast_event = crate::events::DeviceEvent::esp32_udp_broadcast(
-            device_id.to_string(),
-            message.to_string(),
-            from_addr.ip().to_string(),
-            from_addr.port()
-        );
-        let _ = device_store.add_event(device_id.to_string(), broadcast_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
-
-        // Enhanced JSON parsing for structured data (matching C# RemoteAccess.cs behavior)
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
-            // Handle startOptions array (from C# RemoteAccess.cs line 371-384)
-            if let Some(options_array) = value.get("startOptions") {
-                if let Some(options) = options_array.as_array() {
-                    let mut start_options = Vec::new();
-                    for option in options {
-                        if let Some(option_str) = option.as_str() {
-                            start_options.push(option_str.to_string());
-                        }
-                    }
-
-                    if !start_options.is_empty() {
-                        debug!("UDP bypass: Extracted startOptions: {:?}", start_options);
-                        let start_options_event = crate::events::DeviceEvent::esp32_start_options(
-                            device_id.to_string(),
-                            start_options
-                        );
-                        let _ = device_store.add_event(device_id.to_string(), start_options_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
-                    }
-                }
-            }
-
-            // Handle changeableVariables array (from C# RemoteAccess.cs line 347-368)
-            if let Some(vars_array) = value.get("changeableVariables") {
-                if let Some(vars) = vars_array.as_array() {
-                    let mut variables = Vec::new();
-                    for var in vars {
-                        if let (Some(name), Some(value)) = (var.get("name"), var.get("value")) {
-                            if let (Some(name_str), Some(value_num)) = (name.as_str(), value.as_u64()) {
-                                variables.push(serde_json::json!({
-                                    "name": name_str,
-                                    "value": value_num
-                                }));
-                            }
-                        }
-                    }
-
-                    if !variables.is_empty() {
-                        debug!("UDP bypass: Extracted changeableVariables: {:?}", variables);
-                        let changeable_vars_event = crate::events::DeviceEvent::esp32_changeable_variables(
-                            device_id.to_string(),
-                            variables
-                        );
-                        let _ = device_store.add_event(device_id.to_string(), changeable_vars_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
-                    }
-                }
-            }
-
-            // Handle device information (extended from ESP32 capabilities)
-            if let Some(device_name) = value.get("deviceName").and_then(|v| v.as_str()) {
-                let firmware_version = value.get("firmwareVersion").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                let uptime = value.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-
-                debug!("UDP bypass: Extracted device info - name: {}, firmware: {}, uptime: {}", device_name, firmware_version, uptime);
-                let device_info_event = crate::events::DeviceEvent::esp32_device_info(
-                    device_id.to_string(),
-                    Some(device_name.to_string()),
-                    Some(firmware_version),
-                    Some(uptime as u64)
-                );
-                let _ = device_store.add_event(device_id.to_string(), device_info_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
-            }
-
-            // Handle status information (extended functionality)
-            if let Some(status) = value.get("status") {
-                if let Some(status_obj) = status.as_object() {
-                    // Extract various status fields and create appropriate events
-                    if let Some(running) = status_obj.get("running").and_then(|v| v.as_bool()) {
-                        debug!("UDP bypass: Device {} status - running: {}", device_id, running);
-                    }
-
-                    if let Some(memory_free) = status_obj.get("memoryFree").and_then(|v| v.as_u64()) {
-                        debug!("UDP bypass: Device {} memory free: {} bytes", device_id, memory_free);
-                    }
-                }
-            }
-        }
-
-        // Parse for variable updates using regex like the C# version (from RemoteAccess.cs line 89-110)
-        let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
-        for captures in re.captures_iter(message) {
-            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
-                    device_id.to_string(),
-                    name.as_str().trim().to_string(),
-                    value.as_str().trim().to_string(),
-                );
-                let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
-            }
-        }
-
-        // Additional parsing for numeric values without quotes (common in ESP32 output)
-        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
-        for captures in numeric_re.captures_iter(message) {
-            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
-                    device_id.to_string(),
-                    name.as_str().trim().to_string(),
-                    value.as_str().trim().to_string(),
-                );
-                let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "udp_bypass".to_string()).await;
-            }
-        }
+        Self::handle_message_unified(
+            message,
+            device_id,
+            MessageSource::Udp {
+                ip: from_addr.ip().to_string(),
+                port: from_addr.port(),
+            },
+            device_store,
+            udp_connection_states,
+        ).await;
     }
 
-    /// Handle TCP message using direct bypass to DeviceStore (like UDP bypass)
-    /// This ensures TCP events reach the frontend even when EventForwardingTask crashes
+    /// Handle TCP message - now calls unified handler with shared connection states
     pub async fn handle_tcp_message_bypass(
         message: &str,
         device_id: &str,
         device_store: &SharedDeviceStore
     ) {
-        info!("TCP_BYPASS: Processing message for device {}: {}", device_id, message);
         DebugLogger::log_tcp_message(device_id, "RECEIVED", message);
 
-        // Send connection status event directly to device store (TCP is connected)
-        let connection_event = crate::events::DeviceEvent::esp32_connection_status(
-            device_id.to_string(),
-            true, // connected = true since we're receiving TCP
-            "0.0.0.0".to_string(), // TCP doesn't provide source IP
-            3232, // Default TCP port
-            3232  // Default UDP port
-        );
-        let _ = device_store.add_event(device_id.to_string(), connection_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
+        // Use shared connection states (stored in device_store or create temporary)
+        let tcp_connection_states: Arc<RwLock<HashMap<String, bool>>> = Arc::new(RwLock::new(HashMap::new()));
 
-        // Send UDP broadcast event for the raw message (same as UDP handler does)
-        // This ensures UART/TCP messages appear in the frontend monitor
-        let broadcast_event = crate::events::DeviceEvent::esp32_udp_broadcast(
-            device_id.to_string(),
-            message.to_string(),
-            "0.0.0.0".to_string(),
-            0
-        );
-        let _ = device_store.add_event(device_id.to_string(), broadcast_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
-
-        // Enhanced JSON parsing for structured data (matching C# RemoteAccess.cs behavior)
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
-            // Handle startOptions array (from C# RemoteAccess.cs line 371-384)
-            if let Some(options_array) = value.get("startOptions") {
-                if let Some(options) = options_array.as_array() {
-                    let mut start_options = Vec::new();
-                    for option in options {
-                        if let Some(option_str) = option.as_str() {
-                            start_options.push(option_str.to_string());
-                        }
-                    }
-
-                    if !start_options.is_empty() {
-                        let start_options_event = crate::events::DeviceEvent::esp32_start_options(
-                            device_id.to_string(),
-                            start_options
-                        );
-                        let _ = device_store.add_event(device_id.to_string(), start_options_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
-                    }
-                }
-            }
-
-            // Handle changeableVariables array (from C# RemoteAccess.cs line 347-368)
-            if let Some(vars_array) = value.get("changeableVariables") {
-                if let Some(vars) = vars_array.as_array() {
-                    let mut variables = Vec::new();
-                    for var in vars {
-                        if let (Some(name), Some(value)) = (var.get("name"), var.get("value")) {
-                            if let (Some(name_str), Some(value_num)) = (name.as_str(), value.as_u64()) {
-                                variables.push(serde_json::json!({
-                                    "name": name_str,
-                                    "value": value_num
-                                }));
-                            }
-                        }
-                    }
-
-                    if !variables.is_empty() {
-                        let changeable_vars_event = crate::events::DeviceEvent::esp32_changeable_variables(
-                            device_id.to_string(),
-                            variables
-                        );
-                        let _ = device_store.add_event(device_id.to_string(), changeable_vars_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
-                    }
-                }
-            }
-
-            // Handle device information (extended from ESP32 capabilities)
-            if let Some(device_name) = value.get("deviceName").and_then(|v| v.as_str()) {
-                let firmware_version = value.get("firmwareVersion").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                let uptime = value.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-
-                let device_info_event = crate::events::DeviceEvent::esp32_device_info(
-                    device_id.to_string(),
-                    Some(device_name.to_string()),
-                    Some(firmware_version),
-                    Some(uptime as u64)
-                );
-                let _ = device_store.add_event(device_id.to_string(), device_info_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
-            }
-        }
-
-        // Parse for variable updates using regex like the C# version (from RemoteAccess.cs line 89-110)
-        let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
-        for captures in re.captures_iter(message) {
-            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
-                    device_id.to_string(),
-                    name.as_str().trim().to_string(),
-                    value.as_str().trim().to_string(),
-                );
-                let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
-            }
-        }
-
-        // Additional parsing for numeric values without quotes (common in ESP32 output)
-        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
-        for captures in numeric_re.captures_iter(message) {
-            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
-                    device_id.to_string(),
-                    name.as_str().trim().to_string(),
-                    value.as_str().trim().to_string(),
-                );
-                let _ = device_store.add_event(device_id.to_string(), variable_event, "esp32_system".to_string(), "tcp_bypass".to_string()).await;
-            }
-        }
+        Self::handle_message_unified(
+            message,
+            device_id,
+            MessageSource::Tcp {
+                ip: "0.0.0.0".to_string(),
+                port: 3232,
+            },
+            device_store,
+            &tcp_connection_states,
+        ).await;
     }
 
     /// Check if a message looks like a TCP message with JSON structure
