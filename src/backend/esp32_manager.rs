@@ -744,21 +744,20 @@ impl Esp32Manager {
             format!("{}_message", source_name.to_lowercase()),
         ).await;
 
-        // Parse JSON and extract structured data
-        Self::parse_and_process_json_data(message, device_id, device_store, source_name).await;
-
-        // Parse variable updates with regex
-        Self::parse_and_process_variable_updates(message, device_id, device_store, source_name).await;
+        // Parse message and extract structured data (JSON + regex fallback)
+        Self::parse_and_process_message(message, device_id, device_store, source_name).await;
     }
 
-    /// Parse JSON data and create appropriate events
-    async fn parse_and_process_json_data(
+    /// Parse message and create appropriate events
+    /// Combines JSON parsing with regex fallback for legacy messages
+    async fn parse_and_process_message(
         message: &str,
         device_id: &str,
         device_store: &SharedDeviceStore,
         source_name: &str,
     ) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
+        // Try JSON parsing first (structured data)
+        let json_parsed = if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
             // Handle startOptions array
             if let Some(options_array) = value.get("startOptions") {
                 if let Some(options) = options_array.as_array() {
@@ -848,82 +847,58 @@ impl Esp32Manager {
                     }
                 }
             }
-        }
-    }
 
-    /// Parse variable updates using regex
-    async fn parse_and_process_variable_updates(
-        message: &str,
-        device_id: &str,
-        device_store: &SharedDeviceStore,
-        source_name: &str,
-    ) {
-        // Parse for string variable updates: {"name": "value"}
-        let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
-        for captures in re.captures_iter(message) {
-            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
-                    device_id.to_string(),
-                    name.as_str().trim().to_string(),
-                    value.as_str().trim().to_string(),
-                );
-                let _ = device_store.add_event(
-                    device_id.to_string(),
-                    variable_event,
-                    "esp32_system".to_string(),
-                    format!("{}_data", source_name.to_lowercase())
-                ).await;
+            true // JSON parsing succeeded
+        } else {
+            false // JSON parsing failed, use regex fallback
+        };
+
+        // Regex fallback for legacy/non-JSON messages
+        // Skip if JSON was successfully parsed to avoid duplicate events
+        if !json_parsed {
+            // Parse for string variable updates: {"name": "value"}
+            let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
+            for captures in re.captures_iter(message) {
+                if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                    let variable_event = crate::events::DeviceEvent::esp32_variable_update(
+                        device_id.to_string(),
+                        name.as_str().trim().to_string(),
+                        value.as_str().trim().to_string(),
+                    );
+                    let _ = device_store.add_event(
+                        device_id.to_string(),
+                        variable_event,
+                        "esp32_system".to_string(),
+                        format!("{}_data", source_name.to_lowercase())
+                    ).await;
+                }
             }
-        }
 
-        // Parse for numeric variable updates: {"name": 123}
-        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
-        for captures in numeric_re.captures_iter(message) {
-            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                let variable_event = crate::events::DeviceEvent::esp32_variable_update(
-                    device_id.to_string(),
-                    name.as_str().trim().to_string(),
-                    value.as_str().trim().to_string(),
-                );
-                let _ = device_store.add_event(
-                    device_id.to_string(),
-                    variable_event,
-                    "esp32_system".to_string(),
-                    format!("{}_data", source_name.to_lowercase())
-                ).await;
+            // Parse for numeric variable updates: {"name": 123}
+            let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
+            for captures in numeric_re.captures_iter(message) {
+                if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                    let variable_event = crate::events::DeviceEvent::esp32_variable_update(
+                        device_id.to_string(),
+                        name.as_str().trim().to_string(),
+                        value.as_str().trim().to_string(),
+                    );
+                    let _ = device_store.add_event(
+                        device_id.to_string(),
+                        variable_event,
+                        "esp32_system".to_string(),
+                        format!("{}_data", source_name.to_lowercase())
+                    ).await;
+                }
             }
         }
     }
 
     // ========================================================================
-    // LEGACY BYPASS FUNCTIONS (call unified handler)
+    // MESSAGE BYPASS FUNCTIONS
     // ========================================================================
 
-    /// Handle UDP message - DEPRECATED: Use handle_message_unified directly
-    /// This is kept for backward compatibility only
-    #[allow(dead_code)]
-    pub async fn handle_udp_message_bypass_smart(
-        message: &str,
-        from_addr: SocketAddr,
-        device_id: &str,
-        device_store: &SharedDeviceStore,
-        udp_connection_states: &Arc<RwLock<HashMap<String, bool>>>,
-        activity_tracker: Option<&Arc<RwLock<HashMap<String, Instant>>>>,
-    ) {
-        Self::handle_message_unified(
-            message,
-            device_id,
-            MessageSource::Udp {
-                ip: from_addr.ip().to_string(),
-                port: from_addr.port(),
-            },
-            device_store,
-            udp_connection_states,
-            activity_tracker,
-        ).await;
-    }
-
-    /// Handle TCP message - now calls unified handler
+    /// Handle TCP message - calls unified handler
     /// TCP messages do NOT use activity tracking (no timeout for TCP)
     pub async fn handle_tcp_message_bypass(
         message: &str,
