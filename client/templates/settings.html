@@ -1,22 +1,22 @@
 <!-- Settings Page Content -->
 <div class="page-content">
-    <div class="container mt-4">
-        <h2><i class="bi bi-gear"></i> Settings</h2>
-        <p class="text-muted">Configure UART/Serial connection for ESP32 devices</p>
+    <div class="settings-container">
+        <h2>⚙️ Settings</h2>
+        <p class="subtitle">Configure UART/Serial connection for ESP32 devices</p>
 
-        <div class="row">
+        <div class="settings-grid">
             <!-- UART Settings Card -->
-            <div class="col-lg-8">
-                <div class="card shadow-sm">
-                    <div class="card-header">
-                        <h5 class="mb-0"><i class="bi bi-usb-plug"></i> UART Connection Settings</h5>
+            <div class="settings-main">
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <h5>🔌 UART Connection Settings</h5>
                     </div>
-                    <div class="card-body">
+                    <div class="settings-card-body">
                         <!-- Connection Status -->
-                        <div class="alert" id="uart-status-alert" role="alert">
-                            <div class="d-flex align-items-center">
-                                <div class="spinner-border spinner-border-sm me-2" role="status">
-                                    <span class="visually-hidden">Loading...</span>
+                        <div class="settings-alert" id="uart-status-alert" role="alert">
+                            <div class="alert-content">
+                                <div class="settings-spinner" role="status">
+                                    <span class="sr-only">Loading...</span>
                                 </div>
                                 <span>Checking UART status...</span>
                             </div>
@@ -25,23 +25,23 @@
                         <!-- Settings Form -->
                         <form id="uart-settings-form">
                             <!-- Serial Port Selection -->
-                            <div class="mb-3">
-                                <label for="uart-port-select" class="form-label">Serial Port</label>
-                                <div class="input-group">
-                                    <select class="form-select" id="uart-port-select" required>
+                            <div class="settings-field">
+                                <label for="uart-port-select" class="settings-label">Serial Port</label>
+                                <div class="settings-input-group">
+                                    <select class="settings-select" id="uart-port-select" required>
                                         <option value="">-- Select Port --</option>
                                     </select>
-                                    <button class="btn btn-outline-secondary" type="button" id="refresh-ports-btn">
-                                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                                    <button class="settings-btn settings-btn-secondary" type="button" id="refresh-ports-btn">
+                                        🔄 Refresh
                                     </button>
                                 </div>
-                                <div class="form-text">Select the serial port where ESP32 devices are connected</div>
+                                <div class="settings-help">Select the serial port where ESP32 devices are connected</div>
                             </div>
 
                             <!-- Baud Rate Selection -->
-                            <div class="mb-3">
-                                <label for="uart-baudrate-select" class="form-label">Baud Rate</label>
-                                <select class="form-select" id="uart-baudrate-select" required>
+                            <div class="settings-field">
+                                <label for="uart-baudrate-select" class="settings-label">Baud Rate</label>
+                                <select class="settings-select" id="uart-baudrate-select" required>
                                     <option value="9600">9600</option>
                                     <option value="19200">19200</option>
                                     <option value="38400">38400</option>
@@ -51,31 +51,31 @@
                                     <option value="460800">460800</option>
                                     <option value="921600">921600</option>
                                 </select>
-                                <div class="form-text">Communication speed (default: 115200)</div>
+                                <div class="settings-help">Communication speed (default: 115200)</div>
                             </div>
 
                             <!-- Action Buttons -->
-                            <div class="d-flex gap-2">
-                                <button type="button" class="btn btn-success" id="uart-connect-btn">
-                                    <i class="bi bi-plug"></i> Connect
+                            <div class="settings-button-group">
+                                <button type="button" class="settings-btn settings-btn-success" id="uart-connect-btn">
+                                    🔌 Connect
                                 </button>
-                                <button type="button" class="btn btn-danger" id="uart-disconnect-btn" disabled>
-                                    <i class="bi bi-plug-fill"></i> Disconnect
+                                <button type="button" class="settings-btn settings-btn-danger" id="uart-disconnect-btn" disabled>
+                                    🔌 Disconnect
                                 </button>
                             </div>
-                            <div class="form-text mt-2">
-                                <i class="bi bi-info-circle"></i> Settings are automatically saved when you connect
+                            <div class="settings-help">
+                                ℹ️ Settings are automatically saved when you connect
                             </div>
                         </form>
                     </div>
                 </div>
 
                 <!-- Info Card -->
-                <div class="card shadow-sm mt-3">
-                    <div class="card-header">
-                        <h6 class="mb-0"><i class="bi bi-info-circle"></i> UART Connection Info</h6>
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <h6>ℹ️ UART Connection Info</h6>
                     </div>
-                    <div class="card-body">
+                    <div class="settings-card-body">
                         <p>UART (Universal Asynchronous Receiver-Transmitter) allows communication with ESP32 devices over serial connection.</p>
                         <ul>
                             <li>Connect multiple ESP32 devices to a single serial port</li>
@@ -88,27 +88,27 @@
             </div>
 
             <!-- Quick Status Card -->
-            <div class="col-lg-4">
-                <div class="card shadow-sm">
-                    <div class="card-header">
-                        <h6 class="mb-0"><i class="bi bi-activity"></i> Current Status</h6>
+            <div class="settings-sidebar">
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <h6>📊 Current Status</h6>
                     </div>
-                    <div class="card-body">
-                        <div class="mb-3">
+                    <div class="settings-card-body">
+                        <div class="status-item">
                             <strong>Connection:</strong>
-                            <span id="status-connection" class="badge bg-secondary">Unknown</span>
+                            <span id="status-connection" class="settings-badge settings-badge-secondary">Unknown</span>
                         </div>
-                        <div class="mb-3">
+                        <div class="status-item">
                             <strong>Port:</strong>
-                            <span id="status-port" class="text-muted">Not connected</span>
+                            <span id="status-port" class="status-text">Not connected</span>
                         </div>
-                        <div class="mb-3">
+                        <div class="status-item">
                             <strong>Baud Rate:</strong>
-                            <span id="status-baudrate" class="text-muted">-</span>
+                            <span id="status-baudrate" class="status-text">-</span>
                         </div>
-                        <div class="mb-0">
+                        <div class="status-item status-item-last">
                             <strong>Auto-Reconnect:</strong>
-                            <span id="status-autoconnect" class="badge bg-success">Enabled</span>
+                            <span id="status-autoconnect" class="settings-badge settings-badge-success">Enabled</span>
                         </div>
                     </div>
                 </div>
@@ -116,6 +116,8 @@
         </div>
     </div>
 </div>
+
+<link rel="stylesheet" href="/styles/settings.css">
 
 <!-- Settings Page Script -->
 <script>
@@ -223,9 +225,9 @@ function updateStatusDisplay(status) {
     const baudrateSpan = document.getElementById('status-baudrate');
 
     if (status.connected) {
-        statusAlert.className = 'alert alert-success';
-        statusAlert.innerHTML = '<i class="bi bi-check-circle"></i> UART connected: ' + status.port;
-        connBadge.className = 'badge bg-success';
+        statusAlert.className = 'settings-alert settings-alert-success';
+        statusAlert.innerHTML = '<div class="alert-content">✅ UART connected: ' + status.port + '</div>';
+        connBadge.className = 'settings-badge settings-badge-success';
         connBadge.textContent = 'Connected';
         portSpan.textContent = status.port || 'Unknown';
         baudrateSpan.textContent = status.baudRate || '-';
@@ -233,9 +235,9 @@ function updateStatusDisplay(status) {
         connectBtn.disabled = true;
         disconnectBtn.disabled = false;
     } else {
-        statusAlert.className = 'alert alert-warning';
-        statusAlert.innerHTML = '<i class="bi bi-exclamation-triangle"></i> UART not connected';
-        connBadge.className = 'badge bg-secondary';
+        statusAlert.className = 'settings-alert settings-alert-warning';
+        statusAlert.innerHTML = '<div class="alert-content">⚠️ UART not connected</div>';
+        connBadge.className = 'settings-badge settings-badge-secondary';
         connBadge.textContent = 'Disconnected';
         portSpan.textContent = 'Not connected';
         baudrateSpan.textContent = '-';
@@ -306,19 +308,16 @@ async function disconnectUart() {
 
 // Show toast notification
 function showToast(message, type = 'info') {
-    // Use Bootstrap toast or simple alert
     console.log(`[${type.toUpperCase()}] ${message}`);
 
-    // Simple alert for now (can be replaced with Bootstrap toast)
-    const alertClass = type === 'success' ? 'alert-success' :
-                       type === 'error' ? 'alert-danger' : 'alert-info';
+    const alertClass = type === 'success' ? 'settings-toast-success' :
+                       type === 'error' ? 'settings-toast-danger' : 'settings-toast-info';
 
     const alertDiv = document.createElement('div');
-    alertDiv.className = `alert ${alertClass} alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3`;
-    alertDiv.style.zIndex = '9999';
+    alertDiv.className = `settings-toast ${alertClass}`;
     alertDiv.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        <span>${message}</span>
+        <button type="button" class="toast-close" onclick="this.parentElement.remove()">×</button>
     `;
 
     document.body.appendChild(alertDiv);
