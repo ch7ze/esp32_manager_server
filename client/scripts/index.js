@@ -807,75 +807,7 @@
             userList.innerHTML = '<div class="no-users">Suchfehler: ' + error.message + '</div>';
         }
     }
-    
-    async function displayUserSearchResults(users) {
-        const resultsContainer = document.getElementById('user-search-results');
-        
-        // Filter current user out
-        const currentUserId = await getCurrentUserId();
-        const filteredUsers = currentUserId ? users.filter(user => user.user_id !== currentUserId) : users;
-        
-        if (filteredUsers.length === 0) {
-            resultsContainer.innerHTML = '<div style="padding: 10px; color: #6c757d;">Keine anderen Benutzer gefunden</div>';
-            resultsContainer.style.display = 'block';
-            return;
-        }
-        
-        const html = filteredUsers.map((user, index) => `
-            <div class="search-result-item" data-user-id="${user.user_id}" data-display-name="${user.display_name}" data-index="${index}">
-                <div class="user-name">${user.display_name}</div>
-            </div>
-        `).join('');
-        
-        resultsContainer.innerHTML = html;
-        resultsContainer.style.display = 'block';
-        
-        // Enhanced event delegation for search results with accessibility
-        resultsContainer.onclick = (e) => {
-            const resultItem = e.target.closest('.search-result-item');
-            if (resultItem) {
-                const userId = resultItem.dataset.userId;
-                const displayName = resultItem.dataset.displayName;
-                console.log('Search result clicked:', { userId, displayName });
-                window.selectUser(userId, displayName);
-            }
-        };
-        
-        // Keyboard navigation for search results
-        resultsContainer.onkeydown = (e) => {
-            const items = resultsContainer.querySelectorAll('.search-result-item');
-            const currentIndex = Array.from(items).findIndex(item => item === document.activeElement);
-            
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                const nextIndex = (currentIndex + 1) % items.length;
-                items[nextIndex]?.focus();
-            } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                const prevIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
-                items[prevIndex]?.focus();
-            } else if (e.key === 'Enter' && currentIndex >= 0) {
-                e.preventDefault();
-                items[currentIndex].click();
-            } else if (e.key === 'Escape') {
-                resultsContainer.style.display = 'none';
-                document.getElementById('user-search-input').focus();
-            }
-        };
-        
-        // Add tabindex and ARIA attributes to search result items
-        const resultItems = resultsContainer.querySelectorAll('.search-result-item');
-        resultItems.forEach((item, index) => {
-            item.setAttribute('tabindex', '0');
-            item.setAttribute('role', 'option');
-            item.setAttribute('aria-label', `Benutzer auswählen: ${item.dataset.displayName}`);
-        });
-        
-        // Update ARIA attributes for the container
-        resultsContainer.setAttribute('role', 'listbox');
-        resultsContainer.setAttribute('aria-label', 'Suchergebnisse für Benutzer');
-    }
-    
+
     window.selectUser = function(userId, displayName) {
         console.log('selectUser called with:', { userId, displayName });
         selectedUserId = userId;

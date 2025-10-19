@@ -229,13 +229,6 @@ function removeDeviceTab(deviceId) {
     registerForDevice(deviceId, 'light');
 }
 
-function activateTab(deviceId) {
-    const tabButton = document.getElementById(`${deviceId}-tab`);
-    if (tabButton) {
-        tabButton.click();
-    }
-}
-
 function updateUrlForDevice(deviceId) {
     const newUrl = `/devices/${deviceId}`;
     window.history.pushState({deviceId: deviceId}, '', newUrl);
@@ -268,55 +261,6 @@ window.addDeviceTab = addDeviceTab;
 window.removeDeviceTab = removeDeviceTab;
 window.updateUrlForDevice = updateUrlForDevice;
 window.switchToTab = switchToTab;
-
-// Resolve MAC address to deviceId by checking discovered devices
-async function resolveDeviceIdentifier(identifier) {
-    try {
-        const response = await fetch('/api/esp32/discovered', {
-            method: 'GET',
-            credentials: 'include'
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            const devices = data.devices || [];
-
-            console.log('resolveDeviceIdentifier: Looking for identifier:', identifier);
-            console.log('resolveDeviceIdentifier: Available devices:', devices);
-
-            // First check if identifier is already a deviceId
-            const directMatch = devices.find(device => device.deviceId === identifier);
-            if (directMatch) {
-                console.log('resolveDeviceIdentifier: Found direct deviceId match:', directMatch);
-                return identifier;
-            }
-
-            // Then check if identifier is a MAC address
-            console.log('resolveDeviceIdentifier: Checking MAC addresses...');
-            devices.forEach(device => {
-                console.log(`resolveDeviceIdentifier: Device ${device.deviceId} has MAC: "${device.macAddress}" (comparing with "${identifier}")`);
-            });
-
-            const macMatch = devices.find(device => device.macAddress === identifier);
-            if (macMatch) {
-                console.log('Found MAC address match, device ID should now be MAC address:', identifier);
-                // Since we changed the system to use MAC as device ID, return the identifier directly
-                return identifier;
-            }
-
-            console.warn('No device found for identifier:', identifier);
-            console.warn('Available device IDs:', devices.map(d => d.deviceId));
-            console.warn('Available MAC addresses:', devices.map(d => d.macAddress));
-            return null;
-        } else {
-            console.error('Failed to fetch discovered devices:', response.status);
-            return null;
-        }
-    } catch (error) {
-        console.error('Error resolving device identifier:', error);
-        return null;
-    }
-}
 
 function registerForDevice(deviceId, subscriptionType = 'full') {
     console.log(`Attempting to register for device: ${deviceId} with subscription: ${subscriptionType}`);
