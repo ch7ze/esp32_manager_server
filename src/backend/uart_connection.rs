@@ -317,8 +317,25 @@ impl UartConnection {
         if let Some(stream) = stream_guard.as_mut() {
             use tokio::io::AsyncWriteExt;
 
+            // Parse the command JSON and add device_id field
+            let command_with_device_id = match serde_json::from_str::<serde_json::Value>(command_json) {
+                Ok(mut cmd_value) => {
+                    // Add device_id to the command JSON
+                    if let Some(obj) = cmd_value.as_object_mut() {
+                        obj.insert("device_id".to_string(), serde_json::Value::String(device_id.to_string()));
+                    }
+                    serde_json::to_string(&cmd_value)
+                        .map_err(|e| format!("Failed to serialize command with device_id: {}", e))?
+                }
+                Err(e) => {
+                    return Err(format!("Failed to parse command JSON: {}", e));
+                }
+            };
+
+            info!("UART command with device_id: {}", command_with_device_id);
+
             // Send command as JSON string with newline
-            let command_with_newline = format!("{}\n", command_json);
+            let command_with_newline = format!("{}\n", command_with_device_id);
             stream.write_all(command_with_newline.as_bytes())
                 .await
                 .map_err(|e| format!("Failed to write to UART: {}", e))?;
