@@ -686,10 +686,15 @@ function createDeviceContent(device, suffix = '') {
                     <div class="variable-monitor-section">
                         <h6><i class="bi bi-link-45deg"></i> Variable Monitor</h6>
                         <div class="monitor-area" id="${idPrefix}-variable-monitor">
-                            <!-- Text Variables (without min/max) -->
                             <div id="${idPrefix}-variable-monitor-text"></div>
-                            <!-- Bar Variables (with min/max) -->
-                            <div id="${idPrefix}-variable-monitor-bars"></div>
+                        </div>
+                    </div>
+
+                    <!-- Progress Bar Monitor -->
+                    <div class="progress-bar-monitor-section">
+                        <h6><i class="bi bi-bar-chart"></i> Progress Monitor</h6>
+                        <div id="${idPrefix}-progress-bars">
+                            <p class="text-muted">No progress data available</p>
                         </div>
                     </div>
                 </div>
@@ -976,52 +981,17 @@ function updateVariableMonitor(deviceId, name, value, min = null, max = null) {
         const timestamp = new Date().toLocaleTimeString();
         const variableId = `${deviceId}-${suffix}-variable-${name}`;
 
+        // Variables mit min/max: Progress Bar Monitor
         if (min !== null && max !== null) {
-            // Variable mit min/max: Balken-Darstellung im Bars-Bereich
-            const barsContainerId = `${deviceId}-${suffix}-variable-monitor-bars`;
-            const barsContainer = document.getElementById(barsContainerId);
+            const progressContainerId = `${deviceId}-${suffix}-progress-bars`;
+            const progressContainer = document.getElementById(progressContainerId);
 
-            if (barsContainer) {
-                let existingDiv = document.getElementById(variableId);
-                const numValue = parseFloat(value);
-                const minNum = parseFloat(min);
-                const maxNum = parseFloat(max);
-                const percentage = Math.max(0, Math.min(100, ((numValue - minNum) / (maxNum - minNum)) * 100));
-
-                console.log(`Variable ${name}: value=${numValue}, min=${minNum}, max=${maxNum}, percentage=${percentage}%`);
-
-                if (existingDiv) {
-                    // Update existing bar
-                    existingDiv.querySelector('.variable-bar-fill').style.width = `${percentage}%`;
-                    existingDiv.querySelector('.variable-bar-value').textContent = `${name}: ${value}`;
-                } else {
-                    // Remove from text area if it was there before
-                    const textContainerId = `${deviceId}-${suffix}-variable-monitor-text`;
-                    const oldTextEntry = document.getElementById(variableId);
-                    if (oldTextEntry) oldTextEntry.remove();
-
-                    // Create new bar
-                    existingDiv = document.createElement('div');
-                    existingDiv.id = variableId;
-                    existingDiv.className = 'variable-bar-container';
-                    existingDiv.innerHTML = `
-                        <div class="variable-bar-label">
-                            <span class="variable-bar-value">${name}: ${value}</span>
-                        </div>
-                        <div class="variable-bar-wrapper">
-                            <span class="variable-bar-min">${min}</span>
-                            <div class="variable-bar">
-                                <div class="variable-bar-fill" style="width: ${percentage}%"></div>
-                            </div>
-                            <span class="variable-bar-max">${max}</span>
-                        </div>
-                    `;
-                    barsContainer.appendChild(existingDiv);
-                }
+            if (progressContainer) {
+                updateProgressBar(progressContainer, name, value, min, max);
                 updated = true;
             }
         } else {
-            // Variable ohne min/max: Textdarstellung im Text-Bereich
+            // Variables ohne min/max: Textdarstellung im Text-Bereich
             const textContainerId = `${deviceId}-${suffix}-variable-monitor-text`;
             const textContainer = document.getElementById(textContainerId);
 
@@ -1033,11 +1003,6 @@ function updateVariableMonitor(deviceId, name, value, min = null, max = null) {
                     // Update existing text
                     existingDiv.textContent = content;
                 } else {
-                    // Remove from bars area if it was there before
-                    const barsContainerId = `${deviceId}-${suffix}-variable-monitor-bars`;
-                    const oldBarEntry = document.getElementById(variableId);
-                    if (oldBarEntry) oldBarEntry.remove();
-
                     // Create new text entry
                     existingDiv = document.createElement('div');
                     existingDiv.id = variableId;
@@ -1052,6 +1017,55 @@ function updateVariableMonitor(deviceId, name, value, min = null, max = null) {
 
     if (updated) {
     } else {
+    }
+}
+
+function updateProgressBar(container, name, value, min, max) {
+    const progressBarId = `progress-bar-${name}`;
+    let progressItem = container.querySelector(`[data-progress-id="${progressBarId}"]`);
+
+    // Berechne Prozentsatz
+    const range = max - min;
+    const normalizedValue = value - min;
+    const percentage = range > 0 ? (normalizedValue / range) * 100 : 0;
+    const clampedPercentage = Math.max(0, Math.min(100, percentage));
+
+    if (!progressItem) {
+        // Remove "no data" message if exists
+        const noDataMsg = container.querySelector('.text-muted');
+        if (noDataMsg) {
+            noDataMsg.remove();
+        }
+
+        // Create new progress bar item
+        progressItem = document.createElement('div');
+        progressItem.className = 'progress-bar-item';
+        progressItem.setAttribute('data-progress-id', progressBarId);
+        progressItem.innerHTML = `
+            <div class="progress-bar-label">${name}</div>
+            <div class="progress-bar-container">
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" style="width: ${clampedPercentage}%"></div>
+                </div>
+                <div class="progress-bar-values">
+                    <span class="progress-min">${min}</span>
+                    <span class="progress-value">${value}</span>
+                    <span class="progress-max">${max}</span>
+                </div>
+            </div>
+        `;
+        container.appendChild(progressItem);
+    } else {
+        // Update existing progress bar
+        const fillEl = progressItem.querySelector('.progress-bar-fill');
+        const valueEl = progressItem.querySelector('.progress-value');
+        const minEl = progressItem.querySelector('.progress-min');
+        const maxEl = progressItem.querySelector('.progress-max');
+
+        if (fillEl) fillEl.style.width = `${clampedPercentage}%`;
+        if (valueEl) valueEl.textContent = value;
+        if (minEl) minEl.textContent = min;
+        if (maxEl) maxEl.textContent = max;
     }
 }
 

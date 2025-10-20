@@ -492,24 +492,14 @@
     padding: 0; /* No padding - items have their own */
     display: flex;
     flex-direction: column;
-    gap: 4px; /* Small gap between text and bar sections */
+    gap: 2px; /* Small gap between text entries */
 }
 
-/* Inner containers for text and bar variables */
+/* Text variables container */
 .variable-monitor-section .monitor-area > div {
     display: flex;
     flex-direction: column;
-}
-
-/* Text variables section - tighter spacing */
-.variable-monitor-section .monitor-area > div:first-child {
     gap: 2px;
-}
-
-/* Bar variables section - more spacing */
-.variable-monitor-section .monitor-area > div:last-child {
-    gap: 6px;
-    margin-top: 4px; /* Small separation from text variables */
 }
 
 /* Modern Button Styling */
@@ -1174,34 +1164,6 @@
         background: rgba(102, 126, 234, 0.08);
     }
 
-    .variable-bar-container {
-        background: rgba(102, 126, 234, 0.12);
-        border-color: rgba(102, 126, 234, 0.3);
-    }
-
-    .variable-bar-container:hover {
-        background: rgba(102, 126, 234, 0.18);
-        border-color: rgba(102, 126, 234, 0.45);
-    }
-
-    .variable-bar-label {
-        color: #f8f9fa;
-    }
-
-    .variable-bar-value {
-        color: #8b9aee;
-    }
-
-    .variable-bar-min,
-    .variable-bar-max {
-        color: rgba(255, 255, 255, 0.7);
-    }
-
-    .variable-bar {
-        background: rgba(102, 126, 234, 0.2);
-        border-color: rgba(102, 126, 234, 0.4);
-    }
-
     .monitor-area {
         color: #f8f9fa;
     }
@@ -1243,77 +1205,133 @@
     border-radius: 3px;
 }
 
-/* Variable Monitor - Bar Variables Section */
-.variable-bar-container {
-    margin-bottom: 6px;
-    padding: 4px 6px;
-    background: rgba(102, 126, 234, 0.08);
-    border-radius: 6px;
-    border: 1px solid rgba(102, 126, 234, 0.2);
-    transition: all 0.2s ease;
-}
-
-.variable-bar-container:hover {
-    background: rgba(102, 126, 234, 0.12);
-    border-color: rgba(102, 126, 234, 0.35);
-    transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
-}
-
-.variable-bar-label {
-    margin-bottom: 4px;
-    font-size: 0.8em;
-    color: #333;
-    font-weight: 500;
-}
-
-.variable-bar-value {
-    font-weight: 600;
-    color: #667eea;
-}
-
-.variable-bar-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.variable-bar-min,
-.variable-bar-max {
-    font-size: 0.75em;
-    color: #666;
-    min-width: 35px;
-    text-align: center;
-    font-weight: 500;
-}
-
-.variable-bar {
-    flex: 1;
-    height: 18px;
-    background: rgba(200, 200, 200, 0.3);
-    border-radius: 9px;
+/* Progress Bar Monitor Section */
+.progress-bar-monitor-section {
+    background: linear-gradient(135deg, rgba(40, 167, 69, 0.05), rgba(32, 201, 151, 0.05));
+    border: 2px solid rgba(40, 167, 69, 0.1);
+    border-radius: 15px;
+    padding: 10px 12px;
+    margin-bottom: 0;
+    position: relative;
     overflow: hidden;
-    position: relative;
-    border: 1px solid rgba(102, 126, 234, 0.3);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
 }
 
-.variable-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    border-radius: 0;
-    transition: width 0.3s ease;
-    box-shadow: 0 1px 3px rgba(102, 126, 234, 0.4);
-    position: relative;
-    min-width: 2px;
-}
-
-.variable-bar-fill::after {
+.progress-bar-monitor-section::before {
     content: '';
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    height: 50%;
-    background: linear-gradient(180deg, rgba(255,255,255,0.4) 0%, transparent 100%);
-    border-radius: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #28a745, #20c997);
+}
+
+.progress-bar-monitor-section h6 {
+    color: #28a745;
+    font-weight: 600;
+    margin-bottom: 6px;
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.progress-bar-item {
+    margin-bottom: 8px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 8px;
+    border: 1px solid rgba(40, 167, 69, 0.15);
+}
+
+.progress-bar-label {
+    font-weight: 600;
+    color: #495057;
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+}
+
+.progress-bar-container {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.progress-bar-track {
+    width: 100%;
+    height: 24px;
+    background: rgba(40, 167, 69, 0.1);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(40, 167, 69, 0.2);
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #28a745, #20c997);
+    border-radius: 12px;
+    transition: width 0.3s ease;
+    box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
+}
+
+.progress-bar-values {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: #495057;
+    font-weight: 500;
+    padding: 0 2px;
+}
+
+.progress-min,
+.progress-max {
+    color: #6c757d;
+}
+
+.progress-value {
+    color: #28a745;
+    font-weight: 600;
+}
+
+/* Dark mode for progress bars */
+@media (prefers-color-scheme: dark) {
+    .progress-bar-monitor-section {
+        background: linear-gradient(135deg, rgba(40, 167, 69, 0.15), rgba(32, 201, 151, 0.15));
+        border-color: rgba(40, 167, 69, 0.3);
+    }
+
+    .progress-bar-monitor-section h6 {
+        color: #4ecb71;
+    }
+
+    .progress-bar-item {
+        background: rgba(52, 58, 64, 0.8);
+        border-color: rgba(40, 167, 69, 0.3);
+    }
+
+    .progress-bar-label {
+        color: #f8f9fa;
+    }
+
+    .progress-bar-track {
+        background: rgba(40, 167, 69, 0.2);
+        border-color: rgba(40, 167, 69, 0.3);
+    }
+
+    .progress-bar-values {
+        color: #f8f9fa;
+    }
+
+    .progress-value {
+        color: #4ecb71;
+    }
+
+    .progress-min,
+    .progress-max {
+        color: #adb5bd;
+    }
 }
