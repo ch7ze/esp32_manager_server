@@ -796,10 +796,23 @@ impl Esp32Manager {
                     for var in vars {
                         if let (Some(name), Some(value)) = (var.get("name"), var.get("value")) {
                             if let (Some(name_str), Some(value_num)) = (name.as_str(), value.as_u64()) {
-                                variables.push(serde_json::json!({
+                                // Basis-Variable mit name und value
+                                let mut var_json = serde_json::json!({
                                     "name": name_str,
                                     "value": value_num
-                                }));
+                                });
+
+                                // Optional: min Wert hinzufügen
+                                if let Some(min_val) = var.get("min").and_then(|v| v.as_u64()) {
+                                    var_json["min"] = serde_json::json!(min_val);
+                                }
+
+                                // Optional: max Wert hinzufügen
+                                if let Some(max_val) = var.get("max").and_then(|v| v.as_u64()) {
+                                    var_json["max"] = serde_json::json!(max_val);
+                                }
+
+                                variables.push(var_json);
                             }
                         }
                     }
@@ -849,6 +862,63 @@ impl Esp32Manager {
 
                     if let Some(memory_free) = status_obj.get("memoryFree").and_then(|v| v.as_u64()) {
                         debug!("{}: Device {} memory free: {} bytes", source_name, device_id, memory_free);
+                    }
+                }
+            }
+
+            // Handle legacy single variable updates with optional min/max
+            // Format: {"variableName": "value", "min": 0, "max": 100}
+            // or: {"variableName": 123, "min": 0, "max": 100}
+            if let Some(obj) = value.as_object() {
+                // Collect all fields except known metadata fields
+                let skip_fields = ["device_id", "startOptions", "changeableVariables",
+                                   "deviceName", "firmwareVersion", "uptime", "status"];
+
+                // Check if this is a simple variable update with min/max
+                let has_min = obj.contains_key("min");
+                let has_max = obj.contains_key("max");
+
+                if has_min || has_max {
+                    // Find the variable field(s) - any field that's not min/max or metadata
+                    for (key, val) in obj.iter() {
+                        if key != "min" && key != "max" && !skip_fields.contains(&key.as_str()) {
+                            // Extract value (string or number)
+                            let value_str = if let Some(s) = val.as_str() {
+                                s.to_string()
+                            } else if let Some(n) = val.as_u64() {
+                                n.to_string()
+                            } else if let Some(n) = val.as_i64() {
+                                n.to_string()
+                            } else if let Some(f) = val.as_f64() {
+                                f.to_string()
+                            } else {
+                                continue; // Skip non-primitive values
+                            };
+
+                            // Extract min/max if present
+                            let min_val = obj.get("min").and_then(|v| v.as_u64());
+                            let max_val = obj.get("max").and_then(|v| v.as_u64());
+
+                            // Send variable update event with min/max metadata
+                            debug!("{}: Extracted variable with min/max - name: {}, value: {}, min: {:?}, max: {:?}",
+                                   source_name, key, value_str, min_val, max_val);
+
+                            // Send as Esp32VariableUpdate with min/max
+                            let variable_event = crate::events::DeviceEvent::esp32_variable_update_with_range(
+                                device_id.to_string(),
+                                key.clone(),
+                                value_str,
+                                min_val,
+                                max_val,
+                            );
+
+                            let _ = device_store.add_event(
+                                device_id.to_string(),
+                                variable_event,
+                                "esp32_system".to_string(),
+                                format!("{}_data", source_name.to_lowercase())
+                            ).await;
+                        }
                     }
                 }
             }

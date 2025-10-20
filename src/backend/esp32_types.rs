@@ -127,6 +127,10 @@ pub enum Esp32Event {
 pub struct Esp32Variable {
     pub name: String,
     pub value: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<u32>,
 }
 
 impl Esp32Event {

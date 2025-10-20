@@ -465,7 +465,11 @@ function processDeviceEvent(deviceId, event) {
 
         case 'esp32VariableUpdate':
             device.variables.set(eventData.variableName, eventData.variableValue);
-            updateVariableMonitor(deviceId, eventData.variableName, eventData.variableValue);
+
+            // Extract min/max if present
+            const min = eventData.min !== undefined ? eventData.min : null;
+            const max = eventData.max !== undefined ? eventData.max : null;
+            updateVariableMonitor(deviceId, eventData.variableName, eventData.variableValue, min, max);
 
             // Nur bei gesendeten Variablen das Textfeld reaktivieren
             const variableKey = `${deviceId}-${eventData.variableName}`;
@@ -484,6 +488,13 @@ function processDeviceEvent(deviceId, event) {
             // Store the changeable variables in the device object
             device.changeableVariables = eventData.variables;
             updateVariableControls(deviceId, eventData.variables);
+
+            // Update variable monitor with min/max info if available
+            eventData.variables.forEach(variable => {
+                const min = variable.min !== undefined ? variable.min : null;
+                const max = variable.max !== undefined ? variable.max : null;
+                updateVariableMonitor(deviceId, variable.name, variable.value, min, max);
+            });
             break;
 
         case 'userJoined':
@@ -674,7 +685,12 @@ function createDeviceContent(device, suffix = '') {
                     <!-- Variable Monitor -->
                     <div class="variable-monitor-section">
                         <h6><i class="bi bi-link-45deg"></i> Variable Monitor</h6>
-                        <div class="monitor-area" id="${idPrefix}-variable-monitor"></div>
+                        <div class="monitor-area" id="${idPrefix}-variable-monitor">
+                            <!-- Text Variables (without min/max) -->
+                            <div id="${idPrefix}-variable-monitor-text"></div>
+                            <!-- Bar Variables (with min/max) -->
+                            <div id="${idPrefix}-variable-monitor-bars"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -950,37 +966,87 @@ function isScrolledToBottom(element) {
     return isAtBottom;
 }
 
-function updateVariableMonitor(deviceId, name, value) {
+function updateVariableMonitor(deviceId, name, value, min = null, max = null) {
 
     // Update all variable monitor variants (tab, stack)
     const suffixes = ['tab', 'stack'];
     let updated = false;
 
     suffixes.forEach(suffix => {
-        const monitorId = `${deviceId}-${suffix}-variable-monitor`;
-        const monitorEl = document.getElementById(monitorId);
+        const timestamp = new Date().toLocaleTimeString();
+        const variableId = `${deviceId}-${suffix}-variable-${name}`;
 
-        if (monitorEl) {
-            // Look for existing variable entry
-            const variableId = `${monitorId}-${name}`;
-            let existingDiv = document.getElementById(variableId);
+        if (min !== null && max !== null) {
+            // Variable mit min/max: Balken-Darstellung im Bars-Bereich
+            const barsContainerId = `${deviceId}-${suffix}-variable-monitor-bars`;
+            const barsContainer = document.getElementById(barsContainerId);
 
-            const timestamp = new Date().toLocaleTimeString();
-            const content = `[${timestamp}] ${name}: ${value}`;
+            if (barsContainer) {
+                let existingDiv = document.getElementById(variableId);
+                const numValue = parseFloat(value);
+                const minNum = parseFloat(min);
+                const maxNum = parseFloat(max);
+                const percentage = Math.max(0, Math.min(100, ((numValue - minNum) / (maxNum - minNum)) * 100));
 
-            if (existingDiv) {
-                // Update existing variable in place
-                existingDiv.textContent = content;
-            } else {
-                // Create new variable entry
-                existingDiv = document.createElement('div');
-                existingDiv.id = variableId;
-                existingDiv.textContent = content;
-                existingDiv.style.marginBottom = '2px';
-                monitorEl.appendChild(existingDiv);
+                console.log(`Variable ${name}: value=${numValue}, min=${minNum}, max=${maxNum}, percentage=${percentage}%`);
+
+                if (existingDiv) {
+                    // Update existing bar
+                    existingDiv.querySelector('.variable-bar-fill').style.width = `${percentage}%`;
+                    existingDiv.querySelector('.variable-bar-value').textContent = `${name}: ${value}`;
+                } else {
+                    // Remove from text area if it was there before
+                    const textContainerId = `${deviceId}-${suffix}-variable-monitor-text`;
+                    const oldTextEntry = document.getElementById(variableId);
+                    if (oldTextEntry) oldTextEntry.remove();
+
+                    // Create new bar
+                    existingDiv = document.createElement('div');
+                    existingDiv.id = variableId;
+                    existingDiv.className = 'variable-bar-container';
+                    existingDiv.innerHTML = `
+                        <div class="variable-bar-label">
+                            <span class="variable-bar-value">${name}: ${value}</span>
+                        </div>
+                        <div class="variable-bar-wrapper">
+                            <span class="variable-bar-min">${min}</span>
+                            <div class="variable-bar">
+                                <div class="variable-bar-fill" style="width: ${percentage}%"></div>
+                            </div>
+                            <span class="variable-bar-max">${max}</span>
+                        </div>
+                    `;
+                    barsContainer.appendChild(existingDiv);
+                }
+                updated = true;
             }
+        } else {
+            // Variable ohne min/max: Textdarstellung im Text-Bereich
+            const textContainerId = `${deviceId}-${suffix}-variable-monitor-text`;
+            const textContainer = document.getElementById(textContainerId);
 
-            updated = true;
+            if (textContainer) {
+                let existingDiv = document.getElementById(variableId);
+                const content = `[${timestamp}] ${name}: ${value}`;
+
+                if (existingDiv) {
+                    // Update existing text
+                    existingDiv.textContent = content;
+                } else {
+                    // Remove from bars area if it was there before
+                    const barsContainerId = `${deviceId}-${suffix}-variable-monitor-bars`;
+                    const oldBarEntry = document.getElementById(variableId);
+                    if (oldBarEntry) oldBarEntry.remove();
+
+                    // Create new text entry
+                    existingDiv = document.createElement('div');
+                    existingDiv.id = variableId;
+                    existingDiv.className = 'variable-text-entry';
+                    existingDiv.textContent = content;
+                    textContainer.appendChild(existingDiv);
+                }
+                updated = true;
+            }
         }
     });
 

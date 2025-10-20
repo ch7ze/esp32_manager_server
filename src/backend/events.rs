@@ -150,6 +150,10 @@ pub enum DeviceEvent {
         variable_name: String,
         #[serde(rename = "variableValue")]
         variable_value: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        min: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max: Option<u64>,
     },
     #[serde(rename = "esp32StartOptions")]
     Esp32StartOptions {
@@ -265,7 +269,17 @@ impl DeviceEvent {
     }
     
     pub fn esp32_variable_update(device_id: String, variable_name: String, variable_value: String) -> Self {
-        DeviceEvent::Esp32VariableUpdate { device_id, variable_name, variable_value }
+        DeviceEvent::Esp32VariableUpdate { device_id, variable_name, variable_value, min: None, max: None }
+    }
+
+    pub fn esp32_variable_update_with_range(
+        device_id: String,
+        variable_name: String,
+        variable_value: String,
+        min: Option<u64>,
+        max: Option<u64>
+    ) -> Self {
+        DeviceEvent::Esp32VariableUpdate { device_id, variable_name, variable_value, min, max }
     }
     
     pub fn esp32_start_options(device_id: String, options: Vec<String>) -> Self {

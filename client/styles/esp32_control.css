@@ -58,9 +58,9 @@
 }
 
 .main-container.landscape-layout .variable-monitor-section .monitor-area {
-    height: 180px; /* Compact variable monitor */
-    max-height: 180px; /* Override default max-height */
-    overflow-y: auto; /* Ensure scrolling */
+    height: auto; /* Allow natural height based on content */
+    max-height: 500px; /* Maximum height before scrolling */
+    overflow-y: auto; /* Ensure scrolling if content exceeds max-height */
     overflow-anchor: auto;
 }
 
@@ -112,8 +112,8 @@
 
 /* Variable monitor in portrait layout (medium screens) behaves like narrow/stack layout */
 .esp32-tabs .main-container.portrait-layout .variable-monitor-section .monitor-area {
-    height: 200px; /* Same as narrow layout */
-    max-height: 200px;
+    height: auto; /* Allow natural height based on content */
+    max-height: 500px; /* Maximum height before scrolling */
     overflow-y: auto;
     overflow-anchor: auto;
 }
@@ -131,8 +131,8 @@
 }
 
 .esp32-stack .main-container .variable-monitor-section .monitor-area {
-    height: 200px;
-    max-height: 200px;
+    height: auto; /* Allow natural height based on content */
+    max-height: 500px; /* Maximum height before scrolling */
     overflow-y: auto;
     overflow-anchor: auto;
 }
@@ -408,7 +408,7 @@
     background: linear-gradient(135deg, rgba(102, 126, 234, 0.05), rgba(118, 75, 162, 0.05));
     border: 2px solid rgba(102, 126, 234, 0.1);
     border-radius: 15px;
-    padding: 10px; /* Consistent padding all sides */
+    padding: 10px 12px; /* More padding on sides */
     margin-bottom: 0; /* No margin for compact layout */
     position: relative;
     overflow: hidden;
@@ -430,7 +430,8 @@
 .variable-monitor-section h6 {
     color: #667eea;
     font-weight: 600;
-    margin-bottom: 8px;
+    margin-bottom: 6px; /* Reduced from 8px */
+    margin-top: 2px; /* Small top margin for spacing from gradient line */
     display: flex;
     align-items: center;
     gap: 8px;
@@ -470,7 +471,7 @@
     background: transparent; /* Remove background */
     border: none; /* Remove border */
     border-radius: 0; /* Remove border radius */
-    padding: 5px; /* Small padding all around */
+    padding: 0; /* No default padding - specific sections will add their own */
     font-family: 'Courier New', monospace;
     font-size: 0.85em; /* Slightly smaller font for more content */
     line-height: 1.3; /* Tighter line spacing */
@@ -483,6 +484,32 @@
     flex: 1; /* Take available space in flex container */
     min-height: 0; /* Allow shrinking */
     box-sizing: border-box; /* Include padding in width calculation */
+}
+
+/* Variable monitor specific styling - don't expand, fit content */
+.variable-monitor-section .monitor-area {
+    flex: 0 0 auto; /* No grow, no shrink, auto size based on content */
+    padding: 0; /* No padding - items have their own */
+    display: flex;
+    flex-direction: column;
+    gap: 4px; /* Small gap between text and bar sections */
+}
+
+/* Inner containers for text and bar variables */
+.variable-monitor-section .monitor-area > div {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Text variables section - tighter spacing */
+.variable-monitor-section .monitor-area > div:first-child {
+    gap: 2px;
+}
+
+/* Bar variables section - more spacing */
+.variable-monitor-section .monitor-area > div:last-child {
+    gap: 6px;
+    margin-top: 4px; /* Small separation from text variables */
 }
 
 /* Modern Button Styling */
@@ -1131,6 +1158,53 @@
     .alert {
         backdrop-filter: blur(10px);
     }
+
+    /* Variable Monitor Dark Mode */
+    .variable-monitor-section {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.15), rgba(118, 75, 162, 0.15));
+        border-color: rgba(102, 126, 234, 0.3);
+    }
+
+    .variable-monitor-section h6 {
+        color: #8b9aee;
+    }
+
+    .variable-text-entry {
+        color: #f8f9fa;
+        background: rgba(102, 126, 234, 0.08);
+    }
+
+    .variable-bar-container {
+        background: rgba(102, 126, 234, 0.12);
+        border-color: rgba(102, 126, 234, 0.3);
+    }
+
+    .variable-bar-container:hover {
+        background: rgba(102, 126, 234, 0.18);
+        border-color: rgba(102, 126, 234, 0.45);
+    }
+
+    .variable-bar-label {
+        color: #f8f9fa;
+    }
+
+    .variable-bar-value {
+        color: #8b9aee;
+    }
+
+    .variable-bar-min,
+    .variable-bar-max {
+        color: rgba(255, 255, 255, 0.7);
+    }
+
+    .variable-bar {
+        background: rgba(102, 126, 234, 0.2);
+        border-color: rgba(102, 126, 234, 0.4);
+    }
+
+    .monitor-area {
+        color: #f8f9fa;
+    }
 }
 
 .user-indicator {
@@ -1157,4 +1231,89 @@
     gap: 8px;
     font-weight: 500;
     text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+/* Variable Monitor - Text Variables Section */
+.variable-text-entry {
+    margin-bottom: 2px;
+    padding: 2px 4px;
+    font-size: 0.85em;
+    color: #333;
+    background: rgba(102, 126, 234, 0.03);
+    border-radius: 3px;
+}
+
+/* Variable Monitor - Bar Variables Section */
+.variable-bar-container {
+    margin-bottom: 6px;
+    padding: 4px 6px;
+    background: rgba(102, 126, 234, 0.08);
+    border-radius: 6px;
+    border: 1px solid rgba(102, 126, 234, 0.2);
+    transition: all 0.2s ease;
+}
+
+.variable-bar-container:hover {
+    background: rgba(102, 126, 234, 0.12);
+    border-color: rgba(102, 126, 234, 0.35);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
+}
+
+.variable-bar-label {
+    margin-bottom: 4px;
+    font-size: 0.8em;
+    color: #333;
+    font-weight: 500;
+}
+
+.variable-bar-value {
+    font-weight: 600;
+    color: #667eea;
+}
+
+.variable-bar-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.variable-bar-min,
+.variable-bar-max {
+    font-size: 0.75em;
+    color: #666;
+    min-width: 35px;
+    text-align: center;
+    font-weight: 500;
+}
+
+.variable-bar {
+    flex: 1;
+    height: 18px;
+    background: rgba(200, 200, 200, 0.3);
+    border-radius: 9px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(102, 126, 234, 0.3);
+}
+
+.variable-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    border-radius: 0;
+    transition: width 0.3s ease;
+    box-shadow: 0 1px 3px rgba(102, 126, 234, 0.4);
+    position: relative;
+    min-width: 2px;
+}
+
+.variable-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 50%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.4) 0%, transparent 100%);
+    border-radius: 0;
 }
