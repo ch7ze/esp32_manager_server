@@ -1042,15 +1042,15 @@ function updateProgressBar(container, name, value, min, max) {
         progressItem.className = 'progress-bar-item';
         progressItem.setAttribute('data-progress-id', progressBarId);
         progressItem.innerHTML = `
-            <div class="progress-bar-label">${name}</div>
             <div class="progress-bar-container">
+                <div class="progress-bar-label">${name}</div>
                 <div class="progress-bar-track">
                     <div class="progress-bar-fill" style="width: ${clampedPercentage}%"></div>
-                </div>
-                <div class="progress-bar-values">
-                    <span class="progress-min">${min}</span>
-                    <span class="progress-value">${value}</span>
-                    <span class="progress-max">${max}</span>
+                    <div class="progress-bar-values">
+                        <span class="progress-min">${min}</span>
+                        <span class="progress-value">${value}</span>
+                        <span class="progress-max">${max}</span>
+                    </div>
                 </div>
             </div>
         `;

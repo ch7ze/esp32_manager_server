@@ -1247,25 +1247,18 @@
     border: 1px solid rgba(40, 167, 69, 0.15);
 }
 
-.progress-bar-label {
-    font-weight: 600;
-    color: #495057;
-    font-size: 0.9rem;
-    margin-bottom: 4px;
-}
-
 .progress-bar-container {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
 }
 
 .progress-bar-track {
-    width: 100%;
-    height: 24px;
+    flex: 1;
+    height: 28px;
     background: rgba(40, 167, 69, 0.1);
-    border-radius: 12px;
-    overflow: hidden;
+    border-radius: 14px;
     position: relative;
     border: 1px solid rgba(40, 167, 69, 0.2);
 }
@@ -1273,28 +1266,48 @@
 .progress-bar-fill {
     height: 100%;
     background: linear-gradient(90deg, #28a745, #20c997);
-    border-radius: 12px;
+    border-radius: 14px;
     transition: width 0.3s ease;
     box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
+    position: absolute;
+    top: 0;
+    left: 0;
 }
 
 .progress-bar-values {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     display: flex;
     justify-content: space-between;
-    font-size: 0.8rem;
-    color: #495057;
-    font-weight: 500;
-    padding: 0 2px;
+    align-items: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0 8px;
+    color: #333;
+    text-shadow: 0 0 3px rgba(255, 255, 255, 0.8);
+    z-index: 1;
 }
 
 .progress-min,
 .progress-max {
-    color: #6c757d;
+    color: #495057;
 }
 
 .progress-value {
     color: #28a745;
+    font-weight: 700;
+}
+
+.progress-bar-label {
     font-weight: 600;
+    color: #495057;
+    font-size: 0.9rem;
+    min-width: 80px;
+    text-align: left;
+    flex-shrink: 0;
 }
 
 /* Dark mode for progress bars */
@@ -1324,6 +1337,7 @@
 
     .progress-bar-values {
         color: #f8f9fa;
+        text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
     }
 
     .progress-value {
@@ -1332,6 +1346,10 @@
 
     .progress-min,
     .progress-max {
-        color: #adb5bd;
+        color: #ced4da;
+    }
+
+    .progress-bar-label {
+        color: #f8f9fa;
     }
 }
