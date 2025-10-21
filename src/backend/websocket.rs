@@ -328,12 +328,16 @@ async fn handle_register_for_device(
     // Check if user has permission to access this device (requires at least Read permission)
     // Allow access to "system" device for all authenticated users (for ESP32 discovery)
     // Also allow access to discovered ESP32 devices (identified by device_id starting with "esp32-" or MAC address format)
-    let has_permission = if device_id == "system" {
+    let has_permission = if user_id == "guest" {
+        true  // TEMPORARY: Allow guest user to access all devices
+    } else if device_id == "system" {
         true  // Allow all authenticated users to access system events
     } else if device_id.starts_with("esp32-") {
         true  // Allow all authenticated users to access discovered ESP32 devices
     } else if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
         true  // Allow all authenticated users to access ESP32 devices identified by MAC address
+    } else if is_stm32_uid_format(&device_id) {
+        true  // Allow all authenticated users to access STM32 devices identified by UID (24 hex chars)
     } else {
         db.user_has_device_permission(&device_id, user_id, "R").await
             .map_err(|e| format!("Database error checking permissions: {}", e))?
@@ -614,8 +618,12 @@ async fn handle_device_events(
         || is_mac_key_format(&device_id)
         || device_id.starts_with("esp32-");  // UART devices use esp32-XX format
 
-    let has_write_permission = if is_esp32_device {
+    let has_write_permission = if user_id == "guest" {
+        true  // TEMPORARY: Allow guest user to write to all devices
+    } else if is_esp32_device {
         true  // Allow all users to control ESP32 devices
+    } else if is_stm32_uid_format(&device_id) {
+        true  // Allow all users to control STM32 devices identified by UID
     } else {
         db.user_has_device_permission(&device_id, user_id, "W").await
             .map_err(|e| format!("Database error checking write permissions: {}", e))?
@@ -760,6 +768,12 @@ fn is_mac_key_format(device_id: &str) -> bool {
     }
 
     true
+}
+
+/// Check if a device_id is an STM32 UID format (24 hexadecimal characters)
+/// STM32 UIDs are 96-bit unique identifiers represented as 24 hex chars
+fn is_stm32_uid_format(device_id: &str) -> bool {
+    device_id.len() == 24 && device_id.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 // ============================================================================
