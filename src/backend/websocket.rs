@@ -366,10 +366,15 @@ async fn handle_register_for_device(
         registered_devices.push(device_id.clone());
     }
 
-    // If this is an ESP32 device (MAC address format or UART device), try to add and connect it
+    // Check device type from registry (or infer from format if not yet registered)
     // Only connect for FULL subscriptions - light subscriptions just need status
-    let is_esp32_tcp_device = is_mac_address_format(&device_id) || is_mac_key_format(&device_id);
-    let is_uart_device = device_id.starts_with("esp32-");
+    let device_type = esp32_manager.get_device_connection_type(&device_id).await;
+    let is_uart_device = device_type == Some(crate::esp32_manager::DeviceConnectionType::Uart);
+    let is_tcp_udp_device = device_type == Some(crate::esp32_manager::DeviceConnectionType::TcpUdp);
+
+    // For devices not yet in registry, infer from format (MAC addresses are TCP/UDP)
+    let inferred_tcp_udp = device_type.is_none() && (is_mac_address_format(&device_id) || is_mac_key_format(&device_id));
+    let is_esp32_tcp_device = is_tcp_udp_device || inferred_tcp_udp;
 
     if is_esp32_tcp_device && subscription_type == crate::events::SubscriptionType::Full {
         info!("Attempting to add and connect TCP/UDP ESP32 device: {} (full subscription)", device_id);
@@ -641,10 +646,13 @@ async fn handle_device_events(
 
         // Check if this is an ESP32 command event
         if let DeviceEvent::Esp32Command { command, .. } = &event {
-            // Route command based on device type
-            if device_id.starts_with("esp32-") {
+            // Route command based on device type from registry
+            let device_type = esp32_manager.get_device_connection_type(&device_id).await;
+            let is_uart = device_type == Some(crate::esp32_manager::DeviceConnectionType::Uart);
+
+            if is_uart {
                 // UART device - route to UART connection
-                info!("Routing command to UART device: {}", device_id);
+                info!("Routing command to UART device: {} (type: {:?})", device_id, device_type);
 
                 let command_json = serde_json::to_string(&command)
                     .map_err(|e| format!("Failed to serialize command: {}", e))?;
@@ -658,7 +666,7 @@ async fn handle_device_events(
                 info!("UART command sent successfully to device {}", device_id);
             } else {
                 // TCP/UDP device - route to ESP32 manager
-                info!("Routing command to TCP/UDP device: {}", device_id);
+                info!("Routing command to TCP/UDP device: {} (type: {:?})", device_id, device_type);
 
                 if let Err(e) = esp32_manager.handle_websocket_command(
                     &device_id,

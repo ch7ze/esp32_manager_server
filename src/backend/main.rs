@@ -222,6 +222,7 @@ async fn main() {
             device_store.clone(),
             esp32_manager.get_unified_connection_states(),
             esp32_manager.get_unified_activity_tracker(),
+            esp32_manager.get_device_connection_types(),
         )
     ));
 

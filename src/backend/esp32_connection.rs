@@ -32,6 +32,8 @@ pub struct Esp32Connection {
     device_store: SharedDeviceStore,
     /// Unified connection states (shared with ESP32Manager)
     unified_connection_states: Arc<RwLock<std::collections::HashMap<String, bool>>>,
+    /// Device connection types map (shared with ESP32Manager)
+    device_connection_types: Arc<RwLock<std::collections::HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
 }
 
 impl Esp32Connection {
@@ -41,6 +43,7 @@ impl Esp32Connection {
         event_sender: mpsc::UnboundedSender<Esp32Event>,
         device_store: SharedDeviceStore,
         unified_connection_states: Arc<RwLock<std::collections::HashMap<String, bool>>>,
+        device_connection_types: Arc<RwLock<std::collections::HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
     ) -> Self {
         info!("ESP32CONNECTION CREATION DEBUG: Creating new ESP32Connection for device {}", config.device_id);
         crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("NEW_CONNECTION_CREATED: {} - sender_closed: {}", config.device_id, event_sender.is_closed()));
@@ -54,6 +57,7 @@ impl Esp32Connection {
             shutdown_sender: None,
             device_store,
             unified_connection_states,
+            device_connection_types,
         }
     }
     
@@ -401,6 +405,7 @@ impl Esp32Connection {
         let _device_config = self.config.clone();
         let device_store = self.device_store.clone();
         let unified_connection_states = Arc::clone(&self.unified_connection_states);
+        let device_connection_types = Arc::clone(&self.device_connection_types);
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -450,12 +455,14 @@ impl Esp32Connection {
                                 let json_clone = json_str.clone();
                                 let device_store_clone = device_store.clone();
                                 let unified_connection_states_clone = Arc::clone(&unified_connection_states);
+                                let device_connection_types_clone = Arc::clone(&device_connection_types);
                                 tokio::spawn(async move {
                                     crate::esp32_manager::Esp32Manager::handle_tcp_message_bypass(
                                         &json_clone,
                                         &device_id_clone,
                                         &device_store_clone,
-                                        &unified_connection_states_clone
+                                        &unified_connection_states_clone,
+                                        &device_connection_types_clone
                                     ).await;
                                 });
                             }

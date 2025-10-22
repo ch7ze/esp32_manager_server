@@ -48,6 +48,8 @@ pub struct UartConnection {
     unified_connection_states: Arc<RwLock<HashMap<String, bool>>>,
     /// Unified activity tracker (shared with ESP32Manager)
     unified_activity_tracker: Arc<RwLock<HashMap<String, std::time::Instant>>>,
+    /// Device connection types map (shared with ESP32Manager)
+    device_connection_types: Arc<RwLock<HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
 }
 
 impl UartConnection {
@@ -56,6 +58,7 @@ impl UartConnection {
         device_store: SharedDeviceStore,
         unified_connection_states: Arc<RwLock<HashMap<String, bool>>>,
         unified_activity_tracker: Arc<RwLock<HashMap<String, std::time::Instant>>>,
+        device_connection_types: Arc<RwLock<HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
     ) -> Self {
         Self {
             settings: Arc::new(RwLock::new(None)),
@@ -65,6 +68,7 @@ impl UartConnection {
             is_connected: Arc::new(RwLock::new(false)),
             unified_connection_states,
             unified_activity_tracker,
+            device_connection_types,
         }
     }
 
@@ -152,6 +156,7 @@ impl UartConnection {
         let is_connected = Arc::clone(&self.is_connected);
         let unified_connection_states = Arc::clone(&self.unified_connection_states);
         let unified_activity_tracker = Arc::clone(&self.unified_activity_tracker);
+        let device_connection_types = Arc::clone(&self.device_connection_types);
 
         tokio::spawn(async move {
             info!("UART listener task started");
@@ -200,9 +205,10 @@ impl UartConnection {
                                     let device_store_clone = device_store.clone();
                                     let unified_connection_states_clone = Arc::clone(&unified_connection_states);
                                     let unified_activity_tracker_clone = Arc::clone(&unified_activity_tracker);
+                                    let device_connection_types_clone = Arc::clone(&device_connection_types);
                                     let line_clone = line.clone();
                                     tokio::spawn(async move {
-                                        Self::handle_uart_message(&line_clone, &device_store_clone, &unified_connection_states_clone, &unified_activity_tracker_clone).await;
+                                        Self::handle_uart_message(&line_clone, &device_store_clone, &unified_connection_states_clone, &unified_activity_tracker_clone, &device_connection_types_clone).await;
                                     });
                                 }
                             }
@@ -235,6 +241,7 @@ impl UartConnection {
         device_store: &SharedDeviceStore,
         unified_connection_states: &Arc<RwLock<HashMap<String, bool>>>,
         unified_activity_tracker: &Arc<RwLock<HashMap<String, std::time::Instant>>>,
+        device_connection_types: &Arc<RwLock<HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
     ) {
         info!("UART MESSAGE RECEIVED: {}", message);
 
@@ -296,6 +303,7 @@ impl UartConnection {
                             device_store,
                             unified_connection_states,
                             Some(unified_activity_tracker),
+                            Some(device_connection_types),
                         ).await;
                         info!("UART MESSAGE: Finished processing for device {}", device_id);
                     }

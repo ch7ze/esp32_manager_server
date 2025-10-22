@@ -21,6 +21,13 @@ use tracing::{info, warn, error, debug};
 // ESP32 DEVICE MANAGER
 // ============================================================================
 
+/// Type of device connection - tracks whether device is UART or TCP/UDP
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceConnectionType {
+    Uart,
+    TcpUdp,
+}
+
 /// Manages multiple ESP32 device connections and integrates with the device store
 #[derive(Debug)]
 pub struct Esp32Manager {
@@ -40,6 +47,8 @@ pub struct Esp32Manager {
     unified_activity_tracker: Arc<RwLock<HashMap<String, Instant>>>,
     /// Unified connection state tracking to prevent redundant events (device_id -> is_connected)
     unified_connection_states: Arc<RwLock<HashMap<String, bool>>>,
+    /// Map of device_id -> DeviceConnectionType to track UART vs TCP/UDP devices
+    device_connection_types: Arc<RwLock<HashMap<String, DeviceConnectionType>>>,
 }
 
 /// Metadata about the message source
@@ -62,6 +71,7 @@ impl Esp32Manager {
             connection_mutex: Arc::new(Mutex::new(())),
             unified_activity_tracker: Arc::new(RwLock::new(HashMap::new())),
             unified_connection_states: Arc::new(RwLock::new(HashMap::new())),
+            device_connection_types: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -110,6 +120,13 @@ impl Esp32Manager {
             configs.insert(device_id.clone(), config.clone());
         }
 
+        // Register as TCP/UDP device in connection type map
+        {
+            let mut conn_types = self.device_connection_types.write().await;
+            conn_types.insert(device_id.clone(), DeviceConnectionType::TcpUdp);
+            debug!("Registered device {} as TCP/UDP type", device_id);
+        }
+
         // Create connection with direct manager event sender - SIMPLIFIED SYSTEM
         info!("Creating ESP32Connection for device {} with direct manager event sender", device_id);
 
@@ -121,7 +138,8 @@ impl Esp32Manager {
             config,
             device_event_sender,
             self.device_store.clone(),
-            self.get_unified_connection_states()
+            self.get_unified_connection_states(),
+            self.get_device_connection_types()
         );
 
         {
@@ -218,7 +236,8 @@ impl Esp32Manager {
                 config.clone(),
                 direct_sender,
                 self.device_store.clone(),
-                self.get_unified_connection_states()
+                self.get_unified_connection_states(),
+                self.get_device_connection_types()
             );
             let connection_arc = Arc::new(Mutex::new(new_connection));
 
@@ -374,6 +393,17 @@ impl Esp32Manager {
     pub async fn get_device_config(&self, device_id: &str) -> Option<Esp32DeviceConfig> {
         let configs = self.device_configs.read().await;
         configs.get(device_id).cloned()
+    }
+
+    /// Get device connection type (UART vs TCP/UDP)
+    pub async fn get_device_connection_type(&self, device_id: &str) -> Option<DeviceConnectionType> {
+        let conn_types = self.device_connection_types.read().await;
+        conn_types.get(device_id).copied()
+    }
+
+    /// Get reference to device connection types map (for sharing with other components)
+    pub fn get_device_connection_types(&self) -> Arc<RwLock<HashMap<String, DeviceConnectionType>>> {
+        Arc::clone(&self.device_connection_types)
     }
     
     /// Auto-discover ESP32 devices (placeholder for future UDP discovery)
@@ -574,6 +604,7 @@ impl Esp32Manager {
         let device_store = Arc::clone(&self.device_store);
         let unified_activity_tracker = Arc::clone(&self.unified_activity_tracker);
         let unified_connection_states = Arc::clone(&self.unified_connection_states);
+        let device_connection_types = Arc::clone(&self.device_connection_types);
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -604,6 +635,7 @@ impl Esp32Manager {
                                         &device_store,
                                         &unified_connection_states,
                                         Some(&unified_activity_tracker),
+                                        Some(&device_connection_types),
                                     ).await;
                                 } else {
                                     drop(device_map); // Drop read lock before getting write lock
@@ -629,6 +661,7 @@ impl Esp32Manager {
                                                 &device_store,
                                                 &unified_connection_states,
                                                 Some(&unified_activity_tracker),
+                                                Some(&device_connection_types),
                                             ).await;
                                         }
                                     }
@@ -667,6 +700,7 @@ impl Esp32Manager {
         device_store: &SharedDeviceStore,
         connection_states: &Arc<RwLock<HashMap<String, bool>>>,
         activity_tracker: Option<&Arc<RwLock<HashMap<String, Instant>>>>,
+        device_connection_types: Option<&Arc<RwLock<HashMap<String, DeviceConnectionType>>>>,
     ) {
         let source_name = match &source {
             MessageSource::Uart => "UART",
@@ -675,6 +709,20 @@ impl Esp32Manager {
         };
 
         debug!("{} MESSAGE: Processing for device {}: {}", source_name, device_id, message);
+
+        // Register device connection type if provided
+        if let Some(conn_types) = device_connection_types {
+            let device_type = match &source {
+                MessageSource::Uart => DeviceConnectionType::Uart,
+                MessageSource::Tcp { .. } | MessageSource::Udp { .. } => DeviceConnectionType::TcpUdp,
+            };
+
+            let mut types_map = conn_types.write().await;
+            if !types_map.contains_key(device_id) {
+                types_map.insert(device_id.to_string(), device_type);
+                debug!("{} MESSAGE: Registered device {} as {:?} type", source_name, device_id, device_type);
+            }
+        }
 
         // Update activity tracker for UDP and UART (not TCP)
         let should_track_activity = matches!(source, MessageSource::Uart | MessageSource::Udp { .. });
@@ -989,6 +1037,7 @@ impl Esp32Manager {
         device_id: &str,
         device_store: &SharedDeviceStore,
         unified_connection_states: &Arc<RwLock<HashMap<String, bool>>>,
+        device_connection_types: &Arc<RwLock<HashMap<String, DeviceConnectionType>>>,
     ) {
         DebugLogger::log_tcp_message(device_id, "RECEIVED", message);
 
@@ -1002,6 +1051,7 @@ impl Esp32Manager {
             device_store,
             unified_connection_states,  // Use shared state (prevents redundant events)
             None,  // No activity tracking for TCP (no timeout)
+            Some(device_connection_types),
         ).await;
     }
 
