@@ -144,6 +144,8 @@ pub struct DeviceEventStore {
     device_events: RwLock<HashMap<String, Vec<EventWithMetadata>>>,
     // Active client connections per device ID
     active_connections: RwLock<HashMap<String, Vec<ClientConnection>>>,
+    // Debug message limit per device (configurable)
+    max_debug_messages_per_device: Arc<RwLock<usize>>,
 }
 
 impl DeviceEventStore {
@@ -152,7 +154,20 @@ impl DeviceEventStore {
         Self {
             device_events: RwLock::new(HashMap::new()),
             active_connections: RwLock::new(HashMap::new()),
+            max_debug_messages_per_device: Arc::new(RwLock::new(200)), // Default: 200
         }
+    }
+
+    /// Update the maximum number of debug messages per device
+    pub async fn set_max_debug_messages(&self, max: usize) {
+        let mut limit = self.max_debug_messages_per_device.write().await;
+        *limit = max;
+        info!("Debug message limit updated to {} messages per device", max);
+    }
+
+    /// Get the current debug message limit
+    pub async fn get_max_debug_messages(&self) -> usize {
+        *self.max_debug_messages_per_device.read().await
     }
     
     // Event management methods
@@ -171,6 +186,9 @@ impl DeviceEventStore {
             format!("Invalid event: {}", e)
         })?;
 
+        // Check if this is a debug message (UdpBroadcast)
+        let is_debug_message = matches!(event, crate::events::DeviceEvent::Esp32UdpBroadcast { .. });
+
         // Create event with metadata
         let event_with_metadata = EventWithMetadata {
             event: event.clone(),
@@ -180,10 +198,32 @@ impl DeviceEventStore {
             is_replay: None,
         };
 
-        // Store event
+        // Store event with limit enforcement for debug messages
         {
             let mut events = self.device_events.write().await;
             let device_events = events.entry(device_id.clone()).or_insert_with(Vec::new);
+
+            if is_debug_message {
+                // Apply limit only to debug messages
+                let max_debug = *self.max_debug_messages_per_device.read().await;
+
+                // Count existing debug messages
+                let debug_count = device_events.iter()
+                    .filter(|e| matches!(e.event, crate::events::DeviceEvent::Esp32UdpBroadcast { .. }))
+                    .count();
+
+                // If limit reached, remove oldest debug message
+                if debug_count >= max_debug {
+                    // Find and remove the oldest debug message
+                    if let Some(oldest_debug_idx) = device_events.iter()
+                        .position(|e| matches!(e.event, crate::events::DeviceEvent::Esp32UdpBroadcast { .. }))
+                    {
+                        device_events.remove(oldest_debug_idx);
+                        debug!("Removed oldest debug message for device {} (limit: {})", device_id, max_debug);
+                    }
+                }
+            }
+
             device_events.push(event_with_metadata);
         }
 

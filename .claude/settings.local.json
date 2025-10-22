@@ -41,7 +41,8 @@
       "mcp__ide__getDiagnostics",
       "Bash(rustc --version)",
       "Bash(npm start)",
-      "Read(//c/Users/chris/documents/git/hub/ESP32_manager_server/client/scripts/**)"
+      "Read(//c/Users/chris/documents/git/hub/ESP32_manager_server/client/scripts/**)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

@@ -456,10 +456,7 @@ function processDeviceEvent(deviceId, event) {
         case 'esp32UdpBroadcast':
             const newMessage = `[${new Date().toLocaleTimeString()}] ${eventData.message}`;
             device.udpMessages.push(newMessage);
-            // Keep only the last 500 messages to prevent memory issues
-            if (device.udpMessages.length > 500) {
-                device.udpMessages.shift(); // Remove oldest message
-            }
+            // Note: Backend now handles message limiting per device (configurable in settings)
             appendToMonitor(deviceId, newMessage);
             break;
 

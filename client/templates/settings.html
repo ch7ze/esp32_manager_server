@@ -70,6 +70,40 @@
                     </div>
                 </div>
 
+                <!-- Debug Settings Card -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <h5>🐛 Debug Message Settings</h5>
+                    </div>
+                    <div class="settings-card-body">
+                        <form id="debug-settings-form">
+                            <!-- Max Debug Messages -->
+                            <div class="settings-field">
+                                <label for="max-debug-messages-input" class="settings-label">Maximum Debug Messages per Device</label>
+                                <input
+                                    type="number"
+                                    class="settings-input"
+                                    id="max-debug-messages-input"
+                                    min="10"
+                                    max="10000"
+                                    step="10"
+                                    value="200"
+                                    required>
+                                <div class="settings-help">
+                                    Number of debug messages to keep in memory per device (10-10000). Older messages will be automatically deleted.
+                                </div>
+                            </div>
+
+                            <!-- Save Button -->
+                            <div class="settings-button-group">
+                                <button type="submit" class="settings-btn settings-btn-primary">
+                                    💾 Save Debug Settings
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
                 <!-- Info Card -->
                 <div class="settings-card">
                     <div class="settings-card-header">
@@ -106,9 +140,13 @@
                             <strong>Baud Rate:</strong>
                             <span id="status-baudrate" class="status-text">-</span>
                         </div>
-                        <div class="status-item status-item-last">
+                        <div class="status-item">
                             <strong>Auto-Reconnect:</strong>
                             <span id="status-autoconnect" class="settings-badge settings-badge-success">Enabled</span>
+                        </div>
+                        <div class="status-item status-item-last">
+                            <strong>Debug Limit:</strong>
+                            <span id="status-debug-limit" class="status-text">200</span>
                         </div>
                     </div>
                 </div>
@@ -134,10 +172,14 @@ async function initSettingsPage() {
     // Load current status
     await loadStatus();
 
+    // Load debug settings
+    await loadDebugSettings();
+
     // Set up event listeners
     document.getElementById('refresh-ports-btn').addEventListener('click', refreshPorts);
     document.getElementById('uart-connect-btn').addEventListener('click', connectUart);
     document.getElementById('uart-disconnect-btn').addEventListener('click', disconnectUart);
+    document.getElementById('debug-settings-form').addEventListener('submit', saveDebugSettings);
 }
 
 // Load available serial ports
@@ -303,6 +345,59 @@ async function disconnectUart() {
     } catch (error) {
         console.error('Failed to disconnect UART:', error);
         showToast('Failed to disconnect from UART', 'error');
+    }
+}
+
+// Load debug settings
+async function loadDebugSettings() {
+    console.log('Loading debug settings...');
+
+    try {
+        const response = await fetch('/api/debug/settings');
+        const data = await response.json();
+
+        if (data.success) {
+            document.getElementById('max-debug-messages-input').value = data.maxDebugMessages || 200;
+            document.getElementById('status-debug-limit').textContent = data.maxDebugMessages || 200;
+            console.log('Debug settings loaded:', data);
+        }
+    } catch (error) {
+        console.error('Failed to load debug settings:', error);
+        showToast('Failed to load debug settings', 'error');
+    }
+}
+
+// Save debug settings
+async function saveDebugSettings(event) {
+    event.preventDefault();
+
+    const maxDebugMessages = parseInt(document.getElementById('max-debug-messages-input').value);
+
+    if (maxDebugMessages < 10 || maxDebugMessages > 10000) {
+        showToast('Max debug messages must be between 10 and 10000', 'error');
+        return;
+    }
+
+    console.log(`Saving debug settings: maxDebugMessages=${maxDebugMessages}`);
+
+    try {
+        const response = await fetch('/api/debug/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ maxDebugMessages })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('Debug settings saved successfully', 'success');
+            document.getElementById('status-debug-limit').textContent = maxDebugMessages;
+        } else {
+            showToast(data.message || 'Failed to save debug settings', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to save debug settings:', error);
+        showToast('Failed to save debug settings', 'error');
     }
 }
 

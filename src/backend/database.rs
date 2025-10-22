@@ -212,6 +212,29 @@ impl DatabaseManager {
         .execute(&self.pool)
         .await?;
 
+        // Debug Settings Tabelle erstellen
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS debug_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                max_debug_messages INTEGER NOT NULL DEFAULT 200,
+                updated_at TEXT NOT NULL
+            )
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Insert default Debug settings if not exists
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO debug_settings (id, max_debug_messages, updated_at)
+            VALUES (1, 200, datetime('now'))
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -823,6 +846,46 @@ impl DatabaseManager {
         .bind(port)
         .bind(baud_rate as i64)
         .bind(auto_connect)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // DEBUG SETTINGS METHODS
+    // ========================================================================
+
+    /// Get debug settings from database
+    pub async fn get_debug_settings(&self) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+        let row = sqlx::query(
+            "SELECT max_debug_messages FROM debug_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let max_messages: i64 = row.try_get("max_debug_messages")?;
+                Ok(Some(max_messages as u32))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Update debug settings in database
+    pub async fn update_debug_settings(
+        &self,
+        max_debug_messages: u32
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        sqlx::query(
+            r#"
+            UPDATE debug_settings
+            SET max_debug_messages = ?, updated_at = datetime('now')
+            WHERE id = 1
+            "#
+        )
+        .bind(max_debug_messages as i64)
         .execute(&self.pool)
         .await?;
 

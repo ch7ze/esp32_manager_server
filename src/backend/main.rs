@@ -140,6 +140,14 @@ async fn main() {
     // Initialize Device Event Store
     tracing::info!("Initializing Device Event Store...");
     let device_store = create_shared_store();
+
+    // Load debug settings and configure device store
+    if let Ok(Some(max_debug_messages)) = db.get_debug_settings().await {
+        device_store.set_max_debug_messages(max_debug_messages as usize).await;
+        tracing::info!("Loaded debug settings: max_debug_messages={}", max_debug_messages);
+    } else {
+        tracing::info!("Using default debug settings: max_debug_messages=200");
+    }
     
     // Initialize ESP32 Manager
     tracing::info!("Initializing ESP32 Manager...");
@@ -380,6 +388,13 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
 
         // GET /api/uart/status - Get UART connection status
         .route("/api/uart/status", get(uart_status_handler))
+
+        // ========================================
+        // DEBUG SETTINGS API ROUTES
+        // ========================================
+
+        // GET /api/debug/settings - Get current debug settings
+        .route("/api/debug/settings", get(get_debug_settings_handler).post(update_debug_settings_handler))
 
         // with_state() gives all API routes access to both stores
         .with_state(app_state);
@@ -1616,6 +1631,13 @@ struct UpdateUartSettingsRequest {
     auto_connect: bool,
 }
 
+// POST /api/debug/settings - Update debug settings
+#[derive(Debug, Deserialize)]
+struct UpdateDebugSettingsRequest {
+    #[serde(rename = "maxDebugMessages")]
+    max_debug_messages: u32,
+}
+
 async fn update_uart_settings_handler(
     State(app_state): State<AppState>,
     Json(req): Json<UpdateUartSettingsRequest>,
@@ -1741,5 +1763,66 @@ async fn uart_status_handler(
         "connected": is_connected,
         "port": settings.as_ref().map(|s| &s.port),
         "baudRate": settings.map(|s| s.baud_rate).unwrap_or(115200)
+    })))
+}
+
+// ============================================================================
+// DEBUG SETTINGS HANDLERS - API handlers for debug configuration
+// ============================================================================
+
+// GET /api/debug/settings - Get current debug settings
+async fn get_debug_settings_handler(
+    State(app_state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    match app_state.db.get_debug_settings().await {
+        Ok(Some(max_debug_messages)) => {
+            Ok(Json(json!({
+                "success": true,
+                "maxDebugMessages": max_debug_messages
+            })))
+        }
+        Ok(None) => {
+            Ok(Json(json!({
+                "success": true,
+                "maxDebugMessages": 200
+            })))
+        }
+        Err(e) => {
+            tracing::error!("Failed to get debug settings: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn update_debug_settings_handler(
+    State(app_state): State<AppState>,
+    Json(req): Json<UpdateDebugSettingsRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    tracing::info!("Updating debug settings: max_debug_messages={}", req.max_debug_messages);
+
+    // Validate: min 10, max 10000
+    if req.max_debug_messages < 10 || req.max_debug_messages > 10000 {
+        return Ok(Json(json!({
+            "success": false,
+            "message": "Max debug messages must be between 10 and 10000"
+        })));
+    }
+
+    // Update database
+    match app_state.db.update_debug_settings(req.max_debug_messages).await {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::error!("Failed to update debug settings: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // Update device store limit immediately
+    app_state.device_store.set_max_debug_messages(req.max_debug_messages as usize).await;
+    tracing::info!("Debug settings updated in database and device store");
+
+    Ok(Json(json!({
+        "success": true,
+        "message": "Debug settings updated successfully"
     })))
 }
