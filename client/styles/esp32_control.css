@@ -7,33 +7,75 @@
     gap: 10px; /* Reduced from 20px to 10px */
 }
 
+/* Panel Resizer */
+.panel-resizer {
+    display: none; /* Hidden by default (only shown in landscape) */
+    width: 8px;
+    cursor: col-resize;
+    background: linear-gradient(90deg,
+        rgba(102, 126, 234, 0.1) 0%,
+        rgba(102, 126, 234, 0.3) 50%,
+        rgba(102, 126, 234, 0.1) 100%);
+    position: relative;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
+}
+
+.panel-resizer:hover {
+    background: linear-gradient(90deg,
+        rgba(102, 126, 234, 0.2) 0%,
+        rgba(102, 126, 234, 0.5) 50%,
+        rgba(102, 126, 234, 0.2) 100%);
+}
+
+.panel-resizer::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 3px;
+    height: 40px;
+    background: rgba(102, 126, 234, 0.6);
+    border-radius: 2px;
+}
+
+.panel-resizer.resizing {
+    background: rgba(102, 126, 234, 0.4);
+}
+
 /* Landscape layout - left panel with everything except UDP, UDP on right */
 .main-container.landscape-layout {
     flex-direction: row;
-    gap: 15px; /* Reduced from 25px to 15px */
+    gap: 0; /* No gap - resizer provides spacing */
     height: calc(100vh - 120px); /* Fixed container height */
     overflow: hidden; /* Prevent main container from scrolling */
     align-items: flex-start; /* Don't stretch, align to top */
 }
 
+.main-container.landscape-layout .panel-resizer {
+    display: block; /* Show resizer in landscape mode */
+}
+
 .main-container.landscape-layout .left-panel {
-    flex: 1.2; /* Left panel takes more space for better content visibility */
+    flex: 0 0 50%; /* Start at 50% width, can be resized */
+    min-width: 300px; /* Minimum width to prevent too small */
+    max-width: 80%; /* Maximum width to prevent too large */
     display: flex;
     flex-direction: column;
-    gap: 10px; /* Reduced from 15px to 10px */
-    overflow-y: auto; /* Scroll if content too tall */
-    height: 100%; /* Take full height of container */
-    padding-right: 10px; /* Space for scrollbar */
-    /* Remove flex-shrink rule to allow natural content sizing */
+    gap: 10px;
+    overflow-y: auto;
+    height: 100%;
+    padding-right: 10px;
 }
 
 .main-container.landscape-layout .right-panel {
-    flex: 1.2; /* UDP monitor takes more space to span from device control to variable monitor end */
+    flex: 1 1 auto; /* Take remaining space */
+    min-width: 300px; /* Minimum width to prevent too small */
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 120px); /* Fixed height for UDP monitor */
-    min-height: 0; /* Allow proper flexbox shrinking */
-    flex-shrink: 0; /* Don't shrink the UDP monitor */
+    height: calc(100vh - 120px);
+    min-height: 0;
 }
 
 .main-container.landscape-layout .udp-monitor-section {
@@ -747,8 +789,9 @@
 
 /* Container */
 .esp32-container {
-    max-width: 1400px;
+    max-width: 100%;
     margin: 0 auto;
+    padding: 0 20px;
 }
 
 /* Loading State */

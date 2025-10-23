@@ -161,7 +161,10 @@ impl UartConnection {
         tokio::spawn(async move {
             info!("UART listener task started");
 
-            let mut buffer = String::new();
+            const STX: u8 = 0x02; // Start of Text
+            const ETX: u8 = 0x03; // End of Text
+
+            let mut buffer = Vec::new();
             let mut read_buffer = vec![0u8; 1024];
 
             loop {
@@ -192,25 +195,50 @@ impl UartConnection {
                         }
                         Ok(Ok(bytes_read)) => {
                             // Got data from UART
-                            let data = String::from_utf8_lossy(&read_buffer[..bytes_read]);
-                            buffer.push_str(&data);
+                            buffer.extend_from_slice(&read_buffer[..bytes_read]);
 
-                            // Process complete lines (messages end with \n or \r\n)
-                            while let Some(line_end) = buffer.find('\n') {
-                                let line = buffer[..line_end].trim().to_string();
-                                buffer.drain(..=line_end);
+                            // Process complete messages (STX...ETX)
+                            while let Some(stx_pos) = buffer.iter().position(|&b| b == STX) {
+                                // Look for ETX after STX
+                                if let Some(etx_pos) = buffer[stx_pos + 1..].iter().position(|&b| b == ETX) {
+                                    let etx_abs_pos = stx_pos + 1 + etx_pos;
 
-                                if !line.is_empty() {
-                                    // Process the message
-                                    let device_store_clone = device_store.clone();
-                                    let unified_connection_states_clone = Arc::clone(&unified_connection_states);
-                                    let unified_activity_tracker_clone = Arc::clone(&unified_activity_tracker);
-                                    let device_connection_types_clone = Arc::clone(&device_connection_types);
-                                    let line_clone = line.clone();
-                                    tokio::spawn(async move {
-                                        Self::handle_uart_message(&line_clone, &device_store_clone, &unified_connection_states_clone, &unified_activity_tracker_clone, &device_connection_types_clone).await;
-                                    });
+                                    // Extract message between STX and ETX
+                                    let message_bytes = &buffer[stx_pos + 1..etx_abs_pos];
+
+                                    // Convert to string
+                                    if let Ok(message) = String::from_utf8(message_bytes.to_vec()) {
+                                        if !message.trim().is_empty() {
+                                            // Process the message
+                                            let device_store_clone = device_store.clone();
+                                            let unified_connection_states_clone = Arc::clone(&unified_connection_states);
+                                            let unified_activity_tracker_clone = Arc::clone(&unified_activity_tracker);
+                                            let device_connection_types_clone = Arc::clone(&device_connection_types);
+                                            let message_clone = message.trim().to_string();
+                                            tokio::spawn(async move {
+                                                Self::handle_uart_message(&message_clone, &device_store_clone, &unified_connection_states_clone, &unified_activity_tracker_clone, &device_connection_types_clone).await;
+                                            });
+                                        }
+                                    } else {
+                                        warn!("UART: Received invalid UTF-8 data between STX and ETX");
+                                    }
+
+                                    // Remove processed message from buffer
+                                    buffer.drain(..=etx_abs_pos);
+                                } else {
+                                    // ETX not found yet, wait for more data
+                                    // But if buffer is too large, remove data before STX
+                                    if stx_pos > 0 {
+                                        buffer.drain(..stx_pos);
+                                    }
+                                    break;
                                 }
+                            }
+
+                            // If no STX found and buffer is large, clear old data
+                            if buffer.len() > 2048 && !buffer.iter().any(|&b| b == STX) {
+                                warn!("UART: Buffer overflow without STX, clearing buffer");
+                                buffer.clear();
                             }
                         }
                         Ok(Err(e)) => {
@@ -250,8 +278,6 @@ impl UartConnection {
             Ok(json) => {
                 // Extract device_id from JSON
                 if let Some(device_id) = json.get("device_id").and_then(|v| v.as_str()) {
-                    info!("UART MESSAGE: Parsed device_id: {}", device_id);
-
                     // Check if device needs discovery and registration (first time seen)
                     let should_send_discovery_event = {
                         let states = unified_connection_states.read().await;
@@ -295,7 +321,6 @@ impl UartConnection {
                         let modified_message = serde_json::to_string(&json_without_device_id)
                             .unwrap_or_else(|_| message.to_string());
 
-                        info!("UART MESSAGE: Forwarding to unified handler for device {} (device_id removed)", device_id);
                         Esp32Manager::handle_message_unified(
                             &modified_message,
                             device_id,
@@ -305,7 +330,6 @@ impl UartConnection {
                             Some(unified_activity_tracker),
                             Some(device_connection_types),
                         ).await;
-                        info!("UART MESSAGE: Finished processing for device {}", device_id);
                     }
                 } else {
                     warn!("UART message missing device_id field: {}", message);
@@ -342,9 +366,16 @@ impl UartConnection {
 
             info!("UART command with device_id: {}", command_with_device_id);
 
-            // Send command as JSON string with newline
-            let command_with_newline = format!("{}\n", command_with_device_id);
-            stream.write_all(command_with_newline.as_bytes())
+            // Send command with STX (0x02) at start and ETX (0x03) at end
+            const STX: u8 = 0x02; // Start of Text
+            const ETX: u8 = 0x03; // End of Text
+
+            let mut message_bytes = Vec::new();
+            message_bytes.push(STX);
+            message_bytes.extend_from_slice(command_with_device_id.as_bytes());
+            message_bytes.push(ETX);
+
+            stream.write_all(&message_bytes)
                 .await
                 .map_err(|e| format!("Failed to write to UART: {}", e))?;
 

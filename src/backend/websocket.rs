@@ -652,8 +652,6 @@ async fn handle_device_events(
 
             if is_uart {
                 // UART device - route to UART connection
-                info!("Routing command to UART device: {} (type: {:?})", device_id, device_type);
-
                 let command_json = serde_json::to_string(&command)
                     .map_err(|e| format!("Failed to serialize command: {}", e))?;
 
@@ -662,11 +660,8 @@ async fn handle_device_events(
                     error!("Failed to send UART command to device {}: {}", device_id, e);
                     return Err(format!("UART command failed: {}", e));
                 }
-
-                info!("UART command sent successfully to device {}", device_id);
             } else {
                 // TCP/UDP device - route to ESP32 manager
-                info!("Routing command to TCP/UDP device: {} (type: {:?})", device_id, device_type);
 
                 if let Err(e) = esp32_manager.handle_websocket_command(
                     &device_id,

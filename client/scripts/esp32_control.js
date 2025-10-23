@@ -696,6 +696,8 @@ function createDeviceContent(device, suffix = '') {
                     </div>
                 </div>
 
+                <div class="panel-resizer" id="${idPrefix}-resizer"></div>
+
                 <div class="right-panel">
                     <!-- UDP Monitor -->
                     <div class="udp-monitor-section">
@@ -1414,5 +1416,77 @@ window.addEventListener('resize', function() {
         showDevicesContainer();
     }
 });
+
+// Initialize panel resizers for all devices
+function initializePanelResizers() {
+    // Find all resizers in the document
+    const resizers = document.querySelectorAll('.panel-resizer');
+
+    resizers.forEach(resizer => {
+        let isResizing = false;
+        let startX = 0;
+        let startLeftWidth = 0;
+        let leftPanel = null;
+        let mainContainer = null;
+
+        const onMouseDown = (e) => {
+            isResizing = true;
+            startX = e.clientX;
+
+            // Find the parent container and left panel
+            mainContainer = resizer.closest('.main-container');
+            leftPanel = mainContainer.querySelector('.left-panel');
+
+            if (leftPanel) {
+                startLeftWidth = leftPanel.offsetWidth;
+            }
+
+            resizer.classList.add('resizing');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            e.preventDefault();
+        };
+
+        const onMouseMove = (e) => {
+            if (!isResizing || !leftPanel || !mainContainer) return;
+
+            const deltaX = e.clientX - startX;
+            const newLeftWidth = startLeftWidth + deltaX;
+            const containerWidth = mainContainer.offsetWidth;
+
+            // Calculate percentage
+            const newLeftPercent = (newLeftWidth / containerWidth) * 100;
+
+            // Apply min/max constraints (20% to 80%)
+            if (newLeftPercent >= 20 && newLeftPercent <= 80) {
+                leftPanel.style.flex = `0 0 ${newLeftPercent}%`;
+            }
+
+            e.preventDefault();
+        };
+
+        const onMouseUp = () => {
+            if (isResizing) {
+                isResizing = false;
+                resizer.classList.remove('resizing');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        };
+
+        resizer.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    });
+}
+
+// Call initializer after devices are rendered
+const originalRenderDevices = renderDevices;
+renderDevices = function() {
+    originalRenderDevices();
+    // Initialize resizers after a short delay to ensure DOM is ready
+    setTimeout(initializePanelResizers, 100);
+};
 
 })(); // End IIFE

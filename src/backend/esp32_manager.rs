@@ -708,8 +708,6 @@ impl Esp32Manager {
             MessageSource::Udp { .. } => "UDP",
         };
 
-        debug!("{} MESSAGE: Processing for device {}: {}", source_name, device_id, message);
-
         // Register device connection type if provided
         if let Some(conn_types) = device_connection_types {
             let device_type = match &source {
@@ -730,7 +728,6 @@ impl Esp32Manager {
             if let Some(tracker) = activity_tracker {
                 let mut tracker_guard = tracker.write().await;
                 tracker_guard.insert(device_id.to_string(), Instant::now());
-                debug!("{} ACTIVITY: Updated activity timestamp for device {}", source_name, device_id);
             }
         }
 
@@ -741,7 +738,6 @@ impl Esp32Manager {
 
             if !was_connected {
                 states.insert(device_id.to_string(), true);
-                info!("{} CONNECT: Device {} is now connected (was: disconnected)", source_name, device_id);
                 true
             } else {
                 false
@@ -771,11 +767,7 @@ impl Esp32Manager {
                 format!("{}_connect", source_name.to_lowercase()),
             ).await {
                 error!("Failed to send {} connection event for device {}: {}", source_name, device_id, e);
-            } else {
-                info!("{} CONNECT: Connection event sent for device {}", source_name, device_id);
             }
-        } else {
-            debug!("{}: Device {} already connected - skipping redundant event", source_name, device_id);
         }
 
         // Send broadcast event with actual source info
