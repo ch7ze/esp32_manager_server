@@ -727,83 +727,22 @@ function showDevicesContainer() {
     document.getElementById('loading-state').style.display = 'none';
     document.getElementById('no-devices-state').style.display = 'none';
 
-    // Hide all layouts first
-    document.getElementById('esp32-tabs').style.display = 'none';
-    document.getElementById('esp32-stack').style.display = 'none';
+    // Layout switching is now handled by CSS media queries
+    // Just show the main layout container
+    document.getElementById('esp32-main-layout').style.display = 'flex';
 
-    // Determine layout based on screen dimensions
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    const aspectRatio = width / height;
-
-    // Layout logic:
-    // 1. Very narrow (< 800px width): Stack layout
-    // 2. Wide screens or foldables unfolded (>= 800px width): Use tabs with landscape/portrait logic
-    // 3. For tabs: aspectRatio > 1.0 OR width > 1400 = landscape, otherwise portrait
-
-    if (width < 800) {
-        // Use stack layout for narrow screens (including folded phones)
-        document.getElementById('esp32-tabs').style.display = 'none';
-        document.getElementById('esp32-stack').style.display = 'block';
-    } else {
-        // Use tabs layout for wide screens (including unfolded foldables)
-        document.getElementById('esp32-tabs').style.display = 'block';
-        document.getElementById('esp32-stack').style.display = 'none';
-
-        // Determine landscape vs portrait for tabs
-        // Landscape: true aspect ratio landscape OR very wide screens (like unfolded foldables)
-        const isLandscape = aspectRatio > 1.0 || width > 1400;
-        applyDynamicLayout(isLandscape);
-    }
+    // CSS media queries will automatically show/hide tabs vs stack based on screen size
+    // No need for JavaScript layout logic anymore
 }
 
 function getCurrentActiveLayout() {
-    // Determine active layout based on new logic
+    // Determine active layout based on CSS media query breakpoints
     const width = window.innerWidth;
 
-    if (width < 800) {
-        return 'stack';  // Narrow screens including folded phones
+    if (width < 600) {
+        return 'stack';  // Smartphones and closed foldables
     } else {
-        return 'tab';   // Wide screens including unfolded foldables (corrected from 'tabs' to 'tab')
-    }
-}
-
-function applyDynamicLayout(isLandscape) {
-    // Add or remove CSS class based on orientation
-    const containers = document.querySelectorAll('.main-container');
-
-
-    containers.forEach((container, index) => {
-        // Force remove both classes first
-        container.classList.remove('landscape-layout', 'portrait-layout');
-
-        if (isLandscape) {
-            container.classList.add('landscape-layout');
-        } else {
-            container.classList.add('portrait-layout');
-        }
-
-        // Debug: Log current classes
-    });
-
-    // Force CSS refresh by triggering a reflow
-    containers.forEach(container => {
-        container.style.display = 'none';
-        container.offsetHeight; // Trigger reflow
-        container.style.display = '';
-    });
-
-    // Additional debugging: Check if CSS file is loaded
-    const cssLinks = document.querySelectorAll('link[href*="esp32_control.css"]');
-    console.log(`ESP32 CSS DEBUG: Found ${cssLinks.length} CSS links for esp32_control.css`);
-
-    // Force CSS reload if needed
-    if (cssLinks.length > 0) {
-        cssLinks.forEach(link => {
-            const href = link.href;
-            link.href = href + '?v=' + Date.now();
-            console.log(`ESP32 CSS DEBUG: Reloaded CSS with cache buster`);
-        });
+        return 'tab';   // Tablets, open foldables, and desktops
     }
 }
 
@@ -1411,10 +1350,17 @@ function refreshDevices() {
 
 
 // Handle window resize for responsive layout
+// Layout switching is now handled by CSS media queries
+// We only need to track resize for determining the active layout type
+let resizeTimeout;
 window.addEventListener('resize', function() {
-    if (esp32Devices.size > 0) {
-        showDevicesContainer();
-    }
+    // Debounce resize events to avoid excessive processing
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(() => {
+        // getCurrentActiveLayout() will automatically detect the correct layout
+        // based on window width matching CSS media query breakpoints
+        console.log('Window resized, current layout:', getCurrentActiveLayout());
+    }, 150);
 });
 
 // Initialize panel resizers for all devices

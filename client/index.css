@@ -324,6 +324,7 @@ body {
   font-size: 0.85em;
   height: 200px;
   overflow-y: auto;
+  overflow-x: hidden; /* Prevent horizontal scrolling on mobile */
   border: 1px solid #d0d0d0;
   padding: 15px;
   margin-bottom: 20px;
@@ -372,9 +373,18 @@ body {
 /* Layout Responsive */
 .esp32-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 20px;
   padding: 20px;
+}
+
+/* Adjust grid for very narrow screens (closed foldables) */
+@media (max-width: 450px) {
+  .esp32-grid {
+    grid-template-columns: 1fr; /* Single column */
+    gap: 15px;
+    padding: 10px;
+  }
 }
 
 .esp32-stack {
@@ -454,8 +464,8 @@ body {
   color: white;
 }
 
-/* Mobile Responsiveness */
-@media (max-width: 768px) {
+/* Mobile Responsiveness - Tablets and closed foldables */
+@media (max-width: 840px) {
   .esp32-device-header {
     flex-direction: column;
     align-items: flex-start;
@@ -498,6 +508,13 @@ body {
     margin-bottom: 15px;
   }
 
+  .esp32-tabs {
+    margin: 10px;
+  }
+}
+
+/* Smartphone optimizations */
+@media (max-width: 599px) {
   .esp32-grid {
     grid-template-columns: 1fr;
     padding: 10px;
@@ -506,10 +523,6 @@ body {
 
   .esp32-stack {
     padding: 10px;
-  }
-
-  .esp32-tabs {
-    margin: 10px;
   }
 }
 

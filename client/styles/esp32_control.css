@@ -45,145 +45,175 @@
 }
 
 /* Landscape layout - left panel with everything except UDP, UDP on right */
-.main-container.landscape-layout {
-    flex-direction: row;
-    gap: 0; /* No gap - resizer provides spacing */
-    height: calc(100vh - 120px); /* Fixed container height */
-    overflow: hidden; /* Prevent main container from scrolling */
-    align-items: flex-start; /* Don't stretch, align to top */
+/* Applied via media query for orientation: landscape and wide screens */
+@media (min-width: 841px) and (orientation: landscape) {
+    .main-container {
+        flex-direction: row;
+        gap: 0; /* No gap - resizer provides spacing */
+        height: calc(100dvh - 120px); /* Dynamic viewport height for mobile browsers */
+        overflow: hidden; /* Prevent main container from scrolling */
+        align-items: flex-start; /* Don't stretch, align to top */
+    }
 }
 
-.main-container.landscape-layout .panel-resizer {
-    display: block; /* Show resizer in landscape mode */
-}
+@media (min-width: 841px) and (orientation: landscape) {
+    .main-container .panel-resizer {
+        display: block; /* Show resizer in landscape mode */
+    }
 
-.main-container.landscape-layout .left-panel {
-    flex: 0 0 50%; /* Start at 50% width, can be resized */
-    min-width: 300px; /* Minimum width to prevent too small */
-    max-width: 80%; /* Maximum width to prevent too large */
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    overflow-y: auto;
-    height: 100%;
-    padding-right: 10px;
-}
+    .main-container .left-panel {
+        flex: 0 0 50%; /* Start at 50% width, can be resized */
+        min-width: 300px; /* Minimum width to prevent too small */
+        max-width: 80%; /* Maximum width to prevent too large */
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+        height: 100%;
+        padding-right: 10px;
+    }
 
-.main-container.landscape-layout .right-panel {
-    flex: 1 1 auto; /* Take remaining space */
-    min-width: 300px; /* Minimum width to prevent too small */
-    display: flex;
-    flex-direction: column;
-    height: calc(100vh - 120px);
-    min-height: 0;
-}
+    .main-container .right-panel {
+        flex: 1 1 auto; /* Take remaining space */
+        min-width: 300px; /* Minimum width to prevent too small */
+        display: flex;
+        flex-direction: column;
+        height: calc(100dvh - 120px);
+        min-height: 0;
+    }
 
-.main-container.landscape-layout .udp-monitor-section {
-    height: 100%; /* Take full available height to span entire right side */
-    display: flex;
-    flex-direction: column;
-    /* Position UDP monitor to align with device controls and extend to variable monitor end */
-    align-self: stretch; /* Take full height of parent */
-    margin-top: 0; /* Align with start of device controls */
-}
+    .main-container .udp-monitor-section {
+        height: 100%; /* Take full available height to span entire right side */
+        display: flex;
+        flex-direction: column;
+        /* Position UDP monitor to align with device controls and extend to variable monitor end */
+        align-self: stretch; /* Take full height of parent */
+        margin-top: 0; /* Align with start of device controls */
+    }
 
-.main-container.landscape-layout .udp-monitor-section .monitor-area {
-    flex: 1; /* Take all remaining space */
-    min-height: 400px; /* Increased minimum height for more content */
-    height: auto; /* Override fixed height */
-    max-height: none; /* Override max-height to allow full expansion */
-    overflow-y: auto; /* Ensure scrolling works */
-    overflow-anchor: auto; /* Enable scroll anchoring for stable scrolling */
-    /* Improved layout for more content display */
-    line-height: 1.2; /* Tighter line spacing for more lines */
-    font-size: 0.8em; /* Slightly smaller font for more content */
-}
+    .main-container .udp-monitor-section .monitor-area {
+        flex: 1; /* Take all remaining space */
+        min-height: 400px; /* Increased minimum height for more content */
+        height: auto; /* Override fixed height */
+        max-height: none; /* Override max-height to allow full expansion */
+        overflow-y: auto; /* Ensure scrolling works */
+        -webkit-overflow-scrolling: touch; /* Smooth scrolling on mobile */
+        overflow-anchor: auto; /* Enable scroll anchoring for stable scrolling */
+        /* Improved layout for more content display */
+        line-height: 1.2; /* Tighter line spacing for more lines */
+        font-size: 0.8em; /* Slightly smaller font for more content */
+    }
 
-.main-container.landscape-layout .variable-monitor-section .monitor-area {
-    height: auto; /* Allow natural height based on content */
-    max-height: 500px; /* Maximum height before scrolling */
-    overflow-y: auto; /* Ensure scrolling if content exceeds max-height */
-    overflow-anchor: auto;
+    .main-container .variable-monitor-section .monitor-area {
+        height: auto; /* Allow natural height based on content */
+        max-height: 500px; /* Maximum height before scrolling */
+        overflow-y: auto; /* Ensure scrolling if content exceeds max-height */
+        -webkit-overflow-scrolling: touch;
+        overflow-anchor: auto;
+    }
 }
 
 /* Portrait layout for medium screens - UDP monitor on right like landscape, but variable monitor like narrow */
-.esp32-tabs .main-container.portrait-layout {
-    flex-direction: row;
-    gap: 15px; /* Reduced from 25px to 15px */
-    height: calc(100vh - 120px); /* Fixed height to enable proper scrolling */
-    overflow: hidden; /* Prevent main container from scrolling */
-    align-items: stretch; /* Stretch to full height */
-}
+/* Applied for tablets and fold phones in portrait orientation */
+@media (min-width: 600px) and (max-width: 840px), (orientation: portrait) and (min-width: 600px) and (max-width: 1024px) {
+    .esp32-tabs .main-container {
+        flex-direction: row;
+        gap: 15px; /* Reduced from 25px to 15px */
+        height: calc(100dvh - 120px); /* Dynamic viewport height */
+        overflow: hidden; /* Prevent main container from scrolling */
+        align-items: stretch; /* Stretch to full height */
+    }
 
-.esp32-tabs .main-container.portrait-layout .left-panel {
-    flex: 1.2;
-    display: flex;
-    flex-direction: column;
-    gap: 10px; /* Reduced from 15px to 10px */
-    overflow-y: auto; /* Scroll if content too tall */
-    min-height: 0; /* Allow proper flexbox shrinking */
-    height: 100%; /* Take full height of parent */
-}
+    .esp32-tabs .main-container .left-panel {
+        flex: 1.2;
+        display: flex;
+        flex-direction: column;
+        gap: 10px; /* Reduced from 15px to 10px */
+        overflow-y: auto; /* Scroll if content too tall */
+        -webkit-overflow-scrolling: touch;
+        min-height: 0; /* Allow proper flexbox shrinking */
+        height: 100%; /* Take full height of parent */
+    }
 
-.esp32-tabs .main-container.portrait-layout .right-panel {
-    flex: 1.2;
-    display: flex;
-    flex-direction: column;
-    height: 100%; /* Take full height of parent */
-    min-height: 0; /* Allow proper flexbox shrinking */
-}
+    .esp32-tabs .main-container .right-panel {
+        flex: 1.2;
+        display: flex;
+        flex-direction: column;
+        height: 100%; /* Take full height of parent */
+        min-height: 0; /* Allow proper flexbox shrinking */
+    }
 
-.esp32-tabs .main-container.portrait-layout .udp-monitor-section {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-self: stretch;
-    margin-top: 0;
-}
+    .esp32-tabs .main-container .udp-monitor-section {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-self: stretch;
+        margin-top: 0;
+    }
 
-.esp32-tabs .main-container.portrait-layout .udp-monitor-section .monitor-area {
-    flex: 1;
-    min-height: 400px;
-    height: auto;
-    max-height: none;
-    overflow-y: auto;
-    overflow-anchor: auto;
-    line-height: 1.2;
-    font-size: 0.8em;
-}
+    .esp32-tabs .main-container .udp-monitor-section .monitor-area {
+        flex: 1;
+        min-height: 400px;
+        height: auto;
+        max-height: none;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overflow-anchor: auto;
+        line-height: 1.2;
+        font-size: 0.8em;
+    }
 
-/* Variable monitor in portrait layout (medium screens) behaves like narrow/stack layout */
-.esp32-tabs .main-container.portrait-layout .variable-monitor-section .monitor-area {
-    height: auto; /* Allow natural height based on content */
-    max-height: 500px; /* Maximum height before scrolling */
-    overflow-y: auto;
-    overflow-anchor: auto;
+    /* Variable monitor in portrait layout (medium screens) behaves like narrow/stack layout */
+    .esp32-tabs .main-container .variable-monitor-section .monitor-area {
+        height: auto; /* Allow natural height based on content */
+        max-height: 500px; /* Maximum height before scrolling */
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overflow-anchor: auto;
+    }
 }
 
 
 /* Stack layout for very narrow screens - everything stacked vertically */
-.esp32-stack .main-container {
-    flex-direction: column;
+/* Applied for smartphones and folded foldables */
+@media (max-width: 599px) {
+    .esp32-stack .main-container {
+        flex-direction: column;
+    }
+
+    .esp32-stack .main-container .left-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px; /* Reduced from 15px to 10px */
+    }
+
+    .esp32-stack .main-container .variable-monitor-section .monitor-area {
+        height: auto; /* Allow natural height based on content */
+        max-height: 500px; /* Maximum height before scrolling */
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overflow-anchor: auto;
+    }
+
+    .esp32-stack .main-container .udp-monitor-section .monitor-area {
+        height: 400px;
+        max-height: 400px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overflow-anchor: auto;
+    }
 }
 
-.esp32-stack .main-container .left-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 10px; /* Reduced from 15px to 10px */
-}
+/* Extra optimization for very narrow tall displays (closed foldables) */
+@media (max-aspect-ratio: 1/2) {
+    .esp32-stack .main-container {
+        gap: 8px; /* Even tighter spacing for narrow screens */
+    }
 
-.esp32-stack .main-container .variable-monitor-section .monitor-area {
-    height: auto; /* Allow natural height based on content */
-    max-height: 500px; /* Maximum height before scrolling */
-    overflow-y: auto;
-    overflow-anchor: auto;
-}
-
-.esp32-stack .main-container .udp-monitor-section .monitor-area {
-    height: 400px;
-    max-height: 400px;
-    overflow-y: auto;
-    overflow-anchor: auto;
+    .esp32-stack .main-container .left-panel {
+        gap: 8px;
+    }
 }
 
 .esp32-device-card {
@@ -200,15 +230,17 @@
 }
 
 /* Ensure device card content doesn't get compressed in landscape layout */
-.main-container.landscape-layout .esp32-device-card {
-    min-height: 500px; /* Force minimum height */
-    height: auto; /* Allow natural height expansion */
-}
+@media (min-width: 841px) and (orientation: landscape) {
+    .main-container .esp32-device-card {
+        min-height: 500px; /* Force minimum height */
+        height: auto; /* Allow natural height expansion */
+    }
 
-/* Ensure tab content has proper height */
-.main-container.landscape-layout .tab-content {
-    min-height: 400px; /* Ensure tab content has minimum height */
-    height: auto; /* Allow natural expansion */
+    /* Ensure tab content has proper height */
+    .main-container .tab-content {
+        min-height: 400px; /* Ensure tab content has minimum height */
+        height: auto; /* Allow natural expansion */
+    }
 }
 
 .esp32-device-card:hover {
@@ -421,9 +453,11 @@
 }
 
 /* Ensure start options area doesn't get compressed in landscape layout */
-.main-container.landscape-layout .start-options-area {
-    min-height: auto; /* Allow natural height */
-    flex-shrink: 0; /* Force no shrinking */
+@media (min-width: 841px) and (orientation: landscape) {
+    .main-container .start-options-area {
+        min-height: auto; /* Allow natural height */
+        flex-shrink: 0; /* Force no shrinking */
+    }
 }
 
 .start-options-area::before {
@@ -1100,8 +1134,8 @@
     transform: scale(1.2);
 }
 
-/* Responsive layout for narrow screens including folded phones */
-@media (max-width: 1024px) {
+/* Responsive layout - Mobile sidebar toggle for tablets and smaller */
+@media (max-width: 840px) {
     .mobile-sidebar-toggle {
         display: block;
     }
@@ -1110,7 +1144,7 @@
         position: fixed;
         left: 0;
         top: 80px;
-        height: calc(100vh - 80px);
+        height: calc(100dvh - 80px);
         z-index: 1000;
         transform: translateX(-100%);
     }
@@ -1128,7 +1162,8 @@
     }
 }
 
-@media (max-width: 768px) {
+/* Smartphone and closed foldable optimizations */
+@media (max-width: 599px) {
     .esp32-device-header {
         flex-direction: column;
         align-items: flex-start;
@@ -1147,23 +1182,24 @@
         flex-direction: column;
     }
 
-    /* Stack layout for mobile */
+    /* Stack layout for mobile - !important to override inline styles */
     #esp32-stack {
-        display: block;
+        display: block !important;
         padding: 10px;
     }
 
     #esp32-tabs {
-        display: none;
+        display: none !important;
     }
 }
 
-@media (min-width: 769px) {
+/* Tab layout for tablets and larger - !important to override inline styles */
+@media (min-width: 600px) {
     #esp32-tabs {
-        display: block;
+        display: block !important;
     }
     #esp32-stack {
-        display: none;
+        display: none !important;
     }
 }
 
