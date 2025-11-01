@@ -717,6 +717,53 @@ impl DatabaseManager {
         Ok(())
     }
 
+    /// Create or update ESP32 device from discovery (auto-save discovered devices)
+    /// If device exists, update IP and last_seen. If not, create as guest-owned device.
+    pub async fn upsert_discovered_device(
+        &self,
+        mac_address: String,
+        device_name: String,
+        ip_address: Option<String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Check if device already exists
+        let existing = self.get_esp32_device_by_id(&mac_address).await?;
+
+        if let Some(mut device) = existing {
+            // Device exists - update IP and last_seen
+            device.ip_address = ip_address;
+            device.last_seen = Utc::now();
+
+            sqlx::query(
+                "UPDATE esp32_devices SET ip_address = ?, last_seen = ? WHERE mac_address = ?"
+            )
+            .bind(&device.ip_address)
+            .bind(device.last_seen.to_rfc3339())
+            .bind(&mac_address)
+            .execute(&self.pool)
+            .await?;
+
+            tracing::debug!("Updated existing device in DB: {}", mac_address);
+        } else {
+            // Device doesn't exist - create new one with guest owner
+            let new_device = ESP32Device {
+                mac_address: mac_address.clone(),
+                name: device_name,
+                owner_id: "guest".to_string(),
+                ip_address,
+                status: DeviceStatus::Offline,
+                maintenance_mode: false,
+                firmware_version: None,
+                last_seen: Utc::now(),
+                created_at: Utc::now(),
+            };
+
+            self.create_esp32_device(new_device).await?;
+            tracing::info!("Auto-saved new discovered device to DB: {}", mac_address);
+        }
+
+        Ok(())
+    }
+
     // ============================================================================
     // ESP32 DEVICE PERMISSIONS - Berechtigungsverwaltung
     // ============================================================================

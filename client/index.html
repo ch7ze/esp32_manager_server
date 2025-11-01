@@ -18,6 +18,16 @@
       <a href="/debug" class="spa-link">Debug</a>
       <a href="/docs" class="spa-link">Dokumentation</a>
       <a href="/settings" class="spa-link">Settings</a>
+
+      <!-- Layout Mode Selector -->
+      <div class="layout-selector-container">
+        <label for="layout-mode-selector">Layout:</label>
+        <select id="layout-mode-selector" onchange="window.setLayoutMode(this.value)">
+          <option value="auto">Auto</option>
+          <option value="tabs">Tabs</option>
+          <option value="stack">Stack</option>
+        </select>
+      </div>
     </nav>
   </header>
 

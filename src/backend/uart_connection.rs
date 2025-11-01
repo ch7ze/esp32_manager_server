@@ -3,6 +3,7 @@
 
 use crate::device_store::SharedDeviceStore;
 use crate::esp32_manager::Esp32Manager;
+use crate::database::DatabaseManager;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,6 +41,8 @@ pub struct UartConnection {
     serial_stream: Arc<RwLock<Option<SerialStream>>>,
     /// Device store for event routing
     device_store: SharedDeviceStore,
+    /// Database for device persistence
+    db: Option<Arc<DatabaseManager>>,
     /// Shutdown channel
     shutdown_sender: Option<mpsc::UnboundedSender<()>>,
     /// Connection status
@@ -64,12 +67,18 @@ impl UartConnection {
             settings: Arc::new(RwLock::new(None)),
             serial_stream: Arc::new(RwLock::new(None)),
             device_store,
+            db: None,
             shutdown_sender: None,
             is_connected: Arc::new(RwLock::new(false)),
             unified_connection_states,
             unified_activity_tracker,
             device_connection_types,
         }
+    }
+
+    /// Set database for device persistence
+    pub fn set_database(&mut self, db: Arc<DatabaseManager>) {
+        self.db = Some(db);
     }
 
     /// Connect to UART port with given settings
@@ -157,6 +166,7 @@ impl UartConnection {
         let unified_connection_states = Arc::clone(&self.unified_connection_states);
         let unified_activity_tracker = Arc::clone(&self.unified_activity_tracker);
         let device_connection_types = Arc::clone(&self.device_connection_types);
+        let db = self.db.clone();
 
         tokio::spawn(async move {
             info!("UART listener task started");
@@ -214,9 +224,10 @@ impl UartConnection {
                                             let unified_connection_states_clone = Arc::clone(&unified_connection_states);
                                             let unified_activity_tracker_clone = Arc::clone(&unified_activity_tracker);
                                             let device_connection_types_clone = Arc::clone(&device_connection_types);
+                                            let db_clone = db.clone();
                                             let message_clone = message.trim().to_string();
                                             tokio::spawn(async move {
-                                                Self::handle_uart_message(&message_clone, &device_store_clone, &unified_connection_states_clone, &unified_activity_tracker_clone, &device_connection_types_clone).await;
+                                                Self::handle_uart_message(&message_clone, &device_store_clone, &unified_connection_states_clone, &unified_activity_tracker_clone, &device_connection_types_clone, &db_clone).await;
                                             });
                                         }
                                     } else {
@@ -270,6 +281,7 @@ impl UartConnection {
         unified_connection_states: &Arc<RwLock<HashMap<String, bool>>>,
         unified_activity_tracker: &Arc<RwLock<HashMap<String, std::time::Instant>>>,
         device_connection_types: &Arc<RwLock<HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
+        db: &Option<Arc<DatabaseManager>>,
     ) {
         info!("UART MESSAGE RECEIVED: {}", message);
 
@@ -292,6 +304,20 @@ impl UartConnection {
                         // Note: UART device will be auto-registered by the unified_timeout_monitor
                         // when it sees the device in unified_activity_tracker
                         info!("UART DISCOVERY: New UART device detected: {}", device_id);
+
+                        // Save device to database
+                        if let Some(db) = db {
+                            let device_name = format!("UART-{}", device_id);
+                            if let Err(e) = db.upsert_discovered_device(
+                                device_id.to_string(),
+                                device_name,
+                                None,  // UART has no IP
+                            ).await {
+                                warn!("Failed to save UART device to database: {}", e);
+                            } else {
+                                info!("Saved UART device to database: {}", device_id);
+                            }
+                        }
 
                         // Send discovery event
                         let discovery_event = DeviceEvent::esp32_device_discovered(

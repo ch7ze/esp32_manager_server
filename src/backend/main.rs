@@ -158,7 +158,7 @@ async fn main() {
     
     // Start ESP32 Discovery Service
     tracing::info!("Starting ESP32 Discovery Service...");
-    let esp32_discovery = Arc::new(tokio::sync::Mutex::new(esp32_discovery::Esp32Discovery::with_manager(device_store.clone(), Some(esp32_manager.clone()))));
+    let esp32_discovery = Arc::new(tokio::sync::Mutex::new(esp32_discovery::Esp32Discovery::with_manager(device_store.clone(), Some(esp32_manager.clone()), Some(db.clone()))));
     let discovery_service = esp32_discovery.clone();
     tokio::spawn(async move {
         let mut discovery = discovery_service.lock().await;
@@ -225,14 +225,14 @@ async fn main() {
 
     // Initialize UART Connection with shared state trackers from ESP32Manager
     tracing::info!("Initializing UART connection...");
-    let uart_connection = Arc::new(tokio::sync::Mutex::new(
-        uart_connection::UartConnection::new(
-            device_store.clone(),
-            esp32_manager.get_unified_connection_states(),
-            esp32_manager.get_unified_activity_tracker(),
-            esp32_manager.get_device_connection_types(),
-        )
-    ));
+    let mut uart_conn = uart_connection::UartConnection::new(
+        device_store.clone(),
+        esp32_manager.get_unified_connection_states(),
+        esp32_manager.get_unified_activity_tracker(),
+        esp32_manager.get_device_connection_types(),
+    );
+    uart_conn.set_database(db.clone());
+    let uart_connection = Arc::new(tokio::sync::Mutex::new(uart_conn));
 
     // Try to auto-connect UART if settings exist
     if let Ok(Some((port, baud_rate, auto_connect))) = db.get_uart_settings().await {
@@ -1010,7 +1010,7 @@ async fn list_devices_handler(
 ) -> Result<Json<Value>, StatusCode> {
     // Validate JWT token (optional)
     let token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
-    
+
     let user_id = match token {
         Some(token_value) => {
             match validate_jwt(token_value) {
@@ -1021,6 +1021,10 @@ async fn list_devices_handler(
         None => None,
     };
 
+    // Get real-time connection states from ESP32Manager
+    let connection_states = app_state.esp32_manager.get_unified_connection_states();
+    let connection_states_map = connection_states.read().await;
+
     // Load devices from database
     let device_list = match &user_id {
         Some(uid) => {
@@ -1028,18 +1032,23 @@ async fn list_devices_handler(
             match app_state.db.list_user_devices(uid).await {
                 Ok(device_list) => {
                     device_list.into_iter().map(|(device, permission)| {
+                        // Check real-time connection status
+                        let is_connected = connection_states_map.get(&device.mac_address).copied().unwrap_or(false);
+                        let status = if is_connected { "Online" } else { "Offline" };
+
                         json!({
                             "id": device.mac_address.clone(),
                             "name": device.name,
                             "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
                             "ip_address": device.ip_address,
-                            "status": device.status,
+                            "status": status,
                             "maintenance_mode": device.maintenance_mode,
                             "firmware_version": device.firmware_version,
                             "owner_id": device.owner_id,
                             "last_seen": device.last_seen.to_rfc3339(),
                             "created_at": device.created_at.to_rfc3339(),
-                            "your_permission": permission
+                            "your_permission": permission,
+                            "connected": is_connected
                         })
                     }).collect::<Vec<Value>>()
                 }
@@ -1054,18 +1063,23 @@ async fn list_devices_handler(
             match app_state.db.list_all_devices().await {
                 Ok(device_list) => {
                     device_list.into_iter().map(|device| {
+                        // Check real-time connection status
+                        let is_connected = connection_states_map.get(&device.mac_address).copied().unwrap_or(false);
+                        let status = if is_connected { "Online" } else { "Offline" };
+
                         json!({
                             "id": device.mac_address.clone(),
                             "name": device.name,
                             "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
                             "ip_address": device.ip_address,
-                            "status": device.status,
+                            "status": status,
                             "maintenance_mode": device.maintenance_mode,
                             "firmware_version": device.firmware_version,
                             "owner_id": device.owner_id,
                             "last_seen": device.last_seen.to_rfc3339(),
                             "created_at": device.created_at.to_rfc3339(),
-                            "your_permission": "GUEST"
+                            "your_permission": "GUEST",
+                            "connected": is_connected
                         })
                     }).collect::<Vec<Value>>()
                 }

@@ -21,6 +21,9 @@ function getDeviceIdFromUrl() {
 
 // Initialize page immediately (SPA context)
 (async function() {
+    // Load layout preference
+    initializeLayoutMode();
+
     await initializeAuth();
     await loadAvailableDevices();
     await initializeWebSocket();
@@ -34,6 +37,122 @@ function getDeviceIdFromUrl() {
         }, 500);
     }
 })();
+
+// Layout mode management
+function initializeLayoutMode() {
+    const savedLayoutMode = localStorage.getItem('esp32-layout-mode') || 'auto';
+    const savedSidebarMode = localStorage.getItem('esp32-sidebar-mode') || 'auto';
+
+    applyLayoutMode(savedLayoutMode);
+    applySidebarMode(savedSidebarMode);
+
+    // Ensure button is updated when page loads
+    setTimeout(() => {
+        updateSidebarModeButton(savedSidebarMode);
+    }, 100);
+}
+
+function applyLayoutMode(mode) {
+    const body = document.body;
+
+    // Remove all layout classes
+    body.classList.remove('layout-force-tabs', 'layout-force-stack');
+
+    // Apply new mode
+    switch(mode) {
+        case 'tabs':
+            body.classList.add('layout-force-tabs');
+            break;
+        case 'stack':
+            body.classList.add('layout-force-stack');
+            break;
+        case 'auto':
+        default:
+            // No class = auto mode (media queries control)
+            break;
+    }
+
+    // Save to localStorage
+    localStorage.setItem('esp32-layout-mode', mode);
+
+    // Update UI if layout selector exists
+    updateLayoutSelector(mode);
+}
+
+function applySidebarMode(mode) {
+    const body = document.body;
+
+    // Remove all sidebar classes
+    body.classList.remove('sidebar-force-overlay', 'sidebar-force-visible');
+
+    // Apply new mode
+    switch(mode) {
+        case 'visible':
+            body.classList.add('sidebar-force-visible');
+            break;
+        case 'overlay':
+            body.classList.add('sidebar-force-overlay');
+            break;
+        case 'auto':
+        default:
+            // No class = auto mode (pointer detection controls)
+            break;
+    }
+
+    // Save to localStorage
+    localStorage.setItem('esp32-sidebar-mode', mode);
+
+    // Update UI button
+    updateSidebarModeButton(mode);
+}
+
+function updateSidebarModeButton(mode) {
+    const iconEl = document.getElementById('sidebar-mode-icon');
+
+    if (!iconEl) return;
+
+    const modes = {
+        'auto': '🔄',
+        'visible': '📌',
+        'overlay': '⬅️'
+    };
+
+    iconEl.textContent = modes[mode] || modes['auto'];
+
+    // Update tooltip
+    const btn = iconEl.closest('.sidebar-mode-btn-compact');
+    if (btn) {
+        const tooltips = {
+            'auto': 'Auto: Desktop sichtbar, Touch Overlay',
+            'visible': 'Immer sichtbar (fest)',
+            'overlay': 'Immer Overlay (öffnen mit ☰)'
+        };
+        btn.title = tooltips[mode] || tooltips['auto'];
+    }
+}
+
+function cycleSidebarMode() {
+    const currentMode = localStorage.getItem('esp32-sidebar-mode') || 'auto';
+
+    // Cycle through: auto → visible → overlay → auto
+    const modes = ['auto', 'visible', 'overlay'];
+    const currentIndex = modes.indexOf(currentMode);
+    const nextMode = modes[(currentIndex + 1) % modes.length];
+
+    applySidebarMode(nextMode);
+}
+
+function updateLayoutSelector(mode) {
+    const selector = document.getElementById('layout-mode-selector');
+    if (selector) {
+        selector.value = mode;
+    }
+}
+
+// Expose functions for UI
+window.setLayoutMode = applyLayoutMode;
+window.setSidebarMode = applySidebarMode;
+window.cycleSidebarMode = cycleSidebarMode;
 
 async function initializeAuth() {
     try {

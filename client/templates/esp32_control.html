@@ -34,8 +34,12 @@
             <div id="esp32-sidebar" class="esp32-sidebar">
                 <div class="sidebar-header">
                     <h6>Available ESP32s</h6>
+                    <button class="sidebar-mode-btn-compact" onclick="cycleSidebarMode()" title="Sidebar-Modus ändern">
+                        <span id="sidebar-mode-icon">🔄</span>
+                    </button>
                     <button class="btn-close-sidebar" onclick="closeSidebar()">×</button>
                 </div>
+
                 <div class="sidebar-content">
                     <div id="available-devices-list">
                         <!-- Dynamic device list will be inserted here -->
@@ -56,7 +60,7 @@
                 </div>
 
                 <!-- Stack Layout (Mobile) -->
-                <div id="esp32-stack" class="esp32-stack" style="display: none;">
+                <div id="esp32-stack" class="esp32-stack">
                     <!-- Dynamic stacked devices will be inserted here -->
                 </div>
             </div>

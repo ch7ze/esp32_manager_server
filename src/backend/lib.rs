@@ -38,7 +38,7 @@ pub async fn create_test_app() -> Router {
     esp32_manager.start().await;
 
     let esp32_discovery = Arc::new(tokio::sync::Mutex::new(
-        esp32_discovery::Esp32Discovery::with_manager(device_store.clone(), Some(esp32_manager.clone()))
+        esp32_discovery::Esp32Discovery::with_manager(device_store.clone(), Some(esp32_manager.clone()), None)
     ));
 
     let mdns_server = Arc::new(tokio::sync::Mutex::new(

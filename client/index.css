@@ -16,6 +16,44 @@ body {
   align-items: center;
   gap: 15px;
   flex-wrap: wrap;
+  position: relative;
+}
+
+/* Layout selector in navigation */
+.layout-selector-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.layout-selector-container label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+#layout-mode-selector {
+  padding: 6px 10px;
+  border: 2px solid #f662d6;
+  border-radius: 6px;
+  background-color: white;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+#layout-mode-selector:hover {
+  background-color: #f9f9f9;
+  border-color: #e540c9;
+}
+
+#layout-mode-selector:focus {
+  outline: none;
+  border-color: #e540c9;
+  box-shadow: 0 0 0 3px rgba(246, 98, 214, 0.2);
 }
 
 #main-nav a {
@@ -378,8 +416,8 @@ body {
   padding: 20px;
 }
 
-/* Adjust grid for very narrow screens (closed foldables) */
-@media (max-width: 450px) {
+/* Adjust grid for very narrow portrait screens (closed foldables, smartphones) */
+@media (orientation: portrait) and (max-aspect-ratio: 1/2) {
   .esp32-grid {
     grid-template-columns: 1fr; /* Single column */
     gap: 15px;
@@ -464,8 +502,8 @@ body {
   color: white;
 }
 
-/* Mobile Responsiveness - Tablets and closed foldables */
-@media (max-width: 840px) {
+/* Mobile Responsiveness - Portrait orientation */
+@media (orientation: portrait) {
   .esp32-device-header {
     flex-direction: column;
     align-items: flex-start;
@@ -513,8 +551,8 @@ body {
   }
 }
 
-/* Smartphone optimizations */
-@media (max-width: 599px) {
+/* Narrow portrait device optimizations (smartphones, closed foldables) */
+@media (orientation: portrait) and (max-aspect-ratio: 3/4) {
   .esp32-grid {
     grid-template-columns: 1fr;
     padding: 10px;

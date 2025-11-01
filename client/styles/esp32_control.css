@@ -45,8 +45,8 @@
 }
 
 /* Landscape layout - left panel with everything except UDP, UDP on right */
-/* Applied via media query for orientation: landscape and wide screens */
-@media (min-width: 841px) and (orientation: landscape) {
+/* Applied for landscape orientation (PC, opened foldables, tablets in landscape) */
+@media (orientation: landscape) {
     .main-container {
         flex-direction: row;
         gap: 0; /* No gap - resizer provides spacing */
@@ -54,9 +54,7 @@
         overflow: hidden; /* Prevent main container from scrolling */
         align-items: flex-start; /* Don't stretch, align to top */
     }
-}
 
-@media (min-width: 841px) and (orientation: landscape) {
     .main-container .panel-resizer {
         display: block; /* Show resizer in landscape mode */
     }
@@ -114,9 +112,9 @@
     }
 }
 
-/* Portrait layout for medium screens - UDP monitor on right like landscape, but variable monitor like narrow */
-/* Applied for tablets and fold phones in portrait orientation */
-@media (min-width: 600px) and (max-width: 840px), (orientation: portrait) and (min-width: 600px) and (max-width: 1024px) {
+/* Portrait layout for tablets - wider aspect ratio in portrait */
+/* Applied for tablets in portrait orientation (like iPad) */
+@media (orientation: portrait) and (min-aspect-ratio: 3/4) {
     .esp32-tabs .main-container {
         flex-direction: row;
         gap: 15px; /* Reduced from 25px to 15px */
@@ -175,9 +173,9 @@
 }
 
 
-/* Stack layout for very narrow screens - everything stacked vertically */
-/* Applied for smartphones and folded foldables */
-@media (max-width: 599px) {
+/* Stack layout for narrow portrait devices - everything stacked vertically */
+/* Applied for smartphones and folded foldables with narrow aspect ratio */
+@media (orientation: portrait) and (max-aspect-ratio: 3/4) {
     .esp32-stack .main-container {
         flex-direction: column;
     }
@@ -206,7 +204,7 @@
 }
 
 /* Extra optimization for very narrow tall displays (closed foldables) */
-@media (max-aspect-ratio: 1/2) {
+@media (orientation: portrait) and (max-aspect-ratio: 1/2) {
     .esp32-stack .main-container {
         gap: 8px; /* Even tighter spacing for narrow screens */
     }
@@ -230,7 +228,7 @@
 }
 
 /* Ensure device card content doesn't get compressed in landscape layout */
-@media (min-width: 841px) and (orientation: landscape) {
+@media (orientation: landscape) {
     .main-container .esp32-device-card {
         min-height: 500px; /* Force minimum height */
         height: auto; /* Allow natural height expansion */
@@ -453,7 +451,7 @@
 }
 
 /* Ensure start options area doesn't get compressed in landscape layout */
-@media (min-width: 841px) and (orientation: landscape) {
+@media (orientation: landscape) {
     .main-container .start-options-area {
         min-height: auto; /* Allow natural height */
         flex-shrink: 0; /* Force no shrinking */
@@ -1010,6 +1008,38 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
+}
+
+/* Sidebar Mode Toggle - Compact version in header */
+.sidebar-mode-btn-compact {
+    background: rgba(102, 126, 234, 0.15);
+    border: 2px solid rgba(102, 126, 234, 0.3);
+    border-radius: 8px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+}
+
+.sidebar-mode-btn-compact:hover {
+    background: rgba(102, 126, 234, 0.25);
+    border-color: #667eea;
+    transform: scale(1.1);
+}
+
+.sidebar-mode-btn-compact:active {
+    transform: scale(0.95);
+}
+
+#sidebar-mode-icon {
+    font-size: 18px;
+    line-height: 1;
 }
 
 .sidebar-header h6 {
@@ -1039,8 +1069,8 @@
     transform: scale(1.1);
 }
 
-/* Hide close button on desktop */
-@media (min-width: 1025px) {
+/* Hide close button on desktop (devices with mouse pointer) */
+@media (pointer: fine) {
     .btn-close-sidebar {
         display: none;
     }
@@ -1109,10 +1139,12 @@
     overflow: hidden;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     backdrop-filter: blur(10px);
+    display: block; /* Default to tabs (will be overridden by media queries) */
 }
 
 .esp32-stack {
     padding: 20px;
+    display: none; /* Hidden by default (will be shown by media query for narrow portrait) */
 }
 
 /* Tab Close Button */
@@ -1134,13 +1166,13 @@
     transform: scale(1.2);
 }
 
-/* Responsive layout - Mobile sidebar toggle for tablets and smaller */
-@media (max-width: 840px) {
-    .mobile-sidebar-toggle {
+/* ========== SIDEBAR AUTO MODE - TOUCH devices get overlay ========== */
+@media (pointer: coarse) {
+    body:not(.sidebar-force-overlay):not(.sidebar-force-hidden) .mobile-sidebar-toggle {
         display: block;
     }
 
-    .esp32-sidebar {
+    body:not(.sidebar-force-overlay):not(.sidebar-force-hidden) .esp32-sidebar {
         position: fixed;
         left: 0;
         top: 80px;
@@ -1149,58 +1181,151 @@
         transform: translateX(-100%);
     }
 
-    .esp32-sidebar.show {
+    body:not(.sidebar-force-overlay):not(.sidebar-force-hidden) .esp32-sidebar.show {
         transform: translateX(0);
     }
 
-    .esp32-main-layout {
+    body:not(.sidebar-force-overlay):not(.sidebar-force-hidden) .esp32-main-layout {
         margin: 0 10px;
     }
 
-    .esp32-content-area {
+    body:not(.sidebar-force-overlay):not(.sidebar-force-hidden) .esp32-content-area {
         width: 100%;
     }
 }
 
-/* Smartphone and closed foldable optimizations */
-@media (max-width: 599px) {
-    .esp32-device-header {
+/* ========== SIDEBAR FORCE OVERLAY - Always as toggleable overlay ========== */
+body.sidebar-force-overlay .mobile-sidebar-toggle {
+    display: block;
+}
+
+body.sidebar-force-overlay .esp32-sidebar {
+    position: fixed;
+    left: 0;
+    top: 80px;
+    height: calc(100dvh - 80px);
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+}
+
+body.sidebar-force-overlay .esp32-sidebar.show {
+    transform: translateX(0);
+}
+
+body.sidebar-force-overlay .esp32-main-layout {
+    margin: 0 10px;
+}
+
+body.sidebar-force-overlay .esp32-content-area {
+    width: 100%;
+}
+
+/* ========== SIDEBAR FORCE VISIBLE - Always show sidebar (even on touch) ========== */
+body.sidebar-force-visible .esp32-sidebar {
+    position: relative;
+    transform: translateX(0);
+    width: 280px;
+    flex-shrink: 0;
+}
+
+body.sidebar-force-visible .mobile-sidebar-toggle {
+    display: none; /* No toggle needed, always visible */
+}
+
+body.sidebar-force-visible .sidebar-overlay {
+    display: none !important;
+}
+
+/* ========== AUTO MODE - Media Query based (default) ========== */
+/* Tab layout for landscape orientation (PC, opened foldables) */
+@media (orientation: landscape) {
+    body:not(.layout-force-tabs):not(.layout-force-stack) #esp32-tabs {
+        display: block;
+    }
+    body:not(.layout-force-tabs):not(.layout-force-stack) #esp32-stack {
+        display: none;
+    }
+}
+
+/* Tab layout for portrait tablets (wider aspect ratio in portrait, like iPad) */
+/* Aspect ratio 3/4 = 0.75, devices with 0.75 or wider get tabs */
+@media (orientation: portrait) and (min-aspect-ratio: 3/4) {
+    body:not(.layout-force-tabs):not(.layout-force-stack) #esp32-tabs {
+        display: block;
+    }
+    body:not(.layout-force-tabs):not(.layout-force-stack) #esp32-stack {
+        display: none;
+    }
+}
+
+/* Stack layout for narrow portrait devices (smartphones, closed foldables) */
+/* Use NOT to exclude devices with aspect ratio >= 3/4 */
+@media (orientation: portrait) and (not (min-aspect-ratio: 3/4)) {
+    body:not(.layout-force-tabs):not(.layout-force-stack) .esp32-device-header {
         flex-direction: column;
         align-items: flex-start;
         gap: 10px;
     }
 
-    .device-users {
+    body:not(.layout-force-tabs):not(.layout-force-stack) .device-users {
         align-self: stretch;
     }
 
-    .row .col-md-4 {
+    body:not(.layout-force-tabs):not(.layout-force-stack) .row .col-md-4 {
         margin-bottom: 15px;
     }
 
-    .esp32-main-layout {
+    body:not(.layout-force-tabs):not(.layout-force-stack) .esp32-main-layout {
         flex-direction: column;
     }
 
-    /* Stack layout for mobile - !important to override inline styles */
-    #esp32-stack {
-        display: block !important;
+    /* Show stack layout */
+    body:not(.layout-force-tabs):not(.layout-force-stack) #esp32-stack {
+        display: block;
         padding: 10px;
     }
 
-    #esp32-tabs {
-        display: none !important;
+    body:not(.layout-force-tabs):not(.layout-force-stack) #esp32-tabs {
+        display: none;
     }
 }
 
-/* Tab layout for tablets and larger - !important to override inline styles */
-@media (min-width: 600px) {
-    #esp32-tabs {
-        display: block !important;
-    }
-    #esp32-stack {
-        display: none !important;
-    }
+/* ========== MANUAL MODE - Force Tabs ========== */
+body.layout-force-tabs #esp32-tabs {
+    display: block !important;
+}
+
+body.layout-force-tabs #esp32-stack {
+    display: none !important;
+}
+
+/* ========== MANUAL MODE - Force Stack ========== */
+body.layout-force-stack #esp32-tabs {
+    display: none !important;
+}
+
+body.layout-force-stack #esp32-stack {
+    display: block !important;
+    padding: 10px;
+}
+
+body.layout-force-stack .esp32-device-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+body.layout-force-stack .device-users {
+    align-self: stretch;
+}
+
+body.layout-force-stack .row .col-md-4 {
+    margin-bottom: 15px;
+}
+
+body.layout-force-stack .esp32-main-layout {
+    flex-direction: column;
 }
 
 /* Dark mode support */
