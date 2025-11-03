@@ -42,7 +42,8 @@
       "Bash(rustc --version)",
       "Bash(npm start)",
       "Read(//c/Users/chris/documents/git/hub/ESP32_manager_server/client/scripts/**)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": []

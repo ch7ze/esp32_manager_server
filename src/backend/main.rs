@@ -33,6 +33,7 @@ use tower_http::{
 // MODULE IMPORTS - Unsere eigenen Code-Module
 // ============================================================================
 
+mod app_state;   // app_state.rs - Centralized application state
 mod auth;        // auth.rs - Authentication (Login, Register, JWT)
 mod file_utils;  // file_utils.rs - File handling and SPA routing
 mod database;    // database.rs - SQLite database integration
@@ -77,24 +78,13 @@ use database::{DatabaseManager};
 use device_store::{create_shared_store, SharedDeviceStore};
 use websocket::{websocket_handler, websocket_stats_handler, device_users_handler, start_cleanup_task, WebSocketState};
 
+// Import centralized AppState
+use app_state::AppState;
+
 // DEBUG: Simple test handler for WebSocket routing
 async fn debug_websocket_handler() -> Result<String, (axum::http::StatusCode, String)> {
     tracing::error!("DEBUG WebSocket handler called!");
     Ok("DEBUG: WebSocket handler reached".to_string())
-}
-
-// ============================================================================
-// APP STATE - Global state for the application
-// ============================================================================
-
-#[derive(Clone)]
-pub struct AppState {
-    pub db: Arc<DatabaseManager>,
-    pub device_store: SharedDeviceStore,
-    pub esp32_manager: Arc<esp32_manager::Esp32Manager>,
-    pub esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>,
-    pub mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>,
-    pub uart_connection: Arc<tokio::sync::Mutex<uart_connection::UartConnection>>,
 }
 
 // ============================================================================
