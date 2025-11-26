@@ -312,6 +312,7 @@ impl UartConnection {
                                 device_id.to_string(),
                                 device_name,
                                 None,  // UART has no IP
+                                Some("uart".to_string()),  // Connection type: UART
                             ).await {
                                 warn!("Failed to save UART device to database: {}", e);
                             } else {

@@ -1515,7 +1515,8 @@ async fn discovered_esp32_devices_handler(
         discovery.get_discovered_devices().await
     };
 
-    tracing::info!("ESP32 Discovery API called - found {} TCP devices", discovered_devices.len());
+    let tcp_device_count = discovered_devices.len();
+    tracing::info!("ESP32 Discovery API called - found {} TCP devices", tcp_device_count);
 
     let mut devices_json: Vec<Value> = discovered_devices
         .into_iter()
@@ -1554,38 +1555,38 @@ async fn discovered_esp32_devices_handler(
         })
         .collect();
 
-    // Also get UART devices from device store events
-    let uart_devices = app_state.device_store.get_device_events("system").await;
-    let mut uart_device_ids = std::collections::HashSet::new();
-
-    for event in uart_devices {
-        if let crate::events::DeviceEvent::Esp32DeviceDiscovered {
-            device_id,
-            device_ip,
-            mdns_hostname,
-            ..
-        } = event {
-            // Only add UART devices (IP 0.0.0.0)
-            if device_ip == "0.0.0.0" && !uart_device_ids.contains(&device_id) {
-                uart_device_ids.insert(device_id.clone());
-
-                devices_json.push(json!({
-                    "deviceId": device_id,
-                    "deviceIp": device_ip,
-                    "tcpPort": 0,
-                    "udpPort": 0,
-                    "status": "discovered",
-                    "connectionType": "uart",
-                    "mdnsHostname": mdns_hostname
-                }));
-
-                tracing::info!("Added UART device to discovered list: {}", device_id);
-            }
+    // Get UART devices from database (persistent storage)
+    let uart_devices_from_db = match app_state.db.get_esp32_devices_by_connection_type("uart").await {
+        Ok(devices) => devices,
+        Err(e) => {
+            tracing::warn!("Failed to load UART devices from database: {}", e);
+            Vec::new()
         }
+    };
+
+    let uart_device_count = uart_devices_from_db.len();
+    tracing::info!("Loaded {} UART devices from database", uart_device_count);
+
+    // Add UART devices to response
+    for uart_device in uart_devices_from_db {
+        devices_json.push(json!({
+            "deviceId": uart_device.mac_address,
+            "deviceIp": "0.0.0.0",  // UART devices have no IP
+            "tcpPort": 0,
+            "udpPort": 0,
+            "status": "discovered",
+            "connectionType": "uart",
+            "mdnsHostname": Some(format!("uart-{}", uart_device.mac_address)),
+            "name": uart_device.name
+        }));
+
+        tracing::info!("Added UART device from DB to discovered list: {}", uart_device.mac_address);
     }
 
     tracing::info!("Total discovered devices: {} (TCP: {}, UART: {})",
-                   devices_json.len(), devices_json.len() - uart_device_ids.len(), uart_device_ids.len());
+                   devices_json.len(),
+                   tcp_device_count,
+                   uart_device_count);
 
     Ok(Json(json!({
         "success": true,

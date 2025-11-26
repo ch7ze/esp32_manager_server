@@ -47,6 +47,7 @@ pub struct ESP32Device {
     pub firmware_version: Option<String>,
     pub last_seen: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    pub connection_type: String, // "tcp" or "uart"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +97,23 @@ impl ESP32Device {
             firmware_version: None,
             last_seen: now,
             created_at: now,
+            connection_type: "tcp".to_string(), // Default to TCP
+        }
+    }
+
+    pub fn new_uart(name: String, owner_id: String, mac_address: String) -> Self {
+        let now = Utc::now();
+        Self {
+            mac_address,
+            name,
+            owner_id,
+            ip_address: None,
+            status: DeviceStatus::Offline,
+            maintenance_mode: false,
+            firmware_version: None,
+            last_seen: now,
+            created_at: now,
+            connection_type: "uart".to_string(),
         }
     }
 
@@ -151,6 +169,17 @@ impl DatabaseManager {
         .execute(&self.pool)
         .await?;
 
+        // Create system "guest" user with fixed ID (required for FOREIGN KEY constraints)
+        // This user is independent from initial_users.json and cannot be deleted
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO users (id, email, display_name, password_hash, created_at, is_admin)
+            VALUES ('guest', 'guest@system.local', 'Guest User', '', datetime('now'), FALSE)
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
         // ESP32 Devices Tabelle erstellen
         sqlx::query(
             r#"
@@ -164,6 +193,7 @@ impl DatabaseManager {
                 firmware_version TEXT,
                 last_seen TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                connection_type TEXT NOT NULL DEFAULT 'tcp',
                 FOREIGN KEY (owner_id) REFERENCES users (id)
             )
             "#
@@ -234,6 +264,28 @@ impl DatabaseManager {
         )
         .execute(&self.pool)
         .await?;
+
+        // Migration: Add connection_type column if it doesn't exist (for existing databases)
+        let migration_result = sqlx::query(
+            r#"
+            ALTER TABLE esp32_devices ADD COLUMN connection_type TEXT NOT NULL DEFAULT 'tcp'
+            "#
+        )
+        .execute(&self.pool)
+        .await;
+
+        // Ignore error if column already exists
+        match migration_result {
+            Ok(_) => tracing::info!("Database migration: Added connection_type column to esp32_devices"),
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("duplicate column") || error_msg.contains("already exists") {
+                    tracing::debug!("Database migration: connection_type column already exists");
+                } else {
+                    tracing::warn!("Database migration warning: {}", error_msg);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -503,7 +555,7 @@ impl DatabaseManager {
         };
         
         sqlx::query(
-            "INSERT INTO esp32_devices (mac_address, name, owner_id, ip_address, status, maintenance_mode, firmware_version, last_seen, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO esp32_devices (mac_address, name, owner_id, ip_address, status, maintenance_mode, firmware_version, last_seen, created_at, connection_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&device.mac_address)
         .bind(&device.name)
@@ -514,6 +566,7 @@ impl DatabaseManager {
         .bind(&device.firmware_version)
         .bind(device.last_seen.to_rfc3339())
         .bind(device.created_at.to_rfc3339())
+        .bind(&device.connection_type)
         .execute(&self.pool)
         .await?;
 
@@ -556,6 +609,7 @@ impl DatabaseManager {
                     firmware_version: row.get("firmware_version"),
                     last_seen,
                     created_at,
+                    connection_type: row.try_get("connection_type").unwrap_or_else(|_| "tcp".to_string()),
                 }))
             }
             None => Ok(None)
@@ -603,6 +657,7 @@ impl DatabaseManager {
                 firmware_version: row.get("firmware_version"),
                 last_seen,
                 created_at,
+                connection_type: row.try_get("connection_type").unwrap_or_else(|_| "tcp".to_string()),
             };
             
             let permission: String = row.get("permission");
@@ -650,6 +705,7 @@ impl DatabaseManager {
                 firmware_version: row.get("firmware_version"),
                 last_seen,
                 created_at,
+                connection_type: row.try_get("connection_type").unwrap_or_else(|_| "tcp".to_string()),
             };
             
             device_list.push(device);
@@ -717,6 +773,54 @@ impl DatabaseManager {
         Ok(())
     }
 
+    /// Get all ESP32 devices by connection type (e.g., "tcp" or "uart")
+    pub async fn get_esp32_devices_by_connection_type(
+        &self,
+        connection_type: &str,
+    ) -> Result<Vec<ESP32Device>, Box<dyn std::error::Error>> {
+        let rows = sqlx::query(
+            "SELECT * FROM esp32_devices WHERE connection_type = ? ORDER BY last_seen DESC"
+        )
+        .bind(connection_type)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut devices = Vec::new();
+        for row in rows {
+            let created_at_str: String = row.get("created_at");
+            let created_at = DateTime::parse_from_rfc3339(&created_at_str)?.with_timezone(&Utc);
+            let last_seen_str: String = row.get("last_seen");
+            let last_seen = DateTime::parse_from_rfc3339(&last_seen_str)?.with_timezone(&Utc);
+
+            let status_str: String = row.get("status");
+            let status = match status_str.as_str() {
+                "Online" => DeviceStatus::Online,
+                "Offline" => DeviceStatus::Offline,
+                "Error" => DeviceStatus::Error,
+                "Updating" => DeviceStatus::Updating,
+                "Maintenance" => DeviceStatus::Maintenance,
+                _ => DeviceStatus::Offline,
+            };
+
+            let device = ESP32Device {
+                mac_address: row.get("mac_address"),
+                name: row.get("name"),
+                owner_id: row.get("owner_id"),
+                ip_address: row.get("ip_address"),
+                status,
+                maintenance_mode: row.get("maintenance_mode"),
+                firmware_version: row.get("firmware_version"),
+                last_seen,
+                created_at,
+                connection_type: row.try_get("connection_type").unwrap_or_else(|_| "tcp".to_string()),
+            };
+
+            devices.push(device);
+        }
+
+        Ok(devices)
+    }
+
     /// Create or update ESP32 device from discovery (auto-save discovered devices)
     /// If device exists, update IP and last_seen. If not, create as guest-owned device.
     pub async fn upsert_discovered_device(
@@ -724,6 +828,7 @@ impl DatabaseManager {
         mac_address: String,
         device_name: String,
         ip_address: Option<String>,
+        connection_type: Option<String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Check if device already exists
         let existing = self.get_esp32_device_by_id(&mac_address).await?;
@@ -755,6 +860,7 @@ impl DatabaseManager {
                 firmware_version: None,
                 last_seen: Utc::now(),
                 created_at: Utc::now(),
+                connection_type: connection_type.unwrap_or_else(|| "tcp".to_string()),
             };
 
             self.create_esp32_device(new_device).await?;

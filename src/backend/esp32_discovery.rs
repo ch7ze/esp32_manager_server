@@ -197,6 +197,7 @@ impl Esp32Discovery {
                                 final_device_id.clone(),
                                 device_name,
                                 Some(device_config_spawn.ip_address.to_string()),
+                                Some("tcp".to_string()),  // Connection type: TCP
                             ).await {
                                 tracing::warn!("Failed to save discovered device to database: {}", e);
                             } else {
