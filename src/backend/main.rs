@@ -1562,42 +1562,65 @@ async fn discovered_devices_handler(
     let tcp_device_count = discovered_devices.len();
     tracing::info!("Device Discovery API called - found {} TCP devices", tcp_device_count);
 
-    let mut devices_json: Vec<Value> = discovered_devices
-        .into_iter()
-        .map(|(device_id, discovered_device)| {
-            tracing::info!("Processing discovered device: {} with mDNS data: {:?}",
-                device_id, discovered_device.mdns_data.is_some());
+    let mut devices_json: Vec<Value> = Vec::new();
 
-            let mut device_json = json!({
-                "deviceId": device_id,
-                "deviceIp": discovered_device.device_config.ip_address.to_string(),
-                "tcpPort": discovered_device.device_config.tcp_port,
-                "udpPort": discovered_device.device_config.udp_port,
-                "status": "discovered",
-                "connectionType": "tcp"
-            });
+    for (device_id, discovered_device) in discovered_devices {
+        tracing::info!("Processing discovered device: {} with mDNS data: {:?}",
+            device_id, discovered_device.mdns_data.is_some());
 
-            // Add MAC address and mDNS hostname from mDNS data if available
-            if let Some(ref mdns_data) = discovered_device.mdns_data {
-                tracing::info!("Found mDNS data with {} TXT records", mdns_data.txt_records.len());
-                if let Some(mac_address) = mdns_data.txt_records.get("mac") {
-                    tracing::info!("Adding MAC address to JSON: {}", mac_address);
-                    device_json["macAddress"] = json!(mac_address);
-                } else {
-                    tracing::warn!("No 'mac' key found in TXT records: {:?}", mdns_data.txt_records.keys().collect::<Vec<_>>());
-                }
+        let mut device_json = json!({
+            "deviceId": device_id,
+            "deviceIp": discovered_device.device_config.ip_address.to_string(),
+            "tcpPort": discovered_device.device_config.tcp_port,
+            "udpPort": discovered_device.device_config.udp_port,
+            "status": "discovered",
+            "connectionType": "tcp"
+        });
 
-                // Add mDNS hostname without .local suffix
-                let mdns_hostname = mdns_data.hostname.replace(".local", "").trim_end_matches('.').to_string();
-                device_json["mdnsHostname"] = json!(mdns_hostname);
-                tracing::info!("Adding mDNS hostname to JSON: {}", mdns_hostname);
+        let mut mac_address_key: Option<String> = None;
+
+        // Add MAC address and mDNS hostname from mDNS data if available
+        if let Some(ref mdns_data) = discovered_device.mdns_data {
+            tracing::info!("Found mDNS data with {} TXT records", mdns_data.txt_records.len());
+            if let Some(mac_address) = mdns_data.txt_records.get("mac") {
+                tracing::info!("Adding MAC address to JSON: {}", mac_address);
+                device_json["macAddress"] = json!(mac_address);
+                // Store MAC address key for database lookup (replace : with -)
+                mac_address_key = Some(mac_address.replace(':', "-"));
             } else {
-                tracing::warn!("No mDNS data found for device: {}", device_id);
+                tracing::warn!("No 'mac' key found in TXT records: {:?}", mdns_data.txt_records.keys().collect::<Vec<_>>());
             }
 
-            device_json
-        })
-        .collect();
+            // Add mDNS hostname without .local suffix
+            let mdns_hostname = mdns_data.hostname.replace(".local", "").trim_end_matches('.').to_string();
+            device_json["mdnsHostname"] = json!(mdns_hostname);
+            tracing::info!("Adding mDNS hostname to JSON: {}", mdns_hostname);
+        } else {
+            tracing::warn!("No mDNS data found for device: {}", device_id);
+        }
+
+        // Try to load alias and name from database if we have a MAC address
+        if let Some(ref mac_key) = mac_address_key {
+            match app_state.db.get_device_by_id(mac_key).await {
+                Ok(Some(device)) => {
+                    if let Some(alias) = device.alias {
+                        device_json["alias"] = json!(alias);
+                        tracing::info!("Adding alias to discovered device {}: {}", mac_key, alias);
+                    }
+                    device_json["name"] = json!(device.name);
+                    tracing::info!("Adding name to discovered device {}: {}", mac_key, device.name);
+                }
+                Ok(None) => {
+                    tracing::debug!("No device found in database for MAC: {}", mac_key);
+                }
+                Err(e) => {
+                    tracing::warn!("Error loading device from database for MAC {}: {}", mac_key, e);
+                }
+            }
+        }
+
+        devices_json.push(device_json);
+    }
 
     // Get UART devices from database (persistent storage)
     let uart_devices_from_db = match app_state.db.get_devices_by_connection_type("uart").await {
@@ -1613,18 +1636,27 @@ async fn discovered_devices_handler(
 
     // Add UART devices to response
     for uart_device in uart_devices_from_db {
-        devices_json.push(json!({
-            "deviceId": uart_device.mac_address,
+        let mut uart_json = json!({
+            "deviceId": uart_device.mac_address.clone(),
             "deviceIp": "0.0.0.0",  // UART devices have no IP
             "tcpPort": 0,
             "udpPort": 0,
             "status": "discovered",
             "connectionType": "uart",
             "mdnsHostname": Some(format!("uart-{}", uart_device.mac_address)),
-            "name": uart_device.name
-        }));
+            "macAddress": uart_device.mac_address.replace('-', ":"),  // Show MAC with colons
+            "name": uart_device.name.clone()
+        });
 
-        tracing::info!("Added UART device from DB to discovered list: {}", uart_device.mac_address);
+        // Add alias if available
+        if let Some(alias) = uart_device.alias {
+            uart_json["alias"] = json!(alias);
+            tracing::info!("Added UART device from DB with alias: {} (alias: {})", uart_device.mac_address, alias);
+        } else {
+            tracing::info!("Added UART device from DB to discovered list: {}", uart_device.mac_address);
+        }
+
+        devices_json.push(uart_json);
     }
 
     tracing::info!("Total discovered devices: {} (TCP: {}, UART: {})",

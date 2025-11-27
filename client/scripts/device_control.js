@@ -282,11 +282,16 @@ function renderDeviceSidebar() {
 
         const isConnected = deviceDevices.has(device.deviceId) && deviceDevices.get(device.deviceId).connected;
 
+        // Display priority: alias > mdnsHostname > deviceId
+        const displayName = device.alias || device.mdnsHostname || device.deviceId;
+        // Show MAC address, or deviceId as fallback
+        const displayMac = device.macAddress || device.deviceId;
+
         deviceItem.innerHTML = `
             <span class="status-dot ${getStatusClass(isConnected)}"></span>
             <div class="device-info">
-                <div class="device-name">${device.mdnsHostname || device.deviceId}</div>
-                <div class="device-mac">${device.macAddress || device.deviceId}</div>
+                <div class="device-name">${displayName}</div>
+                <div class="device-mac">${displayMac}</div>
             </div>
         `;
 
