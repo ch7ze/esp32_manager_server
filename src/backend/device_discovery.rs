@@ -1,8 +1,8 @@
-// ESP32 Discovery Service - Automatically discovers and manages ESP32 devices
+// Device Discovery Service - Automatically discovers and manages Device devices
 
-use crate::mdns_discovery::{MdnsDiscovery, create_mdns_discovery, MdnsEsp32Device};
-use crate::esp32_types::{Esp32DeviceConfig, Esp32Result};
-use crate::esp32_manager::Esp32Manager;
+use crate::mdns_discovery::{MdnsDiscovery, create_mdns_discovery, MdnsDiscoveredDevice};
+use crate::device_types::{DeviceConfig, DeviceResult};
+use crate::device_manager::DeviceManager;
 use crate::events::DeviceEvent;
 use crate::device_store::DeviceEventStore;
 use crate::database::DatabaseManager;
@@ -14,36 +14,36 @@ use tokio::sync::RwLock;
 use tracing::{info, debug, warn};
 
 // ============================================================================
-// ESP32 DISCOVERY SERVICE - Simplified
+// Device DISCOVERY SERVICE - Simplified
 // ============================================================================
 
-/// Discovered ESP32 device with discovery metadata
+/// Discovered Device device with discovery metadata
 #[derive(Debug, Clone)]
-pub struct DiscoveredEsp32Device {
-    pub device_config: Esp32DeviceConfig,
+pub struct DiscoveredDevice {
+    pub device_config: DeviceConfig,
     pub discovered_at: chrono::DateTime<chrono::Utc>,
     pub udp_port: u16,
-    pub mdns_data: Option<MdnsEsp32Device>,
+    pub mdns_data: Option<MdnsDiscoveredDevice>,
 }
 
-/// ESP32 discovery service that integrates with WebSocket system
-pub struct Esp32Discovery {
+/// Device discovery service that integrates with WebSocket system
+pub struct DeviceDiscovery {
     mdns_discovery: Option<MdnsDiscovery>,
-    discovered_devices: Arc<RwLock<HashMap<String, DiscoveredEsp32Device>>>,
-    esp32_manager: Option<Arc<Esp32Manager>>,
+    discovered_devices: Arc<RwLock<HashMap<String, DiscoveredDevice>>>,
+    device_manager: Option<Arc<DeviceManager>>,
     device_store: Arc<DeviceEventStore>,
     db: Option<Arc<DatabaseManager>>,
     is_running: bool,
 }
 
-impl Esp32Discovery {
-    /// Create new ESP32 discovery service
+impl DeviceDiscovery {
+    /// Create new Device discovery service
     pub fn new(device_store: Arc<DeviceEventStore>) -> Self {
         Self::with_manager(device_store, None, None)
     }
 
-    /// Create new ESP32 discovery service with manager integration
-    pub fn with_manager(device_store: Arc<DeviceEventStore>, esp32_manager: Option<Arc<Esp32Manager>>, db: Option<Arc<DatabaseManager>>) -> Self {
+    /// Create new Device discovery service with manager integration
+    pub fn with_manager(device_store: Arc<DeviceEventStore>, device_manager: Option<Arc<DeviceManager>>, db: Option<Arc<DatabaseManager>>) -> Self {
         let mdns_discovery = match create_mdns_discovery() {
             Ok(discovery) => Some(discovery),
             Err(e) => {
@@ -55,7 +55,7 @@ impl Esp32Discovery {
         Self {
             mdns_discovery,
             discovered_devices: Arc::new(RwLock::new(HashMap::new())),
-            esp32_manager,
+            device_manager,
             device_store,
             db,
             is_running: false,
@@ -63,9 +63,9 @@ impl Esp32Discovery {
     }
     
     /// Start discovery and broadcast found devices via WebSocket
-    pub async fn start_discovery(&mut self) -> Esp32Result<()> {
+    pub async fn start_discovery(&mut self) -> DeviceResult<()> {
         if self.is_running {
-            return Err(crate::esp32_types::Esp32Error::ConnectionFailed("Already running".to_string()));
+            return Err(crate::device_types::DeviceError::ConnectionFailed("Already running".to_string()));
         }
         
         self.is_running = true;
@@ -78,24 +78,24 @@ impl Esp32Discovery {
         if let Some(ref mut mdns_discovery) = self.mdns_discovery {
             let discovered_devices_mdns = Arc::clone(&discovered_devices);
             let device_store_mdns = Arc::clone(&device_store);
-            let esp32_manager_clone = self.esp32_manager.clone();
+            let device_manager_clone = self.device_manager.clone();
             let db_clone = db.clone();
             
-            mdns_discovery.start_discovery(move |mdns_device: MdnsEsp32Device| {
-                tracing::info!("ESP32Discovery callback triggered for: {}", mdns_device.hostname);
+            mdns_discovery.start_discovery(move |mdns_device: MdnsDiscoveredDevice| {
+                tracing::info!("DeviceDiscovery callback triggered for: {}", mdns_device.hostname);
                 
                 // Use MAC address as device ID instead of hostname
                 let device_id = mdns_device.txt_records.get("mac")
                     .map(|mac| mac.replace(':', "-"))  // Konvertiere MAC zu Key-Format mit Bindestrichen
-                    .unwrap_or_else(|| format!("esp32-{}", mdns_device.hostname.replace(".local", "").trim_end_matches('.')));
+                    .unwrap_or_else(|| format!("device-{}", mdns_device.hostname.replace(".local", "").trim_end_matches('.')));
                 let ip = mdns_device.ip_addresses.first().copied()
                     .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 100)));
                 
-                let device_config = Esp32DeviceConfig::new(
+                let device_config = DeviceConfig::new(
                     device_id.clone(),
                     ip,
-                    3232, // ESP32 TCP port (same as UDP port)
-                    3232, // ESP32 UDP port
+                    3232, // Device TCP port (same as UDP port)
+                    3232, // Device UDP port
                 );
                 
                 let discovered_at = chrono::Utc::now();
@@ -113,14 +113,14 @@ impl Esp32Discovery {
                 // Store device synchronously first
                 {
                     if let Ok(mut devices) = discovered_devices_clone.try_write() {
-                        let discovered_device = DiscoveredEsp32Device {
+                        let discovered_device = DiscoveredDevice {
                             device_config: device_config_clone.clone(),
                             discovered_at,
                             udp_port: mdns_device.port,
                             mdns_data: Some(mdns_device.clone()),
                         };
                         devices.insert(device_id_clone.clone(), discovered_device);
-                        tracing::info!("ESP32 device stored in HashMap: {}", device_id_clone);
+                        tracing::info!("Device device stored in HashMap: {}", device_id_clone);
                     } else {
                         tracing::warn!("Could not acquire write lock for discovered devices");
                     }
@@ -130,11 +130,11 @@ impl Esp32Discovery {
                 let device_store_spawn = Arc::clone(&device_store_clone);
                 let device_id_spawn = device_id_clone.clone();
                 let device_config_spawn = device_config_clone.clone();
-                let esp32_manager_spawn = esp32_manager_clone.clone();
+                let device_manager_spawn = device_manager_clone.clone();
                 let db_spawn = db_clone.clone();
 
                 std::thread::spawn(move || {
-                    tracing::info!("ESP32Discovery thread spawned for: {}", device_id_spawn);
+                    tracing::info!("DeviceDiscovery thread spawned for: {}", device_id_spawn);
                     
                     // Create a new tokio runtime for this thread
                     let rt = match tokio::runtime::Runtime::new() {
@@ -155,7 +155,7 @@ impl Esp32Discovery {
 
                         // Create UDP device config with MAC address as device_id
                         let (final_device_id, udp_device_config) = if let Some(ref mac) = mac_address {
-                            let config = crate::esp32_types::Esp32DeviceConfig::new_udp(
+                            let config = crate::device_types::DeviceConfig::new_udp(
                                 mac.clone(), // MAC address IS the device_id
                                 device_config_spawn.ip_address,
                                 device_config_spawn.udp_port,
@@ -167,7 +167,7 @@ impl Esp32Discovery {
                         };
 
                         // Broadcast discovery event to all WebSocket clients
-                        let discovery_event = DeviceEvent::esp32_device_discovered(
+                        let discovery_event = DeviceEvent::device_discovered(
                             final_device_id.clone(),
                             device_config_spawn.ip_address.to_string(),
                             device_config_spawn.tcp_port,
@@ -178,11 +178,11 @@ impl Esp32Discovery {
                         );
 
                         match device_store_spawn.broadcast_event("system", discovery_event, "system").await {
-                            Ok(_) => tracing::info!("ESP32 discovery WebSocket event sent for: {}", final_device_id),
-                            Err(e) => tracing::warn!("Failed to broadcast ESP32 discovery event: {}", e),
+                            Ok(_) => tracing::info!("Device discovery WebSocket event sent for: {}", final_device_id),
+                            Err(e) => tracing::warn!("Failed to broadcast Device discovery event: {}", e),
                         }
 
-                        tracing::info!("ESP32 device discovered via mDNS: {} (original: {}, MAC: {:?}) at {}",
+                        tracing::info!("Device device discovered via mDNS: {} (original: {}, MAC: {:?}) at {}",
                             final_device_id, device_id_spawn, mac_address, ip);
 
                         // Save device to database
@@ -190,7 +190,7 @@ impl Esp32Discovery {
                             let device_name = if !mdns_hostname_string.is_empty() {
                                 mdns_hostname_string.clone()
                             } else {
-                                format!("ESP32-{}", &final_device_id[..8.min(final_device_id.len())])
+                                format!("Device-{}", &final_device_id[..8.min(final_device_id.len())])
                             };
 
                             if let Err(e) = db.upsert_discovered_device(
@@ -206,19 +206,19 @@ impl Esp32Discovery {
                         }
 
                         // Automatically add device to manager if available (but don't connect yet)
-                        if let Some(manager) = &esp32_manager_spawn {
-                            tracing::info!("Adding discovered ESP32 to manager: {} (MAC as device_id)", final_device_id);
+                        if let Some(manager) = &device_manager_spawn {
+                            tracing::info!("Adding discovered Device to manager: {} (MAC as device_id)", final_device_id);
 
                             // Add UDP device with MAC as device_id
                             if let Err(e) = manager.add_device(udp_device_config).await {
                                 tracing::warn!("Failed to add discovered device to manager: {}", e);
                             } else {
-                                tracing::info!("Successfully added ESP32 {} to manager (not connected yet)", final_device_id);
+                                tracing::info!("Successfully added Device {} to manager (not connected yet)", final_device_id);
                             }
                         }
                     });
                 });
-            }).await.map_err(|e| crate::esp32_types::Esp32Error::ConnectionFailed(e))?;
+            }).await.map_err(|e| crate::device_types::DeviceError::ConnectionFailed(e))?;
             
             info!("mDNS discovery started successfully");
         } else {
@@ -226,7 +226,7 @@ impl Esp32Discovery {
         }
         
         
-        info!("ESP32 discovery service started");
+        info!("Device discovery service started");
         Ok(())
     }
     
@@ -240,12 +240,12 @@ impl Esp32Discovery {
             
             
             self.is_running = false;
-            info!("ESP32 discovery service stopped");
+            info!("Device discovery service stopped");
         }
     }
     
     /// Get all discovered devices
-    pub async fn get_discovered_devices(&self) -> HashMap<String, DiscoveredEsp32Device> {
+    pub async fn get_discovered_devices(&self) -> HashMap<String, DiscoveredDevice> {
         self.discovered_devices.read().await.clone()
     }
     
@@ -253,11 +253,11 @@ impl Esp32Discovery {
 
 // Note: Default implementation is not available since DeviceEventStore is required
 
-impl Drop for Esp32Discovery {
+impl Drop for DeviceDiscovery {
     fn drop(&mut self) {
         if self.is_running {
             // Cleanup handled by mDNS discovery
-            debug!("ESP32Discovery dropped while running");
+            debug!("DeviceDiscovery dropped while running");
         }
     }
 }

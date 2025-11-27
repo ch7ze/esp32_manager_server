@@ -1,8 +1,8 @@
-// UART connection management for ESP32 devices
-// Handles serial communication with multiple ESP32 devices connected via UART
+// UART connection management for devices
+// Handles serial communication with multiple devices connected via UART
 
 use crate::device_store::SharedDeviceStore;
-use crate::esp32_manager::Esp32Manager;
+use crate::device_manager::DeviceManager;
 use crate::database::DatabaseManager;
 
 use std::collections::HashMap;
@@ -33,7 +33,7 @@ impl Default for UartSettings {
     }
 }
 
-/// Manages UART connection for ESP32 devices
+/// Manages UART connection for devices
 pub struct UartConnection {
     /// Current UART settings
     settings: Arc<RwLock<Option<UartSettings>>>,
@@ -47,12 +47,12 @@ pub struct UartConnection {
     shutdown_sender: Option<mpsc::UnboundedSender<()>>,
     /// Connection status
     is_connected: Arc<RwLock<bool>>,
-    /// Unified connection states (shared with ESP32Manager)
+    /// Unified connection states (shared with DeviceManager)
     unified_connection_states: Arc<RwLock<HashMap<String, bool>>>,
-    /// Unified activity tracker (shared with ESP32Manager)
+    /// Unified activity tracker (shared with DeviceManager)
     unified_activity_tracker: Arc<RwLock<HashMap<String, std::time::Instant>>>,
-    /// Device connection types map (shared with ESP32Manager)
-    device_connection_types: Arc<RwLock<HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
+    /// Device connection types map (shared with DeviceManager)
+    device_connection_types: Arc<RwLock<HashMap<String, crate::device_manager::DeviceConnectionType>>>,
 }
 
 impl UartConnection {
@@ -61,7 +61,7 @@ impl UartConnection {
         device_store: SharedDeviceStore,
         unified_connection_states: Arc<RwLock<HashMap<String, bool>>>,
         unified_activity_tracker: Arc<RwLock<HashMap<String, std::time::Instant>>>,
-        device_connection_types: Arc<RwLock<HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
+        device_connection_types: Arc<RwLock<HashMap<String, crate::device_manager::DeviceConnectionType>>>,
     ) -> Self {
         Self {
             settings: Arc::new(RwLock::new(None)),
@@ -280,7 +280,7 @@ impl UartConnection {
         device_store: &SharedDeviceStore,
         unified_connection_states: &Arc<RwLock<HashMap<String, bool>>>,
         unified_activity_tracker: &Arc<RwLock<HashMap<String, std::time::Instant>>>,
-        device_connection_types: &Arc<RwLock<HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
+        device_connection_types: &Arc<RwLock<HashMap<String, crate::device_manager::DeviceConnectionType>>>,
         db: &Option<Arc<DatabaseManager>>,
     ) {
         info!("UART MESSAGE RECEIVED: {}", message);
@@ -321,7 +321,7 @@ impl UartConnection {
                         }
 
                         // Send discovery event
-                        let discovery_event = DeviceEvent::esp32_device_discovered(
+                        let discovery_event = DeviceEvent::device_discovered(
                             device_id.to_string(),
                             "0.0.0.0".to_string(),  // UART has no IP
                             0,  // UART has no TCP port
@@ -334,7 +334,7 @@ impl UartConnection {
                         let _ = device_store.add_event(
                             "system".to_string(),
                             discovery_event,
-                            "esp32_system".to_string(),
+                            "device_system".to_string(),
                             "uart_listener".to_string()
                         ).await;
 
@@ -348,10 +348,10 @@ impl UartConnection {
                         let modified_message = serde_json::to_string(&json_without_device_id)
                             .unwrap_or_else(|_| message.to_string());
 
-                        Esp32Manager::handle_message_unified(
+                        DeviceManager::handle_message_unified(
                             &modified_message,
                             device_id,
-                            crate::esp32_manager::MessageSource::Uart,
+                            crate::device_manager::MessageSource::Uart,
                             device_store,
                             unified_connection_states,
                             Some(unified_activity_tracker),

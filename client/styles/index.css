@@ -130,8 +130,8 @@ nav a:hover {
     text-decoration: none;
 }
 
-/* ESP32 Discovery Styles */
-.esp32-discovery {
+/* Device Discovery Styles */
+.device-discovery {
     margin: 30px 0;
     padding: 20px;
     background-color: #e8f5e8;
@@ -139,14 +139,14 @@ nav a:hover {
     border: 1px solid #c3e6c3;
 }
 
-.esp32-grid {
+.device-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 20px;
     margin-top: 20px;
 }
 
-.esp32-device {
+.device-device {
     background-color: white;
     border: 1px solid #28a745;
     border-radius: 8px;
@@ -155,36 +155,36 @@ nav a:hover {
     transition: transform 0.2s, box-shadow 0.2s;
 }
 
-.esp32-device:hover {
+.device-device:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0,0,0,0.2);
 }
 
-.esp32-device h4 {
+.device-device h4 {
     color: #155724;
     margin: 0 0 10px 0;
 }
 
-.esp32-device-info {
+.device-device-info {
     display: flex;
     flex-direction: column;
     gap: 5px;
     margin-bottom: 15px;
 }
 
-.esp32-device-info span {
+.device-device-info span {
     font-size: 0.9em;
     color: #666;
 }
 
-.esp32-actions {
+.device-actions {
     margin-top: 12px;
     display: flex;
     gap: 8px;
     justify-content: flex-end;
 }
 
-.esp32-device-status {
+.device-device-status {
     display: inline-block;
     padding: 2px 8px;
     border-radius: 12px;
@@ -192,7 +192,7 @@ nav a:hover {
     font-weight: bold;
 }
 
-.esp32-device-status.discovered {
+.device-device-status.discovered {
     background-color: #d4edda;
     color: #155724;
     border: 1px solid #c3e6c3;

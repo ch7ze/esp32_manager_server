@@ -2,7 +2,7 @@
 <div class="page-content">
     <div class="settings-container">
         <h2>⚙️ Settings</h2>
-        <p class="subtitle">Configure UART/Serial connection for ESP32 devices</p>
+        <p class="subtitle">Configure UART/Serial connection for microcontroller devices</p>
 
         <div class="settings-grid">
             <!-- UART Settings Card -->
@@ -35,7 +35,7 @@
                                         🔄 Refresh
                                     </button>
                                 </div>
-                                <div class="settings-help">Select the serial port where ESP32 devices are connected</div>
+                                <div class="settings-help">Select the serial port where microcontroller devices are connected</div>
                             </div>
 
                             <!-- Baud Rate Selection -->
@@ -110,11 +110,11 @@
                         <h6>ℹ️ UART Connection Info</h6>
                     </div>
                     <div class="settings-card-body">
-                        <p>UART (Universal Asynchronous Receiver-Transmitter) allows communication with ESP32 devices over serial connection.</p>
+                        <p>UART (Universal Asynchronous Receiver-Transmitter) allows communication with microcontroller devices over serial connection.</p>
                         <ul>
-                            <li>Connect multiple ESP32 devices to a single serial port</li>
+                            <li>Connect multiple microcontroller devices to a single serial port</li>
                             <li>Each device must send messages with a <code>"device_id"</code> field in JSON format</li>
-                            <li>Example: <code>{"device_id": "esp32-001", "temperature": "25.5"}</code></li>
+                            <li>Example: <code>{"device_id": "device-001", "temperature": "25.5"}</code></li>
                             <li>Messages are automatically routed to the correct device</li>
                         </ul>
                     </div>

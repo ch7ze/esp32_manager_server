@@ -15,10 +15,10 @@ pub mod database;
 pub mod device_store;
 pub mod events;
 pub mod websocket;
-pub mod esp32_types;
-pub mod esp32_connection;
-pub mod esp32_manager;
-pub mod esp32_discovery;
+pub mod device_types;
+pub mod device_connection;
+pub mod device_manager;
+pub mod device_discovery;
 pub mod mdns_discovery;
 pub mod mdns_server;
 pub mod debug_logger;
@@ -34,13 +34,13 @@ pub async fn create_test_app() -> Router {
     // Initialize minimal components for testing
     let db = Arc::new(DatabaseManager::new().await.expect("Failed to create test database"));
     let device_store = create_shared_store();
-    let esp32_manager = esp32_manager::create_esp32_manager(device_store.clone());
+    let device_manager = device_manager::create_device_manager(device_store.clone());
 
-    // Start ESP32 manager for tests
-    esp32_manager.start().await;
+    // Start device manager for tests
+    device_manager.start().await;
 
-    let esp32_discovery = Arc::new(tokio::sync::Mutex::new(
-        esp32_discovery::Esp32Discovery::with_manager(device_store.clone(), Some(esp32_manager.clone()), None)
+    let device_discovery = Arc::new(tokio::sync::Mutex::new(
+        device_discovery::DeviceDiscovery::with_manager(device_store.clone(), Some(device_manager.clone()), None)
     ));
 
     let mdns_server = Arc::new(tokio::sync::Mutex::new(
@@ -63,18 +63,18 @@ pub async fn create_test_app() -> Router {
         )
     ));
 
-    // Add test ESP32 device for consistent testing
+    // Add test device for consistent testing
     let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 43, 75));
-    let test_device = esp32_types::Esp32DeviceConfig::new(
-        "test-esp32-001".to_string(),
+    let test_device = device_types::DeviceConfig::new(
+        "test-device-001".to_string(),
         ip,
         3232,
         3232,
     );
-    let _ = esp32_manager.add_device(test_device).await;
+    let _ = device_manager.add_device(test_device).await;
 
     // Create app using the internal function
-    create_app_internal(db, device_store, esp32_manager, esp32_discovery, mdns_server, uart_connection).await
+    create_app_internal(db, device_store, device_manager, device_discovery, mdns_server, uart_connection).await
 }
 
 // Internal helper to create app for testing
@@ -82,8 +82,8 @@ pub async fn create_test_app() -> Router {
 async fn create_app_internal(
     db: Arc<DatabaseManager>,
     device_store: SharedDeviceStore,
-    esp32_manager: Arc<esp32_manager::Esp32Manager>,
-    esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>,
+    device_manager: Arc<device_manager::DeviceManager>,
+    device_discovery: Arc<tokio::sync::Mutex<device_discovery::DeviceDiscovery>>,
     mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>,
     uart_connection: Arc<tokio::sync::Mutex<uart_connection::UartConnection>>,
 ) -> Router {
@@ -97,8 +97,8 @@ async fn create_app_internal(
     let app_state = AppState {
         db: db.clone(),
         device_store: device_store.clone(),
-        esp32_manager: esp32_manager.clone(),
-        esp32_discovery: esp32_discovery.clone(),
+        device_manager: device_manager.clone(),
+        device_discovery: device_discovery.clone(),
         mdns_server: mdns_server.clone(),
         uart_connection: uart_connection.clone(),
     };
@@ -107,7 +107,7 @@ async fn create_app_internal(
     let api_routes = Router::new()
         .route("/api", get(api_home))
         .route("/api/users", get(api_users))
-        .route("/api/esp32/discovered", get(discovered_esp32_devices_handler))
+        .route("/api/devices/discovered", get(discovered_devices_handler))
         .route("/api/devices", get(list_devices_handler))
         .with_state(app_state.clone());
 
@@ -132,7 +132,7 @@ async fn create_app_internal(
 // Handler functions
 async fn api_home() -> Json<Value> {
     Json(json!({
-        "title": "ESP32 Manager Backend",
+        "title": "Device Manager Backend",
         "status": "running",
         "version": "0.1.0"
     }))
@@ -142,12 +142,12 @@ async fn api_users() -> Json<Value> {
     Json(json!({ "users": [] }))
 }
 
-async fn discovered_esp32_devices_handler(
+async fn discovered_devices_handler(
     State(app_state): State<AppState>,
 ) -> Result<Json<Value>, StatusCode> {
-    // Get discovered devices from ESP32Discovery service
+    // Get discovered devices from DeviceDiscovery service
     let discovered_devices = {
-        let discovery = app_state.esp32_discovery.lock().await;
+        let discovery = app_state.device_discovery.lock().await;
         discovery.get_discovered_devices().await
     };
 

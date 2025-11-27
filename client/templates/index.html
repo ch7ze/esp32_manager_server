@@ -1,45 +1,32 @@
 <div class="page-content">
   
-  <p>Willkommen im ESP32 Manager! Hier können Sie Ihre ESP32 Geräte verwalten und überwachen.</p>
+  <p>Willkommen im Device Manager! Hier können Sie Ihre Device Geräte verwalten und überwachen.</p>
   
-  <!-- ESP32 Discovery Section -->
-  <div class="esp32-discovery">
-    <h2>Entdeckte ESP32 Geräte</h2>
-    <div id="esp32-controls">
-      <button id="refresh-esp32-btn" class="action-button refresh-button">Geräte aktualisieren</button>
+  <!-- Device Discovery Section -->
+  <div class="device-discovery">
+    <h2>Entdeckte Device Geräte</h2>
+    <div id="device-controls">
+      <button id="refresh-device-btn" class="action-button refresh-button">Geräte aktualisieren</button>
     </div>
     
-    <div id="esp32-list" class="esp32-grid">
-      <!-- ESP32 devices will be loaded dynamically -->
-      <div class="loading">Suche nach ESP32 Geräten...</div>
+    <div id="device-list" class="device-grid">
+      <!-- Device devices will be loaded dynamically -->
+      <div class="loading">Suche nach Device Geräten...</div>
     </div>
   </div>
 
-  <!-- A 5.4: Canvas Management with Permissions -->
+  <!-- A 5.4: Device Device Management with Permissions -->
   <div class="canvas-management">
-    <h2>Meine Zeichenflächen (A 5.4: Rechtesystem)</h2>
+    <h2>Meine Device Geräte (A 5.4: Rechtesystem)</h2>
     <div id="canvas-controls">
-      <button id="create-canvas-btn" class="action-button create-button">Neue Zeichenfläche erstellen</button>
       <button id="refresh-canvas-btn" class="action-button refresh-button">Liste aktualisieren</button>
     </div>
-    
+
     <div id="canvas-list" class="canvas-grid">
-      <!-- Canvas werden hier dynamisch geladen -->
-      <div class="loading">Lade Zeichenflächen...</div>
+      <!-- Device devices will be loaded dynamically -->
+      <div class="loading">Lade Device Geräte...</div>
     </div>
-    
-    <!-- Create Canvas Modal -->
-    <div id="create-canvas-modal" class="modal" style="display:none;">
-      <div class="modal-content">
-        <h3>Neue Zeichenfläche erstellen</h3>
-        <input type="text" id="new-canvas-name" placeholder="Name der Zeichenfläche" maxlength="100">
-        <div class="modal-buttons">
-          <button id="confirm-create-canvas" class="action-button create-button">Erstellen</button>
-          <button id="cancel-create-canvas" class="action-button cancel-button">Abbrechen</button>
-        </div>
-      </div>
-    </div>
-    
+
     <!-- Permission Management Modal -->
     <div id="permission-modal" class="modal" style="display:none;">
       <div class="modal-content permission-modal-content">

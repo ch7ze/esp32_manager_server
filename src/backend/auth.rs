@@ -1,4 +1,4 @@
-// Authentication module for user management and ESP32 device management
+// Authentication module for user management and DEVICE MANAGEMENT
 
 use axum::http::HeaderValue;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
@@ -10,9 +10,9 @@ const JWT_SECRET: &[u8] = b"your-secret-key-should-be-much-longer-and-random";
 
 // Data structures for authentication
 
-// ESP32 Device representation with permissions and status  
+// Device representation with permissions and status  
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ESP32Device {
+pub struct Device {
     pub id: String,
     pub name: String,
     pub mac_address: String,
@@ -100,11 +100,11 @@ pub fn create_jwt(user: &User) -> Result<String, jsonwebtoken::errors::Error> {
 
     // Sample device permissions for demo purposes
     let mut device_permissions = HashMap::new();
-    device_permissions.insert("esp32-abc123-def456-ghi789".to_string(), "R".to_string());
-    device_permissions.insert("esp32-jkl012-mno345-pqr678".to_string(), "W".to_string());
-    device_permissions.insert("esp32-stu901-vwx234-yza567".to_string(), "V".to_string());
-    device_permissions.insert("esp32-bcd890-efg123-hij456".to_string(), "M".to_string());
-    device_permissions.insert("esp32-klm789-nop012-qrs345".to_string(), "O".to_string());
+    device_permissions.insert("device-abc123-def456-ghi789".to_string(), "R".to_string());
+    device_permissions.insert("device-jkl012-mno345-pqr678".to_string(), "W".to_string());
+    device_permissions.insert("device-stu901-vwx234-yza567".to_string(), "V".to_string());
+    device_permissions.insert("device-bcd890-efg123-hij456".to_string(), "M".to_string());
+    device_permissions.insert("device-klm789-nop012-qrs345".to_string(), "O".to_string());
 
     // Token claims
     let claims = Claims {
@@ -180,8 +180,8 @@ pub fn create_logout_cookie() -> HeaderValue {
 }
 
 // ============================================================================
-// ESP32 DEVICE MANAGEMENT - Funktionen für ESP32-Verwaltung und Berechtigungen
-// Website-Feature: A 5.4 Rechtesystem Implementation adapted for ESP32
+// DEVICE MANAGEMENT - Funktionen für device-Verwaltung und Berechtigungen
+// Website-Feature: A 5.4 Rechtesystem Implementation adapted for devices
 // ============================================================================
 
 

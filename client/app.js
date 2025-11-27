@@ -32,12 +32,12 @@ const pages = {
         styles: [],
         requiresAuth: false
     },
-    'esp32_control': {
-        title: 'ESP32 Control',
-        template: 'esp32_control.html',
+    'device_control': {
+        title: 'Device Control',
+        template: 'device_control.html',
         defaultPath: '/devices/:id',
-        scripts: ['esp32_control.js'],
-        styles: ['esp32_control.css'],
+        scripts: ['device_control.js'],
+        styles: ['device_control.css'],
         requiresAuth: false
     },
     'docs': {
@@ -172,9 +172,9 @@ async function renderPage() {
     }
 
 
-    // Handle device pages - redirect to ESP32 control
+    // Handle device pages - redirect to device control
     if (url.pathname.startsWith('/devices')) {
-        pageName = 'esp32_control';
+        pageName = 'device_control';
     }
     
     // Debug logging

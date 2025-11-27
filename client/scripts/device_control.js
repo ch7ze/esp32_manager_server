@@ -2,8 +2,8 @@
     'use strict';
     
     // Local state for this script execution
-    let esp32Websocket = null;
-    let esp32Devices = new Map();
+    let deviceWebsocket = null;
+    let deviceDevices = new Map();
     let availableDevices = []; // All discovered devices
     let openTabs = new Set(); // Currently open device tabs
     let currentUser = null;
@@ -40,8 +40,8 @@ function getDeviceIdFromUrl() {
 
 // Layout mode management
 function initializeLayoutMode() {
-    const savedLayoutMode = localStorage.getItem('esp32-layout-mode') || 'auto';
-    const savedSidebarMode = localStorage.getItem('esp32-sidebar-mode') || 'auto';
+    const savedLayoutMode = localStorage.getItem('device-layout-mode') || 'auto';
+    const savedSidebarMode = localStorage.getItem('device-sidebar-mode') || 'auto';
 
     applyLayoutMode(savedLayoutMode);
     applySidebarMode(savedSidebarMode);
@@ -73,7 +73,7 @@ function applyLayoutMode(mode) {
     }
 
     // Save to localStorage
-    localStorage.setItem('esp32-layout-mode', mode);
+    localStorage.setItem('device-layout-mode', mode);
 
     // Update UI if layout selector exists
     updateLayoutSelector(mode);
@@ -100,7 +100,7 @@ function applySidebarMode(mode) {
     }
 
     // Save to localStorage
-    localStorage.setItem('esp32-sidebar-mode', mode);
+    localStorage.setItem('device-sidebar-mode', mode);
 
     // Update UI button
     updateSidebarModeButton(mode);
@@ -132,7 +132,7 @@ function updateSidebarModeButton(mode) {
 }
 
 function cycleSidebarMode() {
-    const currentMode = localStorage.getItem('esp32-sidebar-mode') || 'auto';
+    const currentMode = localStorage.getItem('device-sidebar-mode') || 'auto';
 
     // Cycle through: auto → visible → overlay → auto
     const modes = ['auto', 'visible', 'overlay'];
@@ -188,7 +188,7 @@ async function initializeAuth() {
 
 async function loadAvailableDevices() {
     try {
-        const response = await fetch('/api/esp32/discovered', {
+        const response = await fetch('/api/devices/discovered', {
             method: 'GET',
             credentials: 'include'
         });
@@ -201,7 +201,7 @@ async function loadAvailableDevices() {
 
             // Register all devices with 'light' subscription for connection status
             // This will be called after WebSocket is connected
-            if (esp32Websocket && esp32Websocket.readyState === WebSocket.OPEN) {
+            if (deviceWebsocket && deviceWebsocket.readyState === WebSocket.OPEN) {
                 registerAllDevicesLight();
             }
         } else {
@@ -219,26 +219,26 @@ async function initializeWebSocket() {
     const wsUrl = `${protocol}//${window.location.host}/channel`;
     
     try {
-        esp32Websocket = new WebSocket(wsUrl);
+        deviceWebsocket = new WebSocket(wsUrl);
         
-        esp32Websocket.onopen = function() {
+        deviceWebsocket.onopen = function() {
             console.log('WebSocket connected');
-            // Request list of ESP32 devices
+            // Request list of device devices
             requestDeviceList();
             // Register all available devices with 'light' subscription for status updates
             registerAllDevicesLight();
         };
         
-        esp32Websocket.onmessage = function(event) {
+        deviceWebsocket.onmessage = function(event) {
             handleWebSocketMessage(JSON.parse(event.data));
         };
         
-        esp32Websocket.onclose = function() {
+        deviceWebsocket.onclose = function() {
             console.log('WebSocket disconnected');
             setTimeout(initializeWebSocket, 3000); // Reconnect after 3s
         };
         
-        esp32Websocket.onerror = function(error) {
+        deviceWebsocket.onerror = function(error) {
             console.error('WebSocket error:', error);
         };
         
@@ -247,7 +247,7 @@ async function initializeWebSocket() {
         document.getElementById('loading-state').innerHTML = `
             <div class="alert alert-danger">
                 <h4>Connection Failed</h4>
-                <p>Could not connect to ESP32 service.</p>
+                <p>Could not connect to device service.</p>
                 <button class="btn btn-primary" onclick="initializeWebSocket()">Retry</button>
             </div>
         `;
@@ -280,7 +280,7 @@ function renderDeviceSidebar() {
             deviceItem.classList.add('active');
         }
 
-        const isConnected = esp32Devices.has(device.deviceId) && esp32Devices.get(device.deviceId).connected;
+        const isConnected = deviceDevices.has(device.deviceId) && deviceDevices.get(device.deviceId).connected;
 
         deviceItem.innerHTML = `
             <span class="status-dot ${getStatusClass(isConnected)}"></span>
@@ -310,7 +310,7 @@ async function addDeviceTab(deviceId) {
 
     // Create device UI if not exists BEFORE registering
     // This ensures the DOM elements exist when events arrive
-    if (!esp32Devices.has(deviceId)) {
+    if (!deviceDevices.has(deviceId)) {
         await createDeviceUI(deviceId);
     } else {
         // Device already exists, just render
@@ -356,18 +356,18 @@ function updateUrlForDevice(deviceId) {
 function showMainLayout() {
     document.getElementById('loading-state').style.display = 'none';
     document.getElementById('no-devices-state').style.display = 'none';
-    document.getElementById('esp32-main-layout').style.display = 'flex';
+    document.getElementById('device-main-layout').style.display = 'flex';
 }
 
 function toggleSidebar() {
-    const sidebar = document.getElementById('esp32-sidebar');
+    const sidebar = document.getElementById('device-sidebar');
     const overlay = document.getElementById('sidebar-overlay');
     sidebar.classList.toggle('show');
     overlay.classList.toggle('show');
 }
 
 function closeSidebar() {
-    const sidebar = document.getElementById('esp32-sidebar');
+    const sidebar = document.getElementById('device-sidebar');
     const overlay = document.getElementById('sidebar-overlay');
     sidebar.classList.remove('show');
     overlay.classList.remove('show');
@@ -383,15 +383,15 @@ window.switchToTab = switchToTab;
 
 function registerForDevice(deviceId, subscriptionType = 'full') {
     console.log(`Attempting to register for device: ${deviceId} with subscription: ${subscriptionType}`);
-    if (esp32Websocket && esp32Websocket.readyState === WebSocket.OPEN) {
+    if (deviceWebsocket && deviceWebsocket.readyState === WebSocket.OPEN) {
         console.log('WebSocket is open, sending registration request');
-        esp32Websocket.send(JSON.stringify({
+        deviceWebsocket.send(JSON.stringify({
             type: 'registerForDevice',
             deviceId: deviceId,
             subscriptionType: subscriptionType
         }));
     } else {
-        console.error('WebSocket not ready, readyState:', esp32Websocket?.readyState);
+        console.error('WebSocket not ready, readyState:', deviceWebsocket?.readyState);
     }
 }
 
@@ -410,9 +410,9 @@ function registerAllDevicesLight() {
             // This ensures connection status updates can be received and displayed
             // We need the full object structure because when user opens tab later,
             // it will reuse this object instead of creating a new one
-            if (!esp32Devices.has(device.deviceId)) {
+            if (!deviceDevices.has(device.deviceId)) {
                 const deviceName = device.mdnsHostname || device.deviceId;
-                esp32Devices.set(device.deviceId, {
+                deviceDevices.set(device.deviceId, {
                     id: device.deviceId,
                     name: deviceName,
                     connected: false,
@@ -442,7 +442,7 @@ async function handleWebSocketMessage(message) {
 
 async function handleDeviceEvents(deviceId, events) {
     // Ensure device exists in our UI
-    if (!esp32Devices.has(deviceId)) {
+    if (!deviceDevices.has(deviceId)) {
         await createDeviceUI(deviceId);
     }
 
@@ -454,7 +454,7 @@ async function handleDeviceEvents(deviceId, events) {
 // Get device display name (mDNS hostname if available, fallback to formatted deviceId)
 async function getDeviceDisplayName(deviceId) {
     try {
-        const response = await fetch('/api/esp32/discovered', {
+        const response = await fetch('/api/devices/discovered', {
             method: 'GET',
             credentials: 'include'
         });
@@ -473,8 +473,8 @@ async function getDeviceDisplayName(deviceId) {
 
     // Fallback to formatted deviceId
     let deviceName = deviceId;
-    if (deviceId.startsWith('esp32-')) {
-        deviceName = deviceId.replace('esp32-', 'ESP32 ').replace(/-/g, ' ').toUpperCase();
+    if (deviceId.startsWith('device-')) {
+        deviceName = deviceId.replace('device-', 'device ').replace(/-/g, ' ').toUpperCase();
     } else {
         deviceName = deviceId.replace('test-', '').replace(/-/g, ' ').toUpperCase();
     }
@@ -497,7 +497,7 @@ async function createDeviceUI(deviceId) {
         changeableVariables: [] // Store changeable variables for re-rendering
     };
 
-    esp32Devices.set(deviceId, device);
+    deviceDevices.set(deviceId, device);
 
     // Update sidebar to reflect connection status
     renderDeviceSidebar();
@@ -509,7 +509,7 @@ async function createDeviceUI(deviceId) {
 }
 
 function processDeviceEvent(deviceId, event) {
-    const device = esp32Devices.get(deviceId);
+    const device = deviceDevices.get(deviceId);
     if (!device) {
         return;
     }
@@ -518,29 +518,35 @@ function processDeviceEvent(deviceId, event) {
     let eventType = null;
     let eventData = null;
 
-    if (event.esp32ConnectionStatus) {
-        eventType = 'esp32ConnectionStatus';
-        eventData = event.esp32ConnectionStatus;
-    } else if (event.esp32UdpBroadcast) {
-        eventType = 'esp32UdpBroadcast';
-        eventData = event.esp32UdpBroadcast;
-    } else if (event.esp32VariableUpdate) {
-        eventType = 'esp32VariableUpdate';
-        eventData = event.esp32VariableUpdate;
-    } else if (event.esp32StartOptions) {
-        eventType = 'esp32StartOptions';
-        eventData = event.esp32StartOptions;
-    } else if (event.event === 'esp32StartOptions') {
-        eventType = 'esp32StartOptions';
+    if (event.deviceConnectionStatus) {
+        eventType = 'deviceConnectionStatus';
+        eventData = event.deviceConnectionStatus;
+    } else if (event.deviceUdpBroadcast) {
+        eventType = 'deviceUdpBroadcast';
+        eventData = event.deviceUdpBroadcast;
+    } else if (event.deviceVariableUpdate) {
+        eventType = 'deviceVariableUpdate';
+        eventData = event.deviceVariableUpdate;
+    } else if (event.deviceStartOptions) {
+        eventType = 'deviceStartOptions';
+        eventData = event.deviceStartOptions;
+    } else if (event.event === 'deviceStartOptions' || event.event === 'DeviceStartOptions') {
+        eventType = 'deviceStartOptions';
         eventData = event;
-    } else if (event.esp32ChangeableVariables) {
-        eventType = 'esp32ChangeableVariables';
-        eventData = event.esp32ChangeableVariables;
-    } else if (event.event === 'esp32ChangeableVariables') {
-        eventType = 'esp32ChangeableVariables';
+    } else if (event.deviceChangeableVariables) {
+        eventType = 'deviceChangeableVariables';
+        eventData = event.deviceChangeableVariables;
+    } else if (event.event === 'deviceChangeableVariables' || event.event === 'DeviceChangeableVariables') {
+        eventType = 'deviceChangeableVariables';
         eventData = event;
-    } else if (event.event === 'esp32ConnectionStatus') {
-        eventType = 'esp32ConnectionStatus';
+    } else if (event.event === 'deviceConnectionStatus' || event.event === 'DeviceConnectionStatus') {
+        eventType = 'deviceConnectionStatus';
+        eventData = event;
+    } else if (event.event === 'deviceUdpBroadcast' || event.event === 'DeviceUdpBroadcast') {
+        eventType = 'deviceUdpBroadcast';
+        eventData = event;
+    } else if (event.event === 'deviceVariableUpdate' || event.event === 'DeviceVariableUpdate') {
+        eventType = 'deviceVariableUpdate';
         eventData = event;
     } else if (event.userJoined) {
         eventType = 'userJoined';
@@ -553,12 +559,12 @@ function processDeviceEvent(deviceId, event) {
         eventType = event.event;
         eventData = event;
     } else {
-        console.log('Unknown ESP32 event format:', event);
+        console.log('Unknown device event format:', event);
         return;
     }
 
     switch (eventType) {
-        case 'esp32ConnectionStatus':
+        case 'deviceConnectionStatus':
             const wasDisconnected = !device.connected;
             device.connected = eventData.connected;
             updateConnectionStatus(deviceId, eventData.connected);
@@ -572,14 +578,14 @@ function processDeviceEvent(deviceId, event) {
             }
             break;
 
-        case 'esp32UdpBroadcast':
+        case 'deviceUdpBroadcast':
             const newMessage = `[${new Date().toLocaleTimeString()}] ${eventData.message}`;
             device.udpMessages.push(newMessage);
             // Note: Backend now handles message limiting per device (configurable in settings)
             appendToMonitor(deviceId, newMessage);
             break;
 
-        case 'esp32VariableUpdate':
+        case 'deviceVariableUpdate':
             device.variables.set(eventData.variableName, eventData.variableValue);
 
             // Extract min/max if present
@@ -595,12 +601,12 @@ function processDeviceEvent(deviceId, event) {
             }
             break;
 
-        case 'esp32StartOptions':
+        case 'deviceStartOptions':
             device.startOptions = eventData.options;
             updateStartOptions(deviceId, eventData.options);
             break;
 
-        case 'esp32ChangeableVariables':
+        case 'deviceChangeableVariables':
             // Store the changeable variables in the device object
             device.changeableVariables = eventData.variables;
             updateVariableControls(deviceId, eventData.variables);
@@ -614,7 +620,7 @@ function processDeviceEvent(deviceId, event) {
             break;
 
         case 'userJoined':
-            if (eventData.userId !== 'ESP32_SYSTEM') {
+            if (eventData.userId !== 'device_SYSTEM') {
                 device.users.push({
                     userId: eventData.userId,
                     displayName: eventData.displayName,
@@ -625,14 +631,14 @@ function processDeviceEvent(deviceId, event) {
             break;
 
         case 'userLeft':
-            if (eventData.userId !== 'ESP32_SYSTEM') {
+            if (eventData.userId !== 'device_SYSTEM') {
                 device.users = device.users.filter(u => u.userId !== eventData.userId);
                 updateDeviceUsers(deviceId);
             }
             break;
 
         default:
-            console.log('Unknown ESP32 event type:', eventType, eventData);
+            console.log('Unknown device event type:', eventType, eventData);
     }
 }
 
@@ -640,7 +646,7 @@ function renderDevices() {
     // Clear existing content
     document.getElementById('deviceTabs').innerHTML = '';
     document.getElementById('deviceTabContent').innerHTML = '';
-    document.getElementById('esp32-stack').innerHTML = '';
+    document.getElementById('device-stack').innerHTML = '';
 
     if (openTabs.size === 0) {
         // Show empty state in tab area
@@ -655,7 +661,7 @@ function renderDevices() {
     }
 
     const devicesToShow = Array.from(openTabs)
-        .map(deviceId => esp32Devices.get(deviceId))
+        .map(deviceId => deviceDevices.get(deviceId))
         .filter(device => device !== undefined);
 
     devicesToShow.forEach((device, index) => {
@@ -736,9 +742,9 @@ function switchToTab(deviceId) {
 
 function createDeviceStackContent(device) {
     const stackItem = document.createElement('div');
-    stackItem.className = 'esp32-device-card mb-4';
+    stackItem.className = 'device-device-card mb-4';
     stackItem.innerHTML = `
-        <div class="esp32-device-header">
+        <div class="device-device-header">
             <div>
                 <h5 class="mb-1">${device.name}</h5>
                 <div class="connection-status">
@@ -752,7 +758,7 @@ function createDeviceStackContent(device) {
             ${createDeviceContent(device, 'stack')}
         </div>
     `;
-    document.getElementById('esp32-stack').appendChild(stackItem);
+    document.getElementById('device-stack').appendChild(stackItem);
 }
 
 
@@ -838,7 +844,7 @@ function getStatusText(connected) {
 
 function showNoDevicesState() {
     document.getElementById('loading-state').style.display = 'none';
-    document.getElementById('esp32-main-layout').style.display = 'none';
+    document.getElementById('device-main-layout').style.display = 'none';
     document.getElementById('no-devices-state').style.display = 'block';
 }
 
@@ -848,7 +854,7 @@ function showDevicesContainer() {
 
     // Layout switching is now handled by CSS media queries
     // Just show the main layout container
-    document.getElementById('esp32-main-layout').style.display = 'flex';
+    document.getElementById('device-main-layout').style.display = 'flex';
 
     // CSS media queries will automatically show/hide tabs vs stack based on screen size
     // No need for JavaScript layout logic anymore
@@ -867,11 +873,11 @@ function getCurrentActiveLayout() {
 
 
 function handleAutoStart(deviceId) {
-    console.log(`ESP32 DEBUG: handleAutoStart called for device ${deviceId}`);
+    console.log(`device DEBUG: handleAutoStart called for device ${deviceId}`);
 
     // Check if auto-start checkbox is checked
     if (!isAutoStartEnabled(deviceId)) {
-        console.log(`ESP32 DEBUG: Auto-start not enabled for device ${deviceId}`);
+        console.log(`device DEBUG: Auto-start not enabled for device ${deviceId}`);
         return;
     }
 
@@ -885,19 +891,19 @@ function handleAutoStart(deviceId) {
 
         if (selectEl && selectEl.value) {
             selectedValue = selectEl.value;
-            console.log(`ESP32 DEBUG: Found selected value '${selectedValue}' for auto-start`);
+            console.log(`device DEBUG: Found selected value '${selectedValue}' for auto-start`);
             break;
         }
     }
 
     // If no option selected, don't auto-start
     if (!selectedValue) {
-        console.log(`ESP32 DEBUG: No start option selected, skipping auto-start`);
+        console.log(`device DEBUG: No start option selected, skipping auto-start`);
         return;
     }
 
     // Send start option automatically
-    console.log(`ESP32 DEBUG: Auto-starting with option '${selectedValue}'`);
+    console.log(`device DEBUG: Auto-starting with option '${selectedValue}'`);
     sendStartOptionWithValue(deviceId, selectedValue);
 }
 
@@ -918,7 +924,7 @@ function isAutoStartEnabled(deviceId) {
 }
 
 function updateConnectionStatus(deviceId, connected) {
-    console.log(`ESP32 DEBUG: updateConnectionStatus called for device ${deviceId} connected: ${connected}`);
+    console.log(`device DEBUG: updateConnectionStatus called for device ${deviceId} connected: ${connected}`);
 
     // Update sidebar
     renderDeviceSidebar();
@@ -926,10 +932,10 @@ function updateConnectionStatus(deviceId, connected) {
     // Update status dots in tab buttons
     const escapedDeviceId = CSS.escape(deviceId);
     const tabStatusElements = document.querySelectorAll(`[id="${escapedDeviceId}-tab"] .status-dot`);
-    console.log(`ESP32 DEBUG: Found ${tabStatusElements.length} tab status dot elements for device ${deviceId}`);
+    console.log(`device DEBUG: Found ${tabStatusElements.length} tab status dot elements for device ${deviceId}`);
     tabStatusElements.forEach(el => {
         el.className = `status-dot ${getStatusClass(connected)}`;
-        console.log(`ESP32 DEBUG: Updated tab status element class to: status-dot ${getStatusClass(connected)}`);
+        console.log(`device DEBUG: Updated tab status element class to: status-dot ${getStatusClass(connected)}`);
     });
 
     // Update connection status in tab content (if tab layout exists)
@@ -938,19 +944,19 @@ function updateConnectionStatus(deviceId, connected) {
         const tabContentStatus = tabContentElement.querySelector('.connection-status');
         if (tabContentStatus) {
             tabContentStatus.innerHTML = `<span class="status-dot ${getStatusClass(connected)}"></span> ${getStatusText(connected)}`;
-            console.log(`ESP32 DEBUG: Updated tab connection status text to: ${getStatusText(connected)}`);
+            console.log(`device DEBUG: Updated tab connection status text to: ${getStatusText(connected)}`);
         }
     }
 
     // Update connection status in stack layout - find by users div ID
     const stackUsersDiv = document.getElementById(`${deviceId}-stack-users`);
     if (stackUsersDiv) {
-        const stackCard = stackUsersDiv.closest('.esp32-device-card');
+        const stackCard = stackUsersDiv.closest('.device-device-card');
         if (stackCard) {
             const stackConnectionStatus = stackCard.querySelector('.connection-status');
             if (stackConnectionStatus) {
                 stackConnectionStatus.innerHTML = `<span class="status-dot ${getStatusClass(connected)}"></span> ${getStatusText(connected)}`;
-                console.log(`ESP32 DEBUG: Updated stack connection status text to: ${getStatusText(connected)}`);
+                console.log(`device DEBUG: Updated stack connection status text to: ${getStatusText(connected)}`);
             }
         }
     }
@@ -1127,7 +1133,7 @@ function updateProgressBar(container, name, value, min, max) {
 }
 
 function updateStartOptions(deviceId, options) {
-    console.log(`ESP32 DEBUG: updateStartOptions called for device ${deviceId} with options:`, options);
+    console.log(`device DEBUG: updateStartOptions called for device ${deviceId} with options:`, options);
 
     // Update all layout variants (tab, stack)
     const suffixes = ['tab', 'stack'];
@@ -1136,26 +1142,26 @@ function updateStartOptions(deviceId, options) {
     suffixes.forEach(suffix => {
         const selectId = `${deviceId}-${suffix}-start-select`;
         const selectEl = document.getElementById(selectId);
-        console.log(`ESP32 DEBUG: Element with ID '${selectId}' found:`, selectEl);
+        console.log(`device DEBUG: Element with ID '${selectId}' found:`, selectEl);
 
         if (selectEl) {
             selectEl.innerHTML = '<option value="">Select option...</option>';
-            console.log(`ESP32 DEBUG: Adding ${options.length} options to ${suffix} select`);
+            console.log(`device DEBUG: Adding ${options.length} options to ${suffix} select`);
             options.forEach(option => {
                 const optionEl = document.createElement('option');
                 optionEl.value = option;
                 optionEl.textContent = option;
                 selectEl.appendChild(optionEl);
             });
-            console.log(`ESP32 DEBUG: Updated ${suffix} select with options:`, options);
+            console.log(`device DEBUG: Updated ${suffix} select with options:`, options);
             updated = true;
         }
     });
 
     if (!updated) {
-        console.error(`ESP32 DEBUG: Cannot update start options - no select elements found for device ${deviceId}`);
+        console.error(`device DEBUG: Cannot update start options - no select elements found for device ${deviceId}`);
     } else {
-        console.log(`ESP32 DEBUG: Successfully updated start options for device ${deviceId}`);
+        console.log(`device DEBUG: Successfully updated start options for device ${deviceId}`);
     }
 }
 
@@ -1167,17 +1173,17 @@ function updateVariableControls(deviceId, variables) {
     suffixes.forEach(suffix => {
         const containerId = `${deviceId}-${suffix}-variables`;
         const containerEl = document.getElementById(containerId);
-        console.log(`ESP32 DEBUG: Variable container with ID '${containerId}' found:`, containerEl);
+        console.log(`device DEBUG: Variable container with ID '${containerId}' found:`, containerEl);
 
         if (containerEl) {
-            console.log(`ESP32 DEBUG: Updating ${suffix} variables container with:`, variables);
+            console.log(`device DEBUG: Updating ${suffix} variables container with:`, variables);
             updateVariableControlsForContainer(containerEl, variables, deviceId);
             updated = true;
         }
     });
 
     if (!updated) {
-        console.error(`ESP32 DEBUG: Cannot update variable controls - no containers found for device ${deviceId}`);
+        console.error(`device DEBUG: Cannot update variable controls - no containers found for device ${deviceId}`);
     }
 }
 
@@ -1214,7 +1220,7 @@ function updateVariableControlsForContainer(containerEl, variables, deviceId) {
 }
 
 function updateDeviceUsers(deviceId) {
-    const device = esp32Devices.get(deviceId);
+    const device = deviceDevices.get(deviceId);
     ['tabs', 'stack'].forEach(layout => {
         const usersEl = document.getElementById(`${deviceId}-${layout}-users`);
         if (usersEl) {
@@ -1232,7 +1238,7 @@ function updateDeviceUsers(deviceId) {
 
 // Event handlers
 function sendStartOption(deviceId) {
-    console.log(`ESP32 DEBUG: sendStartOption called for device ${deviceId}`);
+    console.log(`device DEBUG: sendStartOption called for device ${deviceId}`);
 
     // Try to find select element from any layout (tab, stack)
     const suffixes = ['tab', 'stack'];
@@ -1242,12 +1248,12 @@ function sendStartOption(deviceId) {
     for (const suffix of suffixes) {
         const selectId = `${deviceId}-${suffix}-start-select`;
         const selectEl = document.getElementById(selectId);
-        console.log(`ESP32 DEBUG: Checking ${selectId}, found:`, selectEl);
+        console.log(`device DEBUG: Checking ${selectId}, found:`, selectEl);
 
         if (selectEl && selectEl.value) {
             selectedValue = selectEl.value;
             foundElement = selectEl;
-            console.log(`ESP32 DEBUG: Found selected value '${selectedValue}' in ${suffix} layout`);
+            console.log(`device DEBUG: Found selected value '${selectedValue}' in ${suffix} layout`);
             break;
         }
     }
@@ -1255,18 +1261,18 @@ function sendStartOption(deviceId) {
     if (foundElement && selectedValue) {
         sendStartOptionWithValue(deviceId, selectedValue);
     } else {
-        console.error(`ESP32 DEBUG: Cannot send start option - no element found or no value selected`);
+        console.error(`device DEBUG: Cannot send start option - no element found or no value selected`);
     }
 }
 
 function sendStartOptionWithValue(deviceId, startOption) {
-    if (esp32Websocket && esp32Websocket.readyState === WebSocket.OPEN) {
-        console.log(`ESP32 DEBUG: Sending start option: ${startOption} to device ${deviceId}`);
-        esp32Websocket.send(JSON.stringify({
+    if (deviceWebsocket && deviceWebsocket.readyState === WebSocket.OPEN) {
+        console.log(`device DEBUG: Sending start option: ${startOption} to device ${deviceId}`);
+        deviceWebsocket.send(JSON.stringify({
             type: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
-                event: 'esp32Command',
+                event: 'deviceCommand',
                 deviceId: deviceId,
                 command: {
                     startOption: startOption
@@ -1274,17 +1280,17 @@ function sendStartOptionWithValue(deviceId, startOption) {
             }]
         }));
     } else {
-        console.error(`ESP32 DEBUG: Cannot send start option - WebSocket not open`);
+        console.error(`device DEBUG: Cannot send start option - WebSocket not open`);
     }
 }
 
 function sendReset(deviceId) {
-    if (esp32Websocket) {
-        esp32Websocket.send(JSON.stringify({
+    if (deviceWebsocket) {
+        deviceWebsocket.send(JSON.stringify({
             type: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
-                event: 'esp32Command',
+                event: 'deviceCommand',
                 deviceId: deviceId,
                 command: {
                     reset: true
@@ -1341,7 +1347,7 @@ function sendVariable(deviceId, variableName) {
         }
     }
 
-    if (inputEl && buttonEl && esp32Websocket) {
+    if (inputEl && buttonEl && deviceWebsocket) {
         const rawValue = inputEl.value;
         const value = parseInt(rawValue) || 0;
 
@@ -1357,7 +1363,7 @@ function sendVariable(deviceId, variableName) {
             type: 'deviceEvent',
             deviceId: deviceId,
             eventsForDevice: [{
-                event: 'esp32Command',
+                event: 'deviceCommand',
                 deviceId: deviceId,
                 command: {
                     setVariable: {
@@ -1368,10 +1374,10 @@ function sendVariable(deviceId, variableName) {
             }]
         };
 
-        esp32Websocket.send(JSON.stringify(message));
+        deviceWebsocket.send(JSON.stringify(message));
 
     } else {
-        console.error(`Cannot send variable - inputEl: ${!!inputEl}, buttonEl: ${!!buttonEl}, websocket: ${!!esp32Websocket}`);
+        console.error(`Cannot send variable - inputEl: ${!!inputEl}, buttonEl: ${!!buttonEl}, websocket: ${!!deviceWebsocket}`);
     }
 }
 

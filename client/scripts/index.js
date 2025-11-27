@@ -1,17 +1,17 @@
 // Execute immediately since DOM is already loaded in SPA context
 (function() {
-    // Load ESP32 devices and canvas list (user info is now handled by shared navigation)
-    loadEsp32DevicesList();
+    // Load Device devices and canvas list (user info is now handled by shared navigation)
+    loadDeviceDevicesList();
     loadCanvasList();
     
     // A 5.4: Canvas Management Event Listeners
     setupCanvasManagement();
     
-    // ESP32 Discovery Event Listeners  
-    setupEsp32Discovery();
+    // Device Discovery Event Listeners  
+    setupDeviceDiscovery();
     
-    // WebSocket Integration for live ESP32 updates
-    setupWebSocketForESP32Discovery();
+    // WebSocket Integration for live Device updates
+    setupWebSocketForDeviceDiscovery();
     
     // Drawing functionality will be initialized on canvas detail pages only
     
@@ -41,34 +41,34 @@
         }
     }
     
-    // ESP32 Discovery Functions
-    async function loadEsp32DevicesList() {
-        const esp32ListElement = document.getElementById('esp32-list');
-        esp32ListElement.innerHTML = '<div class="loading">Suche nach ESP32 Geräten...</div>';
+    // Device Discovery Functions
+    async function loadDeviceDevicesList() {
+        const deviceListElement = document.getElementById('device-list');
+        deviceListElement.innerHTML = '<div class="loading">Suche nach Device Geräten...</div>';
         
         try {
-            const response = await fetch('/api/esp32/discovered', {
+            const response = await fetch('/api/devices/discovered', {
                 method: 'GET',
                 credentials: 'include'
             });
             
             if (response.ok) {
                 const data = await response.json();
-                displayEsp32DevicesList(data.devices || []);
+                displayDeviceDevicesList(data.devices || []);
             } else {
-                esp32ListElement.innerHTML = '<div class="loading">Fehler beim Laden der ESP32 Geräte</div>';
+                deviceListElement.innerHTML = '<div class="loading">Fehler beim Laden der Device Geräte</div>';
             }
         } catch (error) {
-            console.error('Error loading ESP32 devices:', error);
-            esp32ListElement.innerHTML = '<div class="loading">Fehler beim Laden der ESP32 Geräte</div>';
+            console.error('Error loading Device devices:', error);
+            deviceListElement.innerHTML = '<div class="loading">Fehler beim Laden der Device Geräte</div>';
         }
     }
     
-    function displayEsp32DevicesList(devicesList) {
-        const esp32ListElement = document.getElementById('esp32-list');
+    function displayDeviceDevicesList(devicesList) {
+        const deviceListElement = document.getElementById('device-list');
         
         if (devicesList.length === 0) {
-            esp32ListElement.innerHTML = '<div class="loading">Keine ESP32 Geräte gefunden. Stellen Sie sicher, dass Geräte im Netzwerk verfügbar sind.</div>';
+            deviceListElement.innerHTML = '<div class="loading">Keine Device Geräte gefunden. Stellen Sie sicher, dass Geräte im Netzwerk verfügbar sind.</div>';
             return;
         }
         
@@ -82,33 +82,33 @@
             const displayName = device.mdnsHostname || device.deviceId;
 
             html += `
-                <div class="esp32-device" data-device-id="${device.deviceId}">
+                <div class="device-device" data-device-id="${device.deviceId}">
                     <h4>${displayName}</h4>
-                    <div class="esp32-device-info">
+                    <div class="device-device-info">
                         <span><strong>IP:</strong> ${device.deviceIp}</span>
                         <span><strong>TCP Port:</strong> ${device.tcpPort}</span>
                         <span><strong>UDP Port:</strong> ${device.udpPort}</span>
                         <span><strong>MAC:</strong> ${device.macAddress || 'UNDEFINED'}</span>
                     </div>
-                    <div class="esp32-actions">
+                    <div class="device-actions">
                         <a href="/devices/${device.deviceId}" class="action-button edit-button spa-link">Öffnen</a>
                     </div>
                 </div>
             `;
         });
         
-        console.log('Setting ESP32 device list HTML...');
-        esp32ListElement.innerHTML = html;
-        console.log('ESP32 device list HTML set. Device count:', devicesList.length);
+        console.log('Setting Device device list HTML...');
+        deviceListElement.innerHTML = html;
+        console.log('Device device list HTML set. Device count:', devicesList.length);
     }
     
-    function setupEsp32Discovery() {
-        // Refresh ESP32 Devices Button
-        document.getElementById('refresh-esp32-btn').addEventListener('click', loadEsp32DevicesList);
+    function setupDeviceDiscovery() {
+        // Refresh Device Devices Button
+        document.getElementById('refresh-device-btn').addEventListener('click', loadDeviceDevicesList);
     }
     
-    // WebSocket setup for live ESP32 device discovery
-    function setupWebSocketForESP32Discovery() {
+    // WebSocket setup for live Device device discovery
+    function setupWebSocketForDeviceDiscovery() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/channel`;
         let websocket = null;
@@ -118,8 +118,8 @@
                 websocket = new WebSocket(wsUrl);
                 
                 websocket.onopen = function() {
-                    console.log('ESP32 Discovery WebSocket connected');
-                    // Register for system events to receive ESP32 discovery
+                    console.log('Device Discovery WebSocket connected');
+                    // Register for system events to receive Device discovery
                     websocket.send(JSON.stringify({
                         type: 'registerForDevice',
                         deviceId: 'system'
@@ -129,43 +129,43 @@
                 websocket.onmessage = function(event) {
                     try {
                         const message = JSON.parse(event.data);
-                        handleESP32DiscoveryMessage(message);
+                        handleDeviceDiscoveryMessage(message);
                     } catch (error) {
                         console.error('Error parsing WebSocket message:', error);
                     }
                 };
                 
                 websocket.onclose = function() {
-                    console.log('ESP32 Discovery WebSocket disconnected, reconnecting...');
+                    console.log('Device Discovery WebSocket disconnected, reconnecting...');
                     setTimeout(connectWebSocket, 3000);
                 };
                 
                 websocket.onerror = function(error) {
-                    console.error('ESP32 Discovery WebSocket error:', error);
+                    console.error('Device Discovery WebSocket error:', error);
                 };
                 
             } catch (error) {
-                console.error('Failed to create ESP32 Discovery WebSocket:', error);
+                console.error('Failed to create Device Discovery WebSocket:', error);
                 setTimeout(connectWebSocket, 3000);
             }
         }
         
-        function handleESP32DiscoveryMessage(message) {
+        function handleDeviceDiscoveryMessage(message) {
             if (message.deviceId === 'system' && message.eventsForDevice) {
                 message.eventsForDevice.forEach(event => {
-                    if (event.event === 'esp32DeviceDiscovered') {
-                        console.log('New ESP32 device discovered via WebSocket:', event.deviceId);
+                    if (event.event === 'deviceDeviceDiscovered') {
+                        console.log('New Device device discovered via WebSocket:', event.deviceId);
                         // Reload the device list to show the new device
-                        loadEsp32DevicesList();
+                        loadDeviceDevicesList();
 
                         // Show notification
-                        showESP32DiscoveryNotification(event.deviceId, event.deviceIp, event.mdnsHostname);
+                        showDeviceDiscoveryNotification(event.deviceId, event.deviceIp, event.mdnsHostname);
                     }
                 });
             }
         }
         
-        function showESP32DiscoveryNotification(deviceId, deviceIp, mdnsHostname) {
+        function showDeviceDiscoveryNotification(deviceId, deviceIp, mdnsHostname) {
             // Use mDNS hostname for display name, fallback to deviceId
             const displayName = mdnsHostname || deviceId;
 
@@ -187,15 +187,15 @@
                 animation: slideInRight 0.3s ease-out;
             `;
             notification.innerHTML = `
-                <div style="font-weight: bold; margin-bottom: 4px;">🔍 ESP32 Gerät gefunden!</div>
+                <div style="font-weight: bold; margin-bottom: 4px;">🔍 Device Gerät gefunden!</div>
                 <div><strong>${displayName}</strong></div>
                 <div style="font-size: 12px; opacity: 0.8;">IP: ${deviceIp}</div>
             `;
             
             // Add animation keyframes if not already present
-            if (!document.querySelector('#esp32-notification-styles')) {
+            if (!document.querySelector('#device-notification-styles')) {
                 const style = document.createElement('style');
-                style.id = 'esp32-notification-styles';
+                style.id = 'device-notification-styles';
                 style.textContent = `
                     @keyframes slideInRight {
                         from {
@@ -281,79 +281,8 @@
     }
     
     function setupCanvasManagement() {
-        // Create Canvas Button
-        document.getElementById('create-canvas-btn').addEventListener('click', () => {
-            document.getElementById('create-canvas-modal').style.display = 'flex';
-            document.getElementById('new-canvas-name').focus();
-        });
-        
         // Refresh Canvas List Button
         document.getElementById('refresh-canvas-btn').addEventListener('click', loadCanvasList);
-        
-        // Modal Controls
-        document.getElementById('cancel-create-canvas').addEventListener('click', () => {
-            document.getElementById('create-canvas-modal').style.display = 'none';
-            document.getElementById('new-canvas-name').value = '';
-        });
-        
-        document.getElementById('confirm-create-canvas').addEventListener('click', createNewCanvas);
-        
-        // Allow Enter key in modal
-        document.getElementById('new-canvas-name').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                createNewCanvas();
-            }
-        });
-        
-        // Close modal on outside click
-        document.getElementById('create-canvas-modal').addEventListener('click', (e) => {
-            if (e.target === e.currentTarget) {
-                document.getElementById('create-canvas-modal').style.display = 'none';
-                document.getElementById('new-canvas-name').value = '';
-            }
-        });
-    }
-    
-    async function createNewCanvas() {
-        const nameInput = document.getElementById('new-canvas-name');
-        const name = nameInput.value.trim();
-        
-        if (!name) {
-            alert('Bitte geben Sie einen Namen für die Zeichenfläche ein.');
-            return;
-        }
-        
-        if (name.length > 100) {
-            alert('Der Name darf maximal 100 Zeichen lang sein.');
-            return;
-        }
-        
-        try {
-            const response = await fetch('/api/devices', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                credentials: 'include',
-                body: JSON.stringify({ name })
-            });
-            
-            const data = await response.json();
-            
-            if (response.ok && data.success) {
-                // Close modal
-                document.getElementById('create-canvas-modal').style.display = 'none';
-                nameInput.value = '';
-                
-                // Reload canvas list
-                loadCanvasList();
-            } else {
-                alert('Fehler beim Erstellen der Zeichenfläche: ' + data.message);
-            }
-        } catch (error) {
-            console.error('Error creating canvas:', error);
-            alert('Fehler beim Erstellen der Zeichenfläche.');
-        }
     }
     
     // Global functions for button actions

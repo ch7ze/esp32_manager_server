@@ -1,16 +1,16 @@
-// ESP32 communication types and protocol definitions
+// Device communication types and protocol definitions
 
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, SocketAddr};
 
 // ============================================================================
-// ESP32 COMMAND TYPES - Messages sent to ESP32
+// DEVICE COMMAND TYPES - Messages sent to devices
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum Esp32Command {
-    /// Set a variable value on the ESP32
+pub enum DeviceCommand {
+    /// Set a variable value on the device
     SetVariable {
         name: String,
         value: u32,
@@ -20,15 +20,15 @@ pub enum Esp32Command {
         #[serde(rename = "startOption")]
         start_option: String,
     },
-    /// Send reset command to ESP32
+    /// Send reset command to device
     Reset {
         reset: bool,
     },
-    /// Request current status/info from ESP32
+    /// Request current status/info from device
     GetStatus,
 }
 
-impl Esp32Command {
+impl DeviceCommand {
     pub fn set_variable(name: String, value: u32) -> Self {
         Self::SetVariable { name, value }
     }
@@ -80,26 +80,26 @@ impl Esp32Command {
 }
 
 // ============================================================================
-// ESP32 EVENT TYPES - Messages received from ESP32
+// DEVICE EVENT TYPES - Messages received from devices
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum Esp32Event {
-    /// Variable update from ESP32
+pub enum DeviceEvent {
+    /// Variable update from device
     VariableUpdate {
         name: String,
         value: String,
     },
-    /// Available start options from ESP32
+    /// Available start options from device
     StartOptions {
         #[serde(rename = "startOptions")]
         options: Vec<String>,
     },
-    /// Available changeable variables from ESP32
+    /// Available changeable variables from device
     ChangeableVariables {
         #[serde(rename = "changeableVariables")]
-        variables: Vec<Esp32Variable>,
+        variables: Vec<DeviceVariable>,
     },
     /// Raw UDP broadcast message
     UdpBroadcast {
@@ -114,7 +114,7 @@ pub enum Esp32Event {
         tcp_port: u16,
         udp_port: u16,
     },
-    /// ESP32 device information
+    /// Device information
     DeviceInfo {
         device_id: String,
         device_name: Option<String>,
@@ -124,7 +124,7 @@ pub enum Esp32Event {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Esp32Variable {
+pub struct DeviceVariable {
     pub name: String,
     pub value: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,7 +133,7 @@ pub struct Esp32Variable {
     pub max: Option<u32>,
 }
 
-impl Esp32Event {
+impl DeviceEvent {
     pub fn connection_status(connected: bool, device_ip: IpAddr, tcp_port: u16, udp_port: u16) -> Self {
         Self::ConnectionStatus {
             connected,
@@ -145,7 +145,7 @@ impl Esp32Event {
 }
 
 // ============================================================================
-// ESP32 DEVICE CONFIGURATION
+// DEVICE CONFIGURATION
 // ============================================================================
 
 /// Device source type - indicates how the device is connected
@@ -160,7 +160,7 @@ pub enum DeviceSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Esp32DeviceConfig {
+pub struct DeviceConfig {
     pub device_id: String,
     pub device_name: String,
     pub ip_address: IpAddr,
@@ -173,7 +173,7 @@ pub struct Esp32DeviceConfig {
     pub device_source: DeviceSource,
 }
 
-impl Esp32DeviceConfig {
+impl DeviceConfig {
     pub fn new(device_id: String, ip_address: IpAddr, tcp_port: u16, udp_port: u16) -> Self {
         Self {
             device_name: device_id.clone(),
@@ -183,8 +183,8 @@ impl Esp32DeviceConfig {
             udp_port,
             auto_connect: false,
             auto_start_option: None,
-            udp_timeout_seconds: 10, // Default: 10 seconds UDP timeout
-            device_source: DeviceSource::Tcp, // Default to TCP for backward compatibility
+            udp_timeout_seconds: 10, // Default: 10 seconds timeout
+            device_source: DeviceSource::Tcp, // Default to TCP
         }
     }
 
@@ -254,24 +254,24 @@ impl ConnectionState {
 // ============================================================================
 
 #[derive(Debug, thiserror::Error)]
-pub enum Esp32Error {
+pub enum DeviceError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-    
+
     #[error("TCP error: {0}")]
     TcpError(#[from] std::io::Error),
-    
+
     #[error("JSON serialization error: {0}")]
     JsonError(#[from] serde_json::Error),
-    
+
     #[error("Invalid command: {0}")]
     InvalidCommand(String),
-    
+
     #[error("Device not found: {0}")]
     DeviceNotFound(String),
-    
+
     #[error("Communication timeout")]
     Timeout,
 }
 
-pub type Esp32Result<T> = Result<T, Esp32Error>;
+pub type DeviceResult<T> = Result<T, DeviceError>;

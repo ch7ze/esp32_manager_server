@@ -6,9 +6,9 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{info, trace, error};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 
-/// Discovered ESP32 device information from mDNS
+/// Discovered microcontroller device information from mDNS
 #[derive(Debug, Clone)]
-pub struct MdnsEsp32Device {
+pub struct MdnsDiscoveredDevice {
     pub hostname: String,
     pub ip_addresses: Vec<IpAddr>,
     pub port: u16,
@@ -16,12 +16,12 @@ pub struct MdnsEsp32Device {
     pub service_name: String,
 }
 
-/// mDNS-based ESP32 discovery service
+/// mDNS-based microcontroller discovery service
 pub struct MdnsDiscovery {
     /// mDNS daemon for service discovery
     mdns_daemon: Option<ServiceDaemon>,
     /// Discovered devices cache
-    discovered_devices: Arc<RwLock<HashMap<String, MdnsEsp32Device>>>,
+    discovered_devices: Arc<RwLock<HashMap<String, MdnsDiscoveredDevice>>>,
     /// Discovery task control
     stop_tx: Option<mpsc::UnboundedSender<()>>,
     /// Running state
@@ -39,13 +39,13 @@ impl MdnsDiscovery {
         })
     }
     
-    /// Start mDNS discovery for ESP32 devices
+    /// Start mDNS discovery for microcontroller devices
     pub async fn start_discovery<F>(
         &mut self,
         device_callback: F,
     ) -> Result<(), String>
     where
-        F: Fn(MdnsEsp32Device) + Send + Sync + 'static,
+        F: Fn(MdnsDiscoveredDevice) + Send + Sync + 'static,
     {
         if self.is_running {
             return Err("mDNS discovery already running".to_string());
@@ -68,7 +68,7 @@ impl MdnsDiscovery {
         let mdns_daemon = self.mdns_daemon.as_ref().unwrap().clone();
         
         tokio::spawn(async move {
-            info!("Starting mDNS discovery for ESP32 devices...");
+            info!("Starting mDNS discovery for microcontroller devices...");
             crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", "STARTING_MDNS_DISCOVERY");
 
             // Browse for Arduino OTA services
@@ -84,10 +84,10 @@ impl MdnsDiscovery {
                 }
             };
 
-            // Also browse for HTTP services (some ESP32s might use this)
+            // Also browse for HTTP services (some microcontrollers might use this)
             let http_receiver = mdns_daemon.browse("_http._tcp.local.").ok();
 
-            info!("mDNS discovery started, listening for ESP32 devices...");
+            info!("mDNS discovery started, listening for microcontroller devices...");
             crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", "MDNS_LISTENING_FOR_DEVICES");
             
             loop {
@@ -165,11 +165,11 @@ impl MdnsDiscovery {
     async fn handle_service_event<F>(
         event: ServiceEvent,
         service_type: &str,
-        discovered_devices: Arc<RwLock<HashMap<String, MdnsEsp32Device>>>,
+        discovered_devices: Arc<RwLock<HashMap<String, MdnsDiscoveredDevice>>>,
         callback: Arc<F>,
     ) 
     where
-        F: Fn(MdnsEsp32Device) + Send + Sync + 'static,
+        F: Fn(MdnsDiscoveredDevice) + Send + Sync + 'static,
     {
         match event {
             ServiceEvent::ServiceResolved(info) => {
@@ -198,12 +198,12 @@ impl MdnsDiscovery {
                     }
                 }
 
-                // Filter for ESP32 devices (check if hostname or TXT records indicate ESP32)
-                let is_esp32 = Self::is_esp32_device(&hostname, &txt_records, service_type);
-                crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("IS_ESP32_CHECK: {} - result: {}", hostname, is_esp32));
+                // Filter for microcontroller devices (check if hostname or TXT records indicate microcontroller)
+                let is_microcontroller = Self::is_microcontroller_device(&hostname, &txt_records, service_type);
+                crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("IS_microcontroller_CHECK: {} - result: {}", hostname, is_microcontroller));
 
-                if is_esp32 {
-                    let device = MdnsEsp32Device {
+                if is_microcontroller {
+                    let device = MdnsDiscoveredDevice {
                         hostname: hostname.clone(),
                         ip_addresses: addresses.clone(),
                         port,
@@ -222,19 +222,19 @@ impl MdnsDiscovery {
                     }
 
                     if was_new {
-                        info!("New ESP32 device discovered: {} at {:?}:{}", hostname, addresses, port);
-                        crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("NEW_ESP32_DISCOVERED: {} at {:?}:{}", hostname, addresses, port));
+                        info!("New microcontroller device discovered: {} at {:?}:{}", hostname, addresses, port);
+                        crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("NEW_microcontroller_DISCOVERED: {} at {:?}:{}", hostname, addresses, port));
                         // Call callback for new device
                         crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("CALLING_DEVICE_CALLBACK: {}", hostname));
                         callback(device);
                         crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("DEVICE_CALLBACK_COMPLETED: {}", hostname));
                     } else {
                         // For existing devices, only trace (no noisy logs)
-                        crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("EXISTING_ESP32_UPDATED: {}", hostname));
-                        trace!("Updated/refresh ESP32 device seen: {}", hostname);
+                        crate::debug_logger::DebugLogger::log_event("MDNS_DISCOVERY", &format!("EXISTING_microcontroller_UPDATED: {}", hostname));
+                        trace!("Updated/refresh microcontroller device seen: {}", hostname);
                     }
                 } else {
-                    trace!("Ignoring non-ESP32 device: {} (service: {})", hostname, service_type);
+                    trace!("Ignoring non-microcontroller device: {} (service: {})", hostname, service_type);
                 }
             }
             ServiceEvent::ServiceRemoved(typ, name) => {
@@ -250,15 +250,15 @@ impl MdnsDiscovery {
         }
     }
     
-    /// Determine if a discovered device is an ESP32
-    fn is_esp32_device(hostname: &str, txt_records: &HashMap<String, String>, service_type: &str) -> bool {
-        // Filter out our own ESP32 Manager Server
+    /// Determine if a discovered device is an microcontroller
+    fn is_microcontroller_device(hostname: &str, txt_records: &HashMap<String, String>, service_type: &str) -> bool {
+        // Filter out our own microcontroller Manager Server
         let hostname_lower = hostname.to_lowercase();
         if hostname_lower.contains("esp-server") {
             return false;
         }
 
-        // Check if device has a MAC address in TXT records (real ESP32s should have this)
+        // Check if device has a MAC address in TXT records (real microcontrollers should have this)
         let has_mac_address = txt_records.contains_key("mac") ||
                              txt_records.contains_key("MAC") ||
                              txt_records.contains_key("macAddress");
@@ -268,29 +268,29 @@ impl MdnsDiscovery {
             return false;
         }
 
-        // Check hostname for ESP32 indicators
+        // Check hostname for microcontroller indicators
         let hostname_indicators = [
-            "esp32", "esp", "arduino", "nodemcu", "wemos", "devkit"
+            "microcontroller", "esp", "arduino", "nodemcu", "wemos", "devkit"
         ];
 
         let hostname_matches = hostname_indicators.iter()
             .any(|indicator| hostname_lower.contains(indicator));
 
-        // For Arduino OTA service, assume it's likely an ESP32
+        // For Arduino OTA service, assume it's likely an microcontroller
         if service_type == "arduino" {
             return true;
         }
 
-        // Check TXT records for ESP32/Arduino indicators
+        // Check TXT records for microcontroller/Arduino indicators
         let txt_indicators = txt_records.values()
             .any(|value| {
                 let value_lower = value.to_lowercase();
-                value_lower.contains("esp32") ||
+                value_lower.contains("microcontroller") ||
                 value_lower.contains("arduino") ||
                 value_lower.contains("espressif")
             });
 
-        // Accept if hostname matches OR TXT records indicate ESP32
+        // Accept if hostname matches OR TXT records indicate microcontroller
         hostname_matches || txt_indicators
     }
 }

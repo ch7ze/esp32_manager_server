@@ -1,9 +1,9 @@
-// Native VS Code Test für ESP32-Server
+// Native VS Code Test für Device-Server
 const { test, suite } = require('node:test');
 const assert = require('node:assert');
 const WebSocket = require('ws');
 
-suite('ESP32-Server Connection Tests', () => {
+suite('Device-Server Connection Tests', () => {
     const SERVER_URL = 'http://localhost:3000';
     const WS_URL = 'ws://localhost:3000/ws';
 
@@ -20,8 +20,8 @@ suite('ESP32-Server Connection Tests', () => {
         }
     });
 
-    test('ESP32 Discovery API', async () => {
-        console.log('📡 Testing ESP32 discovery API...');
+    test('Device Discovery API', async () => {
+        console.log('📡 Testing Device discovery API...');
 
         try {
             const fetch = (await import('node-fetch')).default;
@@ -35,16 +35,16 @@ suite('ESP32-Server Connection Tests', () => {
 
                 if (data.devices) {
                     assert.ok(Array.isArray(data.devices), 'Devices should be an array');
-                    console.log(`✅ Found ${data.devices.length} ESP32 device(s)`);
+                    console.log(`✅ Found ${data.devices.length} Device device(s)`);
                 } else {
-                    console.log('ℹ️ No ESP32 devices currently discovered');
+                    console.log('ℹ️ No Device devices currently discovered');
                 }
             } else {
                 console.log(`⚠️ API responded with status: ${response.status}`);
                 // Don't fail if API endpoint doesn't exist yet
             }
         } catch (error) {
-            console.log(`ℹ️ ESP32 API test: ${error.message}`);
+            console.log(`ℹ️ Device API test: ${error.message}`);
             // Don't fail - server might not have this endpoint
         }
     });

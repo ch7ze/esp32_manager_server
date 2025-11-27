@@ -1,5 +1,5 @@
 // ============================================================================
-// DATABASE MODULE - SQLite Datenbankintegration für User-Management & ESP32-Device-Management
+// DATABASE MODULE - SQLite Datenbankintegration für User-Management & Device-Management
 // ============================================================================
 
 use sqlx::{sqlite::SqlitePool, Row};
@@ -37,7 +37,7 @@ pub struct DatabaseUser {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ESP32Device {
+pub struct Device {
     pub mac_address: String, // Primary key - moved to first position
     pub name: String,
     pub owner_id: String,
@@ -60,7 +60,7 @@ pub enum DeviceStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ESP32DevicePermission {
+pub struct DevicePermission {
     pub device_id: String,
     pub user_id: String,
     pub permission: String,
@@ -84,7 +84,7 @@ impl DatabaseUser {
     }
 }
 
-impl ESP32Device {
+impl Device {
     pub fn new(name: String, owner_id: String, mac_address: String) -> Self {
         let now = Utc::now();
         Self {
@@ -180,10 +180,10 @@ impl DatabaseManager {
         .execute(&self.pool)
         .await?;
 
-        // ESP32 Devices Tabelle erstellen
+        // Devices Tabelle erstellen
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS esp32_devices (
+            CREATE TABLE IF NOT EXISTS devices (
                 mac_address TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 owner_id TEXT NOT NULL,
@@ -201,15 +201,15 @@ impl DatabaseManager {
         .execute(&self.pool)
         .await?;
 
-        // ESP32 Device Permissions Tabelle erstellen
+        // DEVICE PERMISSIONS Tabelle erstellen
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS esp32_device_permissions (
+            CREATE TABLE IF NOT EXISTS device_permissions (
                 device_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 permission TEXT NOT NULL,
                 PRIMARY KEY (device_id, user_id),
-                FOREIGN KEY (device_id) REFERENCES esp32_devices (mac_address),
+                FOREIGN KEY (device_id) REFERENCES devices (mac_address),
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
             "#
@@ -268,7 +268,7 @@ impl DatabaseManager {
         // Migration: Add connection_type column if it doesn't exist (for existing databases)
         let migration_result = sqlx::query(
             r#"
-            ALTER TABLE esp32_devices ADD COLUMN connection_type TEXT NOT NULL DEFAULT 'tcp'
+            ALTER TABLE devices ADD COLUMN connection_type TEXT NOT NULL DEFAULT 'tcp'
             "#
         )
         .execute(&self.pool)
@@ -276,7 +276,7 @@ impl DatabaseManager {
 
         // Ignore error if column already exists
         match migration_result {
-            Ok(_) => tracing::info!("Database migration: Added connection_type column to esp32_devices"),
+            Ok(_) => tracing::info!("Database migration: Added connection_type column to devices"),
             Err(e) => {
                 let error_msg = e.to_string();
                 if error_msg.contains("duplicate column") || error_msg.contains("already exists") {
@@ -440,7 +440,7 @@ impl DatabaseManager {
 
     pub async fn delete_user(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         // Zuerst Canvas Permissions löschen
-        sqlx::query("DELETE FROM esp32_device_permissions WHERE user_id = ?")
+        sqlx::query("DELETE FROM device_permissions WHERE user_id = ?")
             .bind(user_id)
             .execute(&self.pool)
             .await?;
@@ -542,10 +542,10 @@ impl DatabaseManager {
     }
 
     // ============================================================================
-    // ESP32 DEVICE MANAGEMENT - CRUD Operationen für ESP32 Devices
+    // DEVICE MANAGEMENT - CRUD Operationen für Devices
     // ============================================================================
 
-    pub async fn create_esp32_device(&self, device: ESP32Device) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn create_device(&self, device: Device) -> Result<(), Box<dyn std::error::Error>> {
         let status_str = match device.status {
             DeviceStatus::Online => "Online",
             DeviceStatus::Offline => "Offline", 
@@ -555,7 +555,7 @@ impl DatabaseManager {
         };
         
         sqlx::query(
-            "INSERT INTO esp32_devices (mac_address, name, owner_id, ip_address, status, maintenance_mode, firmware_version, last_seen, created_at, connection_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO devices (mac_address, name, owner_id, ip_address, status, maintenance_mode, firmware_version, last_seen, created_at, connection_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&device.mac_address)
         .bind(&device.name)
@@ -576,8 +576,8 @@ impl DatabaseManager {
         Ok(())
     }
 
-    pub async fn get_esp32_device_by_id(&self, device_id: &str) -> Result<Option<ESP32Device>, Box<dyn std::error::Error>> {
-        let row = sqlx::query("SELECT * FROM esp32_devices WHERE mac_address = ?")
+    pub async fn get_device_by_id(&self, device_id: &str) -> Result<Option<Device>, Box<dyn std::error::Error>> {
+        let row = sqlx::query("SELECT * FROM devices WHERE mac_address = ?")
             .bind(device_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -599,7 +599,7 @@ impl DatabaseManager {
                     _ => DeviceStatus::Offline,
                 };
                 
-                Ok(Some(ESP32Device {
+                Ok(Some(Device {
                     mac_address: row.get("mac_address"),
                     name: row.get("name"),
                     owner_id: row.get("owner_id"),
@@ -616,12 +616,12 @@ impl DatabaseManager {
         }
     }
 
-    pub async fn list_user_devices(&self, user_id: &str) -> Result<Vec<(ESP32Device, String)>, Box<dyn std::error::Error>> {
+    pub async fn list_user_devices(&self, user_id: &str) -> Result<Vec<(Device, String)>, Box<dyn std::error::Error>> {
         let rows = sqlx::query(
             r#"
             SELECT d.*, dp.permission
-            FROM esp32_devices d
-            INNER JOIN esp32_device_permissions dp ON d.mac_address = dp.device_id
+            FROM devices d
+            INNER JOIN device_permissions dp ON d.mac_address = dp.device_id
             WHERE dp.user_id = ?
             ORDER BY d.created_at DESC
             "#
@@ -647,7 +647,7 @@ impl DatabaseManager {
                 _ => DeviceStatus::Offline,
             };
             
-            let device = ESP32Device {
+            let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
                 owner_id: row.get("owner_id"),
@@ -667,11 +667,11 @@ impl DatabaseManager {
         Ok(device_list)
     }
 
-    pub async fn list_all_devices(&self) -> Result<Vec<ESP32Device>, Box<dyn std::error::Error>> {
+    pub async fn list_all_devices(&self) -> Result<Vec<Device>, Box<dyn std::error::Error>> {
         let rows = sqlx::query(
             r#"
             SELECT *
-            FROM esp32_devices
+            FROM devices
             ORDER BY created_at DESC
             "#
         )
@@ -695,7 +695,7 @@ impl DatabaseManager {
                 _ => DeviceStatus::Offline,
             };
             
-            let device = ESP32Device {
+            let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
                 owner_id: row.get("owner_id"),
@@ -714,9 +714,9 @@ impl DatabaseManager {
         Ok(device_list)
     }
 
-    pub async fn update_esp32_device(&self, device_id: &str, name: Option<&str>, maintenance_mode: Option<bool>) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn update_device(&self, device_id: &str, name: Option<&str>, maintenance_mode: Option<bool>) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(name) = name {
-            sqlx::query("UPDATE esp32_devices SET name = ? WHERE mac_address = ?")
+            sqlx::query("UPDATE devices SET name = ? WHERE mac_address = ?")
                 .bind(name)
                 .bind(device_id)
                 .execute(&self.pool)
@@ -724,7 +724,7 @@ impl DatabaseManager {
         }
 
         if let Some(maintenance_mode) = maintenance_mode {
-            sqlx::query("UPDATE esp32_devices SET maintenance_mode = ? WHERE mac_address = ?")
+            sqlx::query("UPDATE devices SET maintenance_mode = ? WHERE mac_address = ?")
                 .bind(maintenance_mode)
                 .bind(device_id)
                 .execute(&self.pool)
@@ -745,7 +745,7 @@ impl DatabaseManager {
         
         let now = Utc::now().to_rfc3339();
         
-        sqlx::query("UPDATE esp32_devices SET status = ?, ip_address = ?, firmware_version = ?, last_seen = ? WHERE mac_address = ?")
+        sqlx::query("UPDATE devices SET status = ?, ip_address = ?, firmware_version = ?, last_seen = ? WHERE mac_address = ?")
             .bind(status_str)
             .bind(ip_address)
             .bind(firmware_version)
@@ -757,15 +757,15 @@ impl DatabaseManager {
         Ok(())
     }
 
-    pub async fn delete_esp32_device(&self, device_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn delete_device(&self, device_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         // Zuerst Berechtigungen löschen
-        sqlx::query("DELETE FROM esp32_device_permissions WHERE device_id = ?")
+        sqlx::query("DELETE FROM device_permissions WHERE device_id = ?")
             .bind(device_id)
             .execute(&self.pool)
             .await?;
 
         // Dann Device löschen
-        sqlx::query("DELETE FROM esp32_devices WHERE mac_address = ?")
+        sqlx::query("DELETE FROM devices WHERE mac_address = ?")
             .bind(device_id)
             .execute(&self.pool)
             .await?;
@@ -773,13 +773,13 @@ impl DatabaseManager {
         Ok(())
     }
 
-    /// Get all ESP32 devices by connection type (e.g., "tcp" or "uart")
-    pub async fn get_esp32_devices_by_connection_type(
+    /// Get all Devices by connection type (e.g., "tcp" or "uart")
+    pub async fn get_devices_by_connection_type(
         &self,
         connection_type: &str,
-    ) -> Result<Vec<ESP32Device>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Device>, Box<dyn std::error::Error>> {
         let rows = sqlx::query(
-            "SELECT * FROM esp32_devices WHERE connection_type = ? ORDER BY last_seen DESC"
+            "SELECT * FROM devices WHERE connection_type = ? ORDER BY last_seen DESC"
         )
         .bind(connection_type)
         .fetch_all(&self.pool)
@@ -802,7 +802,7 @@ impl DatabaseManager {
                 _ => DeviceStatus::Offline,
             };
 
-            let device = ESP32Device {
+            let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
                 owner_id: row.get("owner_id"),
@@ -821,7 +821,7 @@ impl DatabaseManager {
         Ok(devices)
     }
 
-    /// Create or update ESP32 device from discovery (auto-save discovered devices)
+    /// Create or update device from discovery (auto-save discovered devices)
     /// If device exists, update IP and last_seen. If not, create as guest-owned device.
     pub async fn upsert_discovered_device(
         &self,
@@ -831,7 +831,7 @@ impl DatabaseManager {
         connection_type: Option<String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Check if device already exists
-        let existing = self.get_esp32_device_by_id(&mac_address).await?;
+        let existing = self.get_device_by_id(&mac_address).await?;
 
         if let Some(mut device) = existing {
             // Device exists - update IP and last_seen
@@ -839,7 +839,7 @@ impl DatabaseManager {
             device.last_seen = Utc::now();
 
             sqlx::query(
-                "UPDATE esp32_devices SET ip_address = ?, last_seen = ? WHERE mac_address = ?"
+                "UPDATE devices SET ip_address = ?, last_seen = ? WHERE mac_address = ?"
             )
             .bind(&device.ip_address)
             .bind(device.last_seen.to_rfc3339())
@@ -850,7 +850,7 @@ impl DatabaseManager {
             tracing::debug!("Updated existing device in DB: {}", mac_address);
         } else {
             // Device doesn't exist - create new one with guest owner
-            let new_device = ESP32Device {
+            let new_device = Device {
                 mac_address: mac_address.clone(),
                 name: device_name,
                 owner_id: "guest".to_string(),
@@ -863,7 +863,7 @@ impl DatabaseManager {
                 connection_type: connection_type.unwrap_or_else(|| "tcp".to_string()),
             };
 
-            self.create_esp32_device(new_device).await?;
+            self.create_device(new_device).await?;
             tracing::info!("Auto-saved new discovered device to DB: {}", mac_address);
         }
 
@@ -871,12 +871,12 @@ impl DatabaseManager {
     }
 
     // ============================================================================
-    // ESP32 DEVICE PERMISSIONS - Berechtigungsverwaltung
+    // DEVICE PERMISSIONS - Berechtigungsverwaltung
     // ============================================================================
 
     pub async fn set_device_permission(&self, device_id: &str, user_id: &str, permission: &str) -> Result<(), Box<dyn std::error::Error>> {
         sqlx::query(
-            "INSERT OR REPLACE INTO esp32_device_permissions (device_id, user_id, permission) VALUES (?, ?, ?)"
+            "INSERT OR REPLACE INTO device_permissions (device_id, user_id, permission) VALUES (?, ?, ?)"
         )
         .bind(device_id)
         .bind(user_id)
@@ -888,7 +888,7 @@ impl DatabaseManager {
     }
 
     pub async fn remove_device_permission(&self, device_id: &str, user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        sqlx::query("DELETE FROM esp32_device_permissions WHERE device_id = ? AND user_id = ?")
+        sqlx::query("DELETE FROM device_permissions WHERE device_id = ? AND user_id = ?")
             .bind(device_id)
             .bind(user_id)
             .execute(&self.pool)
@@ -897,15 +897,15 @@ impl DatabaseManager {
         Ok(())
     }
 
-    pub async fn get_device_permissions(&self, device_id: &str) -> Result<Vec<ESP32DevicePermission>, Box<dyn std::error::Error>> {
-        let rows = sqlx::query("SELECT * FROM esp32_device_permissions WHERE device_id = ?")
+    pub async fn get_device_permissions(&self, device_id: &str) -> Result<Vec<DevicePermission>, Box<dyn std::error::Error>> {
+        let rows = sqlx::query("SELECT * FROM device_permissions WHERE device_id = ?")
             .bind(device_id)
             .fetch_all(&self.pool)
             .await?;
 
         let mut permissions = Vec::new();
         for row in rows {
-            permissions.push(ESP32DevicePermission {
+            permissions.push(DevicePermission {
                 device_id: row.get("device_id"),
                 user_id: row.get("user_id"),
                 permission: row.get("permission"),
@@ -916,7 +916,7 @@ impl DatabaseManager {
     }
 
     pub async fn get_user_device_permission(&self, device_id: &str, user_id: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        let row = sqlx::query("SELECT permission FROM esp32_device_permissions WHERE device_id = ? AND user_id = ?")
+        let row = sqlx::query("SELECT permission FROM device_permissions WHERE device_id = ? AND user_id = ?")
             .bind(device_id)
             .bind(user_id)
             .fetch_optional(&self.pool)
@@ -937,7 +937,7 @@ impl DatabaseManager {
                     "R" => ["R", "W", "V", "M", "O"].contains(&permission.as_str()),
                     "W" => {
                         // Prüfen ob Device im Wartungsmodus ist
-                        let device = self.get_esp32_device_by_id(device_id).await?;
+                        let device = self.get_device_by_id(device_id).await?;
                         if let Some(device) = device {
                             if device.maintenance_mode {
                                 ["V", "M", "O"].contains(&permission.as_str())

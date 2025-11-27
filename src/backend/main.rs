@@ -37,15 +37,15 @@ mod app_state;   // app_state.rs - Centralized application state
 mod auth;        // auth.rs - Authentication (Login, Register, JWT)
 mod file_utils;  // file_utils.rs - File handling and SPA routing
 mod database;    // database.rs - SQLite database integration
-mod events;      // events.rs - Event definitions for ESP32 Devices
-mod device_store; // device_store.rs - In-Memory Event Store for ESP32 devices
+mod events;      // events.rs - Event definitions for devices
+mod device_store; // device_store.rs - In-Memory Event Store for devices
 mod websocket;   // websocket.rs - WebSocket handler for multiuser
-mod esp32_types; // esp32_types.rs - ESP32 communication types
-mod esp32_connection; // esp32_connection.rs - ESP32 TCP/UDP connection handling
-mod esp32_manager; // esp32_manager.rs - ESP32 device management
-mod mdns_discovery; // mdns_discovery.rs - mDNS-based ESP32 discovery
+mod device_types; // device_types.rs - Device communication types
+mod device_connection; // device_connection.rs - Device TCP/UDP connection handling
+mod device_manager; // device_manager.rs - Device management
+mod mdns_discovery; // mdns_discovery.rs - mDNS-based device discovery
 mod mdns_server;    // mdns_server.rs - mDNS server for advertising esp-server.local
-mod esp32_discovery; // esp32_discovery.rs - ESP32 device discovery service
+mod device_discovery; // device_discovery.rs - Device discovery service
 mod debug_logger;   // debug_logger.rs - Debug event logging
 mod uart_connection; // uart_connection.rs - UART/Serial connection handling
 
@@ -61,8 +61,8 @@ use auth::{
     RegisterRequest,      // Struct for registration data
     UpdateDisplayNameRequest, // Struct for display name updates
     User,                // User data structure with hashed passwords
-    // A 5.4: ESP32-Device-Management Imports
-    CreateDeviceRequest, // Request for new ESP32 device
+    // A 5.4: Device-Management Imports
+    CreateDeviceRequest, // Request for new device
     UpdateDeviceRequest, // Request for device updates
     UpdatePermissionRequest, // Request for permission updates
 };
@@ -139,23 +139,23 @@ async fn main() {
         tracing::info!("Using default debug settings: max_debug_messages=200");
     }
     
-    // Initialize ESP32 Manager
-    tracing::info!("Initializing ESP32 Manager...");
+    // Initialize Device Manager
+    tracing::info!("Initializing Device Manager...");
 
 
-    let esp32_manager = esp32_manager::create_esp32_manager(device_store.clone());
-    esp32_manager.start().await;
-    
-    // Start ESP32 Discovery Service
-    tracing::info!("Starting ESP32 Discovery Service...");
-    let esp32_discovery = Arc::new(tokio::sync::Mutex::new(esp32_discovery::Esp32Discovery::with_manager(device_store.clone(), Some(esp32_manager.clone()), Some(db.clone()))));
-    let discovery_service = esp32_discovery.clone();
+    let device_manager = device_manager::create_device_manager(device_store.clone());
+    device_manager.start().await;
+
+    // Start Device Discovery Service
+    tracing::info!("Starting Device Discovery Service...");
+    let device_discovery = Arc::new(tokio::sync::Mutex::new(device_discovery::DeviceDiscovery::with_manager(device_store.clone(), Some(device_manager.clone()), Some(db.clone()))));
+    let discovery_service = device_discovery.clone();
     tokio::spawn(async move {
         let mut discovery = discovery_service.lock().await;
         if let Err(e) = discovery.start_discovery().await {
-            tracing::error!("ESP32 discovery failed to start: {}", e);
+            tracing::error!("Device discovery failed to start: {}", e);
         } else {
-            tracing::info!("ESP32 discovery service started successfully");
+            tracing::info!("Device discovery service started successfully");
         }
     });
 
@@ -178,29 +178,29 @@ async fn main() {
         }
     });
     
-    // Example: Add a test ESP32 device configuration for testing
+    // Example: Add a test device configuration for testing
     let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 43, 75));
-    let test_device = esp32_types::Esp32DeviceConfig::new(
-        "test-esp32-001".to_string(),
+    let test_device = device_types::DeviceConfig::new(
+        "test-device-001".to_string(),
         ip,
-        3232, // ESP32 TCP port
-        3232, // ESP32 UDP port
+        3232, // Device TCP port
+        3232, // Device UDP port
     );
-    if let Err(e) = esp32_manager.add_device(test_device).await {
-        tracing::warn!("Failed to add test ESP32 device: {}", e);
+    if let Err(e) = device_manager.add_device(test_device).await {
+        tracing::warn!("Failed to add test device: {}", e);
     } else {
-        tracing::info!("Added test ESP32 device: test-esp32-001 (192.168.43.75)");
+        tracing::info!("Added test device: test-device-001 (192.168.43.75)");
     }
 
     // Add test device with colons to see if that causes the Event-Forwarding-Task termination issue
     let ip_colon_test = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 43, 76));
-    let test_device_with_colons = esp32_types::Esp32DeviceConfig::new(
+    let test_device_with_colons = device_types::DeviceConfig::new(
         "test:colon:device".to_string(),
         ip_colon_test,
-        3232, // ESP32 TCP port
-        3232, // ESP32 UDP port
+        3232, // Device TCP port
+        3232, // Device UDP port
     );
-    if let Err(e) = esp32_manager.add_device(test_device_with_colons).await {
+    if let Err(e) = device_manager.add_device(test_device_with_colons).await {
         tracing::warn!("Failed to add test device with colons: {}", e);
     } else {
         tracing::info!("Added test device with colons: test:colon:device (192.168.43.76)");
@@ -213,13 +213,13 @@ async fn main() {
     });
     tracing::info!("Started WebSocket cleanup task");
 
-    // Initialize UART Connection with shared state trackers from ESP32Manager
+    // Initialize UART Connection with shared state trackers from DeviceManager
     tracing::info!("Initializing UART connection...");
     let mut uart_conn = uart_connection::UartConnection::new(
         device_store.clone(),
-        esp32_manager.get_unified_connection_states(),
-        esp32_manager.get_unified_activity_tracker(),
-        esp32_manager.get_device_connection_types(),
+        device_manager.get_unified_connection_states(),
+        device_manager.get_unified_activity_tracker(),
+        device_manager.get_device_connection_types(),
     );
     uart_conn.set_database(db.clone());
     let uart_connection = Arc::new(tokio::sync::Mutex::new(uart_conn));
@@ -243,7 +243,7 @@ async fn main() {
 
     // Create web app with all routes
     tracing::info!("Creating application routes...");
-    let app = create_app(db, device_store, esp32_manager, esp32_discovery, mdns_server, uart_connection).await;
+    let app = create_app(db, device_store, device_manager, device_discovery, mdns_server, uart_connection).await;
 
     // Start TCP listener on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
@@ -270,15 +270,15 @@ async fn main() {
 // Website feature: Defines all URLs and their handler functions
 // ============================================================================
 
-pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStore, esp32_manager: Arc<esp32_manager::Esp32Manager>, esp32_discovery: Arc<tokio::sync::Mutex<esp32_discovery::Esp32Discovery>>, mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>, uart_connection: Arc<tokio::sync::Mutex<uart_connection::UartConnection>>) -> Router {
+pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStore, device_manager: Arc<device_manager::DeviceManager>, device_discovery: Arc<tokio::sync::Mutex<device_discovery::DeviceDiscovery>>, mdns_server: Arc<tokio::sync::Mutex<mdns_server::MdnsServer>>, uart_connection: Arc<tokio::sync::Mutex<uart_connection::UartConnection>>) -> Router {
     let mut app = Router::new();
 
     // AppState for all handlers
     let app_state = AppState {
         db: db.clone(),
         device_store: device_store.clone(),
-        esp32_manager: esp32_manager.clone(),
-        esp32_discovery: esp32_discovery.clone(),
+        device_manager: device_manager.clone(),
+        device_discovery: device_discovery.clone(),
         mdns_server: mdns_server.clone(),
         uart_connection: uart_connection.clone(),
     };
@@ -287,8 +287,8 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
     let websocket_state = WebSocketState {
         device_store: device_store.clone(),
         db: db.clone(),
-        esp32_manager: esp32_manager.clone(),
-        esp32_discovery: esp32_discovery.clone(),
+        device_manager: device_manager.clone(),
+        device_discovery: device_discovery.clone(),
         uart_connection: uart_connection.clone(),
     };
 
@@ -328,23 +328,23 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         .route("/api/profile/display-name", post(update_display_name_handler))
         
         // ========================================
-        // A 5.4: ESP32 DEVICE MANAGEMENT API ROUTES
+        // A 5.4: DEVICE MANAGEMENT API ROUTES
         // ========================================
         
         // GET /api/devices - List all devices of logged-in user
         .route("/api/devices", get(list_devices_handler))
         
-        // POST /api/devices - Create new ESP32 device
+        // POST /api/devices - Create new device
         .route("/api/devices", post(create_device_handler))
         
-        // GET /api/devices/:id - Details of an ESP32 device
+        // GET /api/devices/:id - Details of an device
         .route("/api/devices/:id", get(get_device_handler).put(update_device_handler).delete(delete_device_handler))
         
         // POST /api/device-permissions/:id - Manage permissions for a device
         .route("/api/device-permissions/:id", post(simple_permissions_handler))
         
-        // GET /api/esp32/discovered - List discovered ESP32 devices  
-        .route("/api/esp32/discovered", get(discovered_esp32_devices_handler))
+        // GET /api/devices/discovered - List discovered devices  
+        .route("/api/devices/discovered", get(discovered_devices_handler))
         
         // GET /api/users/search - Search for users for permission management
         .route("/api/users/search", get(search_users_handler))
@@ -429,7 +429,7 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         .route("/about.html", get(serve_spa_route))
         .route("/drawing_board.html", get(serve_spa_route))
         .route("/drawer_page.html", get(serve_spa_route))
-        .route("/esp32_control.html", get(serve_spa_route))
+        .route("/device_control.html", get(serve_spa_route))
         .route("/docs.html", get(serve_spa_route))
         .route("/settings.html", get(serve_spa_route));
 
@@ -1011,8 +1011,8 @@ async fn list_devices_handler(
         None => None,
     };
 
-    // Get real-time connection states from ESP32Manager
-    let connection_states = app_state.esp32_manager.get_unified_connection_states();
+    // Get real-time connection states from DeviceManager
+    let connection_states = app_state.device_manager.get_unified_connection_states();
     let connection_states_map = connection_states.read().await;
 
     // Load devices from database
@@ -1087,7 +1087,7 @@ async fn list_devices_handler(
     })))
 }
 
-// POST /api/devices - Create new ESP32 device (optional auth)
+// POST /api/devices - Create new device (optional auth)
 async fn create_device_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
@@ -1126,21 +1126,21 @@ async fn create_device_handler(
     // Convert MAC address to key format (replace : with -)
     let mac_key = req.mac_address.trim().replace(':', "-");
 
-    // Create new ESP32 device
-    let device = database::ESP32Device::new(
+    // Create new device
+    let device = database::Device::new(
         req.name.trim().to_string(),
         owner_id.clone(),
         mac_key,
     );
 
     // Save device to database
-    if let Err(e) = app_state.db.create_esp32_device(device.clone()).await {
+    if let Err(e) = app_state.db.create_device(device.clone()).await {
         tracing::error!("Database error during device creation: {:?}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     let user_info = if owner_id == "guest" { "guest user".to_string() } else { owner_id.clone() };
-    tracing::info!("ESP32 device created: {} by user {}", device.name, user_info);
+    tracing::info!("device created: {} by user {}", device.name, user_info);
 
     Response::builder()
         .header("content-type", "application/json")
@@ -1164,7 +1164,7 @@ async fn create_device_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-// GET /api/devices/:id - Details of an ESP32 device (optional auth)
+// GET /api/devices/:id - Details of an device (optional auth)
 async fn get_device_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
@@ -1184,7 +1184,7 @@ async fn get_device_handler(
     };
 
     // Canvas aus Datenbank laden
-    let canvas = match app_state.db.get_esp32_device_by_id(&canvas_id).await {
+    let canvas = match app_state.db.get_device_by_id(&canvas_id).await {
         Ok(Some(canvas)) => canvas,
         Ok(None) => return Err(StatusCode::NOT_FOUND),
         Err(e) => {
@@ -1258,7 +1258,7 @@ async fn update_device_handler(
     };
 
     // Canvas aus Datenbank laden
-    let _canvas = match app_state.db.get_esp32_device_by_id(&canvas_id).await {
+    let _canvas = match app_state.db.get_device_by_id(&canvas_id).await {
         Ok(Some(canvas)) => canvas,
         Ok(None) => return Err(StatusCode::NOT_FOUND),
         Err(e) => {
@@ -1282,7 +1282,7 @@ async fn update_device_handler(
     }
 
     // Update canvas
-    if let Err(e) = app_state.db.update_esp32_device(
+    if let Err(e) = app_state.db.update_device(
         &canvas_id,
         req.name.as_ref().map(|s| s.trim()),
         req.maintenance_mode
@@ -1292,7 +1292,7 @@ async fn update_device_handler(
     }
 
     // Aktualisierte Canvas laden
-    let updated_canvas = match app_state.db.get_esp32_device_by_id(&canvas_id).await {
+    let updated_canvas = match app_state.db.get_device_by_id(&canvas_id).await {
         Ok(Some(canvas)) => canvas,
         Ok(None) => return Err(StatusCode::NOT_FOUND),
         Err(e) => {
@@ -1356,7 +1356,7 @@ async fn simple_permissions_handler(
     })))
 }
 
-// DELETE /api/devices/:id - ESP32 Device löschen
+// DELETE /api/devices/:id - device löschen
 async fn delete_device_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
@@ -1374,7 +1374,7 @@ async fn delete_device_handler(
     };
 
     // Canvas aus Datenbank laden
-    let canvas = match app_state.db.get_esp32_device_by_id(&canvas_id).await {
+    let canvas = match app_state.db.get_device_by_id(&canvas_id).await {
         Ok(Some(canvas)) => canvas,
         Ok(None) => return Err(StatusCode::NOT_FOUND),
         Err(e) => {
@@ -1397,7 +1397,7 @@ async fn delete_device_handler(
     }
 
     // Canvas löschen
-    if let Err(e) = app_state.db.delete_esp32_device(&canvas_id).await {
+    if let Err(e) = app_state.db.delete_device(&canvas_id).await {
         tracing::error!("Database error deleting canvas: {:?}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -1500,23 +1500,23 @@ async fn list_users_handler(
     })))
 }
 
-// GET /api/esp32/discovered - List discovered ESP32 devices (authentication optional)
-async fn discovered_esp32_devices_handler(
+// GET /api/devices/discovered - List discovered devices (authentication optional)
+async fn discovered_devices_handler(
     State(app_state): State<AppState>,
     cookie_jar: CookieJar,
 ) -> Result<Json<Value>, StatusCode> {
     // Extract JWT token from cookie (optional)
     let _token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
 
-    // Authentication is optional for ESP32 device discovery
-    // Get discovered devices from ESP32Discovery service (TCP/mDNS devices)
+    // Authentication is optional for device discovery
+    // Get discovered devices from DeviceDiscovery service (TCP/mDNS devices)
     let discovered_devices = {
-        let discovery = app_state.esp32_discovery.lock().await;
+        let discovery = app_state.device_discovery.lock().await;
         discovery.get_discovered_devices().await
     };
 
     let tcp_device_count = discovered_devices.len();
-    tracing::info!("ESP32 Discovery API called - found {} TCP devices", tcp_device_count);
+    tracing::info!("Device Discovery API called - found {} TCP devices", tcp_device_count);
 
     let mut devices_json: Vec<Value> = discovered_devices
         .into_iter()
@@ -1556,7 +1556,7 @@ async fn discovered_esp32_devices_handler(
         .collect();
 
     // Get UART devices from database (persistent storage)
-    let uart_devices_from_db = match app_state.db.get_esp32_devices_by_connection_type("uart").await {
+    let uart_devices_from_db = match app_state.db.get_devices_by_connection_type("uart").await {
         Ok(devices) => devices,
         Err(e) => {
             tracing::warn!("Failed to load UART devices from database: {}", e);

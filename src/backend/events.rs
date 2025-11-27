@@ -1,5 +1,5 @@
 // ============================================================================
-// ESP32 DEVICE EVENTS - Event Definitions for Client-Server Communication
+// DEVICE EVENTS - Event Definitions for Client-Server Communication
 // ============================================================================
 
 use serde::{Deserialize, Serialize};
@@ -87,10 +87,10 @@ impl ServerMessage {
 }
 
 // ============================================================================
-// ESP32 DEVICE EVENT DEFINITIONS - Compatible with Frontend EventBus
+// DEVICE EVENT DEFINITIONS - Compatible with Frontend EventBus
 // ============================================================================
 
-/// ESP32 device events for device management and control
+/// Device events for device management and control
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum DeviceEvent {
@@ -135,15 +135,9 @@ pub enum DeviceEvent {
         #[serde(rename = "userColor")]
         user_color: String,
     },
-    // ESP32-specific events
-    #[serde(rename = "esp32Command")]
-    Esp32Command {
-        #[serde(rename = "deviceId")]
-        device_id: String,
-        command: serde_json::Value,
-    },
-    #[serde(rename = "esp32VariableUpdate")]
-    Esp32VariableUpdate {
+    // Device-specific events
+    #[serde(rename = "DeviceVariableUpdate")]
+    DeviceVariableUpdate {
         #[serde(rename = "deviceId")]
         device_id: String,
         #[serde(rename = "variableName")]
@@ -155,20 +149,20 @@ pub enum DeviceEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         max: Option<u64>,
     },
-    #[serde(rename = "esp32StartOptions")]
-    Esp32StartOptions {
+    #[serde(rename = "DeviceStartOptions")]
+    DeviceStartOptions {
         #[serde(rename = "deviceId")]
         device_id: String,
         options: Vec<String>,
     },
-    #[serde(rename = "esp32ChangeableVariables")]
-    Esp32ChangeableVariables {
+    #[serde(rename = "DeviceChangeableVariables")]
+    DeviceChangeableVariables {
         #[serde(rename = "deviceId")]
         device_id: String,
         variables: Vec<serde_json::Value>,
     },
-    #[serde(rename = "esp32UdpBroadcast")]
-    Esp32UdpBroadcast {
+    #[serde(rename = "DeviceUdpBroadcast")]
+    DeviceUdpBroadcast {
         #[serde(rename = "deviceId")]
         device_id: String,
         message: String,
@@ -177,8 +171,8 @@ pub enum DeviceEvent {
         #[serde(rename = "fromPort")]
         from_port: u16,
     },
-    #[serde(rename = "esp32ConnectionStatus")]
-    Esp32ConnectionStatus {
+    #[serde(rename = "DeviceConnectionStatus")]
+    DeviceConnectionStatus {
         #[serde(rename = "deviceId")]
         device_id: String,
         connected: bool,
@@ -189,8 +183,8 @@ pub enum DeviceEvent {
         #[serde(rename = "udpPort")]
         udp_port: u16,
     },
-    #[serde(rename = "esp32DeviceInfo")]
-    Esp32DeviceInfo {
+    #[serde(rename = "DeviceDeviceInfo")]
+    DeviceDeviceInfo {
         #[serde(rename = "deviceId")]
         device_id: String,
         #[serde(rename = "deviceName")]
@@ -199,8 +193,8 @@ pub enum DeviceEvent {
         firmware_version: Option<String>,
         uptime: Option<u64>,
     },
-    #[serde(rename = "esp32DeviceDiscovered")]
-    Esp32DeviceDiscovered {
+    #[serde(rename = "DeviceDiscovered")]
+    DeviceDiscovered {
         #[serde(rename = "deviceId")]
         device_id: String,
         #[serde(rename = "deviceIp")]
@@ -263,47 +257,52 @@ impl DeviceEvent {
         DeviceEvent::UserLeft { user_id, display_name, user_color }
     }
     
-    // ESP32-specific event constructors
-    pub fn esp32_command(device_id: String, command: serde_json::Value) -> Self {
-        DeviceEvent::Esp32Command { device_id, command }
+    // Device-specific event constructors with device_id
+    pub fn device_command_for_device(device_id: String, command: serde_json::Value) -> Self {
+        // Note: The DeviceCommand variant doesn't have device_id field
+        // Using the first variant which has command and parameters
+        DeviceEvent::DeviceCommand {
+            command: command.to_string(),
+            parameters: Some(command)
+        }
     }
     
-    pub fn esp32_variable_update(device_id: String, variable_name: String, variable_value: String) -> Self {
-        DeviceEvent::Esp32VariableUpdate { device_id, variable_name, variable_value, min: None, max: None }
+    pub fn device_variable_update(device_id: String, variable_name: String, variable_value: String) -> Self {
+        DeviceEvent::DeviceVariableUpdate { device_id, variable_name, variable_value, min: None, max: None }
     }
 
-    pub fn esp32_variable_update_with_range(
+    pub fn device_variable_update_with_range(
         device_id: String,
         variable_name: String,
         variable_value: String,
         min: Option<u64>,
         max: Option<u64>
     ) -> Self {
-        DeviceEvent::Esp32VariableUpdate { device_id, variable_name, variable_value, min, max }
+        DeviceEvent::DeviceVariableUpdate { device_id, variable_name, variable_value, min, max }
     }
     
-    pub fn esp32_start_options(device_id: String, options: Vec<String>) -> Self {
-        DeviceEvent::Esp32StartOptions { device_id, options }
+    pub fn device_start_options(device_id: String, options: Vec<String>) -> Self {
+        DeviceEvent::DeviceStartOptions { device_id, options }
     }
     
-    pub fn esp32_changeable_variables(device_id: String, variables: Vec<serde_json::Value>) -> Self {
-        DeviceEvent::Esp32ChangeableVariables { device_id, variables }
+    pub fn device_changeable_variables(device_id: String, variables: Vec<serde_json::Value>) -> Self {
+        DeviceEvent::DeviceChangeableVariables { device_id, variables }
     }
     
-    pub fn esp32_udp_broadcast(device_id: String, message: String, from_ip: String, from_port: u16) -> Self {
-        DeviceEvent::Esp32UdpBroadcast { device_id, message, from_ip, from_port }
+    pub fn device_udp_broadcast(device_id: String, message: String, from_ip: String, from_port: u16) -> Self {
+        DeviceEvent::DeviceUdpBroadcast { device_id, message, from_ip, from_port }
     }
     
-    pub fn esp32_connection_status(device_id: String, connected: bool, device_ip: String, tcp_port: u16, udp_port: u16) -> Self {
-        DeviceEvent::Esp32ConnectionStatus { device_id, connected, device_ip, tcp_port, udp_port }
+    pub fn device_connection_status(device_id: String, connected: bool, device_ip: String, tcp_port: u16, udp_port: u16) -> Self {
+        DeviceEvent::DeviceConnectionStatus { device_id, connected, device_ip, tcp_port, udp_port }
     }
     
-    pub fn esp32_device_info(device_id: String, device_name: Option<String>, firmware_version: Option<String>, uptime: Option<u64>) -> Self {
-        DeviceEvent::Esp32DeviceInfo { device_id, device_name, firmware_version, uptime }
+    pub fn device_device_info(device_id: String, device_name: Option<String>, firmware_version: Option<String>, uptime: Option<u64>) -> Self {
+        DeviceEvent::DeviceDeviceInfo { device_id, device_name, firmware_version, uptime }
     }
     
-    pub fn esp32_device_discovered(device_id: String, device_ip: String, tcp_port: u16, udp_port: u16, discovered_at: String, mac_address: Option<String>, mdns_hostname: Option<String>) -> Self {
-        DeviceEvent::Esp32DeviceDiscovered { device_id, device_ip, tcp_port, udp_port, discovered_at, mac_address, mdns_hostname }
+    pub fn device_discovered(device_id: String, device_ip: String, tcp_port: u16, udp_port: u16, discovered_at: String, mac_address: Option<String>, mdns_hostname: Option<String>) -> Self {
+        DeviceEvent::DeviceDiscovered { device_id, device_ip, tcp_port, udp_port, discovered_at, mac_address, mdns_hostname }
     }
 }
 
@@ -351,59 +350,59 @@ impl DeviceEvent {
                     Ok(())
                 }
             },
-            // ESP32 event validations
-            DeviceEvent::Esp32Command { device_id, .. } => {
-                if device_id.is_empty() {
-                    Err("Esp32Command requires non-empty device_id".to_string())
+            // Device event validations
+            DeviceEvent::DeviceCommand { command, .. } => {
+                if command.is_empty() {
+                    Err("DeviceCommand requires non-empty command".to_string())
                 } else {
                     Ok(())
                 }
             },
-            DeviceEvent::Esp32VariableUpdate { device_id, variable_name, .. } => {
+            DeviceEvent::DeviceVariableUpdate { device_id, variable_name, .. } => {
                 if device_id.is_empty() || variable_name.is_empty() {
-                    Err("Esp32VariableUpdate requires non-empty device_id and variable_name".to_string())
+                    Err("DeviceVariableUpdate requires non-empty device_id and variable_name".to_string())
                 } else {
                     Ok(())
                 }
             },
-            DeviceEvent::Esp32StartOptions { device_id, .. } => {
+            DeviceEvent::DeviceStartOptions { device_id, .. } => {
                 if device_id.is_empty() {
-                    Err("Esp32StartOptions requires non-empty device_id".to_string())
+                    Err("DeviceStartOptions requires non-empty device_id".to_string())
                 } else {
                     Ok(())
                 }
             },
-            DeviceEvent::Esp32ChangeableVariables { device_id, .. } => {
+            DeviceEvent::DeviceChangeableVariables { device_id, .. } => {
                 if device_id.is_empty() {
-                    Err("Esp32ChangeableVariables requires non-empty device_id".to_string())
+                    Err("DeviceChangeableVariables requires non-empty device_id".to_string())
                 } else {
                     Ok(())
                 }
             },
-            DeviceEvent::Esp32UdpBroadcast { device_id, .. } => {
+            DeviceEvent::DeviceUdpBroadcast { device_id, .. } => {
                 if device_id.is_empty() {
-                    Err("Esp32UdpBroadcast requires non-empty device_id".to_string())
+                    Err("DeviceUdpBroadcast requires non-empty device_id".to_string())
                 } else {
                     Ok(())
                 }
             },
-            DeviceEvent::Esp32ConnectionStatus { device_id, .. } => {
+            DeviceEvent::DeviceConnectionStatus { device_id, .. } => {
                 if device_id.is_empty() {
-                    Err("Esp32ConnectionStatus requires non-empty device_id".to_string())
+                    Err("DeviceConnectionStatus requires non-empty device_id".to_string())
                 } else {
                     Ok(())
                 }
             },
-            DeviceEvent::Esp32DeviceInfo { device_id, .. } => {
+            DeviceEvent::DeviceDeviceInfo { device_id, .. } => {
                 if device_id.is_empty() {
-                    Err("Esp32DeviceInfo requires non-empty device_id".to_string())
+                    Err("DeviceDeviceInfo requires non-empty device_id".to_string())
                 } else {
                     Ok(())
                 }
             },
-            DeviceEvent::Esp32DeviceDiscovered { device_id, device_ip, .. } => {
+            DeviceEvent::DeviceDiscovered { device_id, device_ip, .. } => {
                 if device_id.is_empty() || device_ip.is_empty() {
-                    Err("Esp32DeviceDiscovered requires non-empty device_id and device_ip".to_string())
+                    Err("DeviceDiscovered requires non-empty device_id and device_ip".to_string())
                 } else {
                     Ok(())
                 }

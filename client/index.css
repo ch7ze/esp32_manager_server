@@ -89,7 +89,7 @@ body {
   background-color: #c82333;
 }
 
-/* ESP32 Device Management Styles */
+/* Device Device Management Styles */
 
 /* Container and Layout */
 .page-content {
@@ -125,7 +125,7 @@ body {
 }
 
 /* Device Cards - Main styling */
-.esp32-device-card {
+.device-device-card {
   background: rgba(255, 255, 255, 0.95);
   border-radius: 20px;
   -webkit-border-radius: 20px;
@@ -143,7 +143,7 @@ body {
   overflow: hidden;
 }
 
-.esp32-device-card:hover {
+.device-device-card:hover {
   transform: translateY(-5px);
   -webkit-transform: translateY(-5px);
   -moz-transform: translateY(-5px);
@@ -154,7 +154,7 @@ body {
 }
 
 /* Device Header */
-.esp32-device-header {
+.device-device-header {
   color: #333;
   padding: 20px;
   display: flex;
@@ -162,7 +162,7 @@ body {
   align-items: center;
 }
 
-.esp32-device-header h5 {
+.device-device-header h5 {
   margin: 0;
   font-weight: 600;
   font-size: 1.25rem;
@@ -409,7 +409,7 @@ body {
 }
 
 /* Layout Responsive */
-.esp32-grid {
+.device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 20px;
@@ -418,18 +418,18 @@ body {
 
 /* Adjust grid for very narrow portrait screens (closed foldables, smartphones) */
 @media (orientation: portrait) and (max-aspect-ratio: 1/2) {
-  .esp32-grid {
+  .device-grid {
     grid-template-columns: 1fr; /* Single column */
     gap: 15px;
     padding: 10px;
   }
 }
 
-.esp32-stack {
+.device-stack {
   padding: 20px;
 }
 
-.esp32-tabs {
+.device-tabs {
   background: rgba(255, 255, 255, 0.95);
   border-radius: 20px;
   -webkit-border-radius: 20px;
@@ -504,7 +504,7 @@ body {
 
 /* Mobile Responsiveness - Portrait orientation */
 @media (orientation: portrait) {
-  .esp32-device-header {
+  .device-device-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
@@ -546,27 +546,27 @@ body {
     margin-bottom: 15px;
   }
 
-  .esp32-tabs {
+  .device-tabs {
     margin: 10px;
   }
 }
 
 /* Narrow portrait device optimizations (smartphones, closed foldables) */
 @media (orientation: portrait) and (max-aspect-ratio: 3/4) {
-  .esp32-grid {
+  .device-grid {
     grid-template-columns: 1fr;
     padding: 10px;
     gap: 15px;
   }
 
-  .esp32-stack {
+  .device-stack {
     padding: 10px;
   }
 }
 
 /* Dark mode support */
 @media (prefers-color-scheme: dark) {
-  .esp32-device-card {
+  .device-device-card {
     background: rgba(33, 37, 41, 0.95);
     color: #f8f9fa;
   }

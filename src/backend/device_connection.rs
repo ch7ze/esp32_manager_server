@@ -1,7 +1,7 @@
-// ESP32 TCP/UDP connection management
+// Device TCP/UDP connection management
 
-use crate::esp32_types::{
-    Esp32Command, Esp32Event, Esp32DeviceConfig, ConnectionState, Esp32Result, Esp32Error
+use crate::device_types::{
+    DeviceCommand, DeviceEvent, DeviceConfig, ConnectionState, DeviceResult, DeviceError
 };
 use crate::device_store::SharedDeviceStore;
 
@@ -18,35 +18,35 @@ use tracing::{info, warn, error, debug};
 static RESET_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 // ============================================================================
-// ESP32 CONNECTION MANAGER
+// DEVICE CONNECTION MANAGER
 // ============================================================================
 
 #[derive(Debug)]
-pub struct Esp32Connection {
-    config: Esp32DeviceConfig,
+pub struct DeviceConnection {
+    config: DeviceConfig,
     tcp_stream: Arc<Mutex<Option<TcpStream>>>,
     connection_state: Arc<RwLock<ConnectionState>>,
-    event_sender: mpsc::UnboundedSender<Esp32Event>,
+    event_sender: mpsc::UnboundedSender<DeviceEvent>,
     tcp_buffer: Arc<Mutex<String>>,
     shutdown_sender: Option<mpsc::UnboundedSender<()>>,
     device_store: SharedDeviceStore,
-    /// Unified connection states (shared with ESP32Manager)
+    /// Unified connection states (shared with DeviceManager)
     unified_connection_states: Arc<RwLock<std::collections::HashMap<String, bool>>>,
-    /// Device connection types map (shared with ESP32Manager)
-    device_connection_types: Arc<RwLock<std::collections::HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
+    /// Device connection types map (shared with DeviceManager)
+    DEVICE_CONNECTION_types: Arc<RwLock<std::collections::HashMap<String, crate::device_manager::DeviceConnectionType>>>,
 }
 
-impl Esp32Connection {
-    /// Create a new ESP32 connection manager
+impl DeviceConnection {
+    /// Create a new device connection manager
     pub fn new(
-        config: Esp32DeviceConfig,
-        event_sender: mpsc::UnboundedSender<Esp32Event>,
+        config: DeviceConfig,
+        event_sender: mpsc::UnboundedSender<DeviceEvent>,
         device_store: SharedDeviceStore,
         unified_connection_states: Arc<RwLock<std::collections::HashMap<String, bool>>>,
-        device_connection_types: Arc<RwLock<std::collections::HashMap<String, crate::esp32_manager::DeviceConnectionType>>>,
+        DEVICE_CONNECTION_types: Arc<RwLock<std::collections::HashMap<String, crate::device_manager::DeviceConnectionType>>>,
     ) -> Self {
-        info!("ESP32CONNECTION CREATION DEBUG: Creating new ESP32Connection for device {}", config.device_id);
-        crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("NEW_CONNECTION_CREATED: {} - sender_closed: {}", config.device_id, event_sender.is_closed()));
+        info!("DEVICE_CONNECTION CREATION DEBUG: Creating new DeviceConnection for device {}", config.device_id);
+        crate::debug_logger::DebugLogger::log_event("DEVICE_CONNECTION", &format!("NEW_CONNECTION_CREATED: {} - sender_closed: {}", config.device_id, event_sender.is_closed()));
 
         Self {
             config,
@@ -57,7 +57,7 @@ impl Esp32Connection {
             shutdown_sender: None,
             device_store,
             unified_connection_states,
-            device_connection_types,
+            DEVICE_CONNECTION_types,
         }
     }
     
@@ -66,9 +66,9 @@ impl Esp32Connection {
         self.connection_state.read().await.clone()
     }
     
-    /// Start connection to ESP32 (both TCP and UDP)
-    pub async fn connect(&mut self) -> Esp32Result<()> {
-        info!("Connecting to ESP32 device {} at {}", 
+    /// Start connection to Device (both TCP and UDP)
+    pub async fn connect(&mut self) -> DeviceResult<()> {
+        info!("Connecting to Device device {} at {}", 
                self.config.device_id, self.config.ip_address);
         
         // Set connecting state
@@ -89,46 +89,46 @@ impl Esp32Connection {
         self.start_tcp_listener_task(shutdown_rx).await;
         
         // Send connection status event
-        let event = Esp32Event::connection_status(
+        let event = DeviceEvent::connection_status(
             true,
             self.config.ip_address,
             self.config.tcp_port,
             self.config.udp_port
         );
-        info!("ESP32CONNECTION DEBUG: About to send connection status event (connected=true) for device {}", self.config.device_id);
-        info!("ESP32CONNECTION DEBUG: Event sender channel status - is_closed: {}", self.event_sender.is_closed());
-        crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("ABOUT_TO_SEND_CONNECTION_STATUS: {} - sender_closed: {}", self.config.device_id, self.event_sender.is_closed()));
+        info!("DeviceConnection DEBUG: About to send connection status event (connected=true) for device {}", self.config.device_id);
+        info!("DeviceConnection DEBUG: Event sender channel status - is_closed: {}", self.event_sender.is_closed());
+        crate::debug_logger::DebugLogger::log_event("DEVICE_CONNECTION", &format!("ABOUT_TO_SEND_CONNECTION_STATUS: {} - sender_closed: {}", self.config.device_id, self.event_sender.is_closed()));
 
         let is_closed = self.event_sender.is_closed();
         if is_closed {
-            warn!("ESP32CONNECTION DEBUG: Event sender is closed for device {}, connection status event will be skipped", self.config.device_id);
-            warn!("ESP32CONNECTION DEBUG: This explains why frontend shows 'Disconnected' - event channel is closed!");
-            warn!("ESP32CONNECTION DEBUG: The ESP32 is actually connected via TCP, but status events cannot be sent to frontend");
-            crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, false, Some("Event sender is closed"));
+            warn!("DeviceConnection DEBUG: Event sender is closed for device {}, connection status event will be skipped", self.config.device_id);
+            warn!("DeviceConnection DEBUG: This explains why frontend shows 'Disconnected' - event channel is closed!");
+            warn!("DeviceConnection DEBUG: The Device is actually connected via TCP, but status events cannot be sent to frontend");
+            crate::debug_logger::DebugLogger::log_device_connection_event_send(&self.config.device_id, is_closed, false, Some("Event sender is closed"));
         } else {
             match self.event_sender.send(event) {
                 Ok(()) => {
-                    info!("ESP32CONNECTION DEBUG: Connection status event sent successfully for device {}", self.config.device_id);
-                    info!("ESP32CONNECTION DEBUG: Event should now flow: ESP32Connection -> EventForwardingTask -> ESP32Manager -> DeviceStore -> WebSocket -> Frontend");
-                    crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, true, None);
+                    info!("DeviceConnection DEBUG: Connection status event sent successfully for device {}", self.config.device_id);
+                    info!("DeviceConnection DEBUG: Event should now flow: DeviceConnection -> EventForwardingTask -> DeviceManager -> DeviceStore -> WebSocket -> Frontend");
+                    crate::debug_logger::DebugLogger::log_device_connection_event_send(&self.config.device_id, is_closed, true, None);
                 }
                 Err(e) => {
-                    error!("ESP32CONNECTION DEBUG: FAILED to send connection status event for device {}: {}", self.config.device_id, e);
-                    error!("ESP32CONNECTION DEBUG: Event sender is_closed: {}", self.event_sender.is_closed());
-                    error!("ESP32CONNECTION DEBUG: This means the Event Forwarding Task receiver has been dropped!");
-                    error!("ESP32CONNECTION DEBUG: This explains why frontend shows 'Disconnected' - event channel is closed!");
-                    crate::debug_logger::DebugLogger::log_esp32_connection_event_send(&self.config.device_id, is_closed, false, Some(&e.to_string()));
+                    error!("DeviceConnection DEBUG: FAILED to send connection status event for device {}: {}", self.config.device_id, e);
+                    error!("DeviceConnection DEBUG: Event sender is_closed: {}", self.event_sender.is_closed());
+                    error!("DeviceConnection DEBUG: This means the Event Forwarding Task receiver has been dropped!");
+                    error!("DeviceConnection DEBUG: This explains why frontend shows 'Disconnected' - event channel is closed!");
+                    crate::debug_logger::DebugLogger::log_device_connection_event_send(&self.config.device_id, is_closed, false, Some(&e.to_string()));
                 }
             }
         }
         
-        info!("Successfully connected to ESP32 device {}", self.config.device_id);
+        info!("Successfully connected to Device device {}", self.config.device_id);
         Ok(())
     }
     
-    /// Disconnect from ESP32
-    pub async fn disconnect(&mut self) -> Esp32Result<()> {
-        info!("Disconnecting from ESP32 device {}", self.config.device_id);
+    /// Disconnect from Device
+    pub async fn disconnect(&mut self) -> DeviceResult<()> {
+        info!("Disconnecting from Device device {}", self.config.device_id);
         
         // Send shutdown signal
         if let Some(shutdown_tx) = &self.shutdown_sender {
@@ -152,7 +152,7 @@ impl Esp32Connection {
         }
         
         // Send connection status event
-        let event = Esp32Event::connection_status(
+        let event = DeviceEvent::connection_status(
             false,
             self.config.ip_address,
             self.config.tcp_port,
@@ -165,19 +165,19 @@ impl Esp32Connection {
             info!("Disconnect status event sent successfully for device {}", self.config.device_id);
         }
         
-        info!("Disconnected from ESP32 device {}", self.config.device_id);
+        info!("Disconnected from Device device {}", self.config.device_id);
         Ok(())
     }
     
-    /// Send command to ESP32 via TCP
-    pub async fn send_command(&self, command: Esp32Command) -> Esp32Result<()> {
-        debug!("Sending command to ESP32 {}: {:?}", self.config.device_id, command);
+    /// Send command to Device via TCP
+    pub async fn send_command(&self, command: DeviceCommand) -> DeviceResult<()> {
+        debug!("Sending command to Device {}: {:?}", self.config.device_id, command);
 
         // Check if this is a reset command (which will close the TCP connection)
-        let is_reset_command = matches!(command, Esp32Command::Reset { .. });
+        let is_reset_command = matches!(command, DeviceCommand::Reset { .. });
         let reset_attempt_number = if is_reset_command {
             let attempt = RESET_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
-            info!("RESET COMMAND: ESP32 {} will reset and close TCP connection - this is expected behavior (attempt #{})", self.config.device_id, attempt);
+            info!("RESET COMMAND: Device {} will reset and close TCP connection - this is expected behavior (attempt #{})", self.config.device_id, attempt);
             crate::debug_logger::DebugLogger::log_reset_attempt(&self.config.device_id, attempt);
             attempt
         } else {
@@ -241,7 +241,7 @@ impl Esp32Connection {
                 }
 
                 // Do NOT send disconnect event for reset commands - this is a temporary state
-                // The ESP32 will reconnect automatically and we want to keep the connection object alive
+                // The Device will reconnect automatically and we want to keep the connection object alive
                 info!("RESET COMMAND: TCP stream closed for device {}, connection kept alive for automatic reconnect", self.config.device_id);
             }
 
@@ -266,7 +266,7 @@ impl Esp32Connection {
             }
 
             // Send connection status event to notify clients
-            let event = Esp32Event::connection_status(
+            let event = DeviceEvent::connection_status(
                 true,
                 self.config.ip_address,
                 self.config.tcp_port,
@@ -322,9 +322,9 @@ impl Esp32Connection {
                 crate::debug_logger::DebugLogger::log_tcp_connection_status(&self.config.device_id, "STILL_NOT_AVAILABLE", "TCP stream is still None even after reconnect");
                 crate::debug_logger::DebugLogger::log_tcp_command_failed(&self.config.device_id, &command_name, "TCP connection still not available after reconnect");
                 if is_reset_command {
-                    crate::debug_logger::DebugLogger::log_reset_failure(&self.config.device_id, reset_attempt_number, "Failed to reconnect to ESP32");
+                    crate::debug_logger::DebugLogger::log_reset_failure(&self.config.device_id, reset_attempt_number, "Failed to reconnect to Device");
                 }
-                Err(Esp32Error::ConnectionFailed("Failed to reconnect to ESP32".to_string()))
+                Err(DeviceError::ConnectionFailed("Failed to reconnect to Device".to_string()))
             }
         }
     }
@@ -333,16 +333,16 @@ impl Esp32Connection {
     // TCP CONNECTION HANDLING
     // ========================================================================
     
-    /// Establish TCP connection to ESP32
-    async fn connect_tcp(&self) -> Esp32Result<()> {
+    /// Establish TCP connection to Device
+    async fn connect_tcp(&self) -> DeviceResult<()> {
         let tcp_addr = self.config.tcp_addr();
         debug!("Connecting to TCP address: {}", tcp_addr);
 
         // Try to connect with timeout
         let stream = timeout(Duration::from_secs(5), TcpStream::connect(tcp_addr))
             .await
-            .map_err(|_| Esp32Error::Timeout)?
-            .map_err(|e| Esp32Error::ConnectionFailed(format!("TCP connection failed: {}", e)))?;
+            .map_err(|_| DeviceError::Timeout)?
+            .map_err(|e| DeviceError::ConnectionFailed(format!("TCP connection failed: {}", e)))?;
 
         // Configure TCP socket for faster disconnect detection
         if let Err(e) = stream.set_nodelay(true) {
@@ -405,7 +405,7 @@ impl Esp32Connection {
         let _device_config = self.config.clone();
         let device_store = self.device_store.clone();
         let unified_connection_states = Arc::clone(&self.unified_connection_states);
-        let device_connection_types = Arc::clone(&self.device_connection_types);
+        let DEVICE_CONNECTION_types = Arc::clone(&self.DEVICE_CONNECTION_types);
 
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
@@ -419,7 +419,7 @@ impl Esp32Connection {
                     break;
                 }
 
-                // Read from TCP stream for incoming messages from ESP32
+                // Read from TCP stream for incoming messages from Device
                 let mut tcp = tcp_stream.lock().await;
                 if let Some(stream) = tcp.as_mut() {
                     // Try to read from TCP stream with timeout
@@ -435,7 +435,7 @@ impl Esp32Connection {
                             *tcp = None;
                         }
                         Ok(Ok(bytes_read)) => {
-                            // Got data from ESP32
+                            // Got data from Device
                             let message = String::from_utf8_lossy(&buffer[..bytes_read]);
                             info!("TCP RECEIVED from {}: {}", device_id, message);
                             crate::debug_logger::DebugLogger::log_tcp_message(&device_id, "RECEIVED", &message);
@@ -455,14 +455,14 @@ impl Esp32Connection {
                                 let json_clone = json_str.clone();
                                 let device_store_clone = device_store.clone();
                                 let unified_connection_states_clone = Arc::clone(&unified_connection_states);
-                                let device_connection_types_clone = Arc::clone(&device_connection_types);
+                                let DEVICE_CONNECTION_types_clone = Arc::clone(&DEVICE_CONNECTION_types);
                                 tokio::spawn(async move {
-                                    crate::esp32_manager::Esp32Manager::handle_tcp_message_bypass(
+                                    crate::device_manager::DeviceManager::handle_tcp_message_bypass(
                                         &json_clone,
                                         &device_id_clone,
                                         &device_store_clone,
                                         &unified_connection_states_clone,
-                                        &device_connection_types_clone
+                                        &DEVICE_CONNECTION_types_clone
                                     ).await;
                                 });
                             }
@@ -536,11 +536,11 @@ fn extract_complete_json(buffer: &mut String) -> Option<String> {
 
 
 
-impl Drop for Esp32Connection {
+impl Drop for DeviceConnection {
     fn drop(&mut self) {
-        error!("ESP32CONNECTION DROP DEBUG: ESP32Connection for device {} is being DROPPED! This will close the event_sender!", self.config.device_id);
-        crate::debug_logger::DebugLogger::log_event("ESP32_CONNECTION", &format!("CONNECTION_DROPPED: {}", self.config.device_id));
-        crate::debug_logger::DebugLogger::log_connection_drop(&self.config.device_id, "ESP32Connection struct dropped");
+        error!("DeviceConnection DROP DEBUG: DeviceConnection for device {} is being DROPPED! This will close the event_sender!", self.config.device_id);
+        crate::debug_logger::DebugLogger::log_event("DEVICE_CONNECTION", &format!("CONNECTION_DROPPED: {}", self.config.device_id));
+        crate::debug_logger::DebugLogger::log_connection_drop(&self.config.device_id, "DeviceConnection struct dropped");
 
         // Send shutdown signal if we have one
         if let Some(shutdown_tx) = &self.shutdown_sender {

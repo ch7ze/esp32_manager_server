@@ -50,14 +50,14 @@ impl DebugLogger {
         Self::log_event("DEVICE_MANAGEMENT", &format!("DEVICE_ALREADY_EXISTS {}", device_id));
     }
 
-    pub fn log_esp32_connection_event_send(device_id: &str, is_closed: bool, success: bool, error: Option<&str>) {
+    pub fn log_device_connection_event_send(device_id: &str, is_closed: bool, success: bool, error: Option<&str>) {
         let status = if success { "SUCCESS" } else { "FAILED" };
         let details = if let Some(err) = error {
             format!(" error: {}", err)
         } else {
             String::new()
         };
-        Self::log_event("ESP32_CONNECTION", &format!("EVENT_SEND {} for device {} (channel_closed: {}){}", status, device_id, is_closed, details));
+        Self::log_event("Device_CONNECTION", &format!("EVENT_SEND {} for device {} (channel_closed: {}){}", status, device_id, is_closed, details));
     }
 
     pub fn log_tcp_command_send(device_id: &str, command: &str, tcp_available: bool) {

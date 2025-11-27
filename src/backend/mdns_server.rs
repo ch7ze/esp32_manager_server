@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use tracing::{info, warn};
 use tokio::sync::mpsc;
 
-/// mDNS server for advertising the ESP32 Manager Server
+/// mDNS server for advertising the Device Manager Server
 pub struct MdnsServer {
     daemon: Option<ServiceDaemon>,
     service_info: Option<ServiceInfo>,
@@ -43,7 +43,7 @@ impl MdnsServer {
         let mut properties = HashMap::new();
         properties.insert("version".to_string(), "1.0".to_string());
         properties.insert("path".to_string(), "/".to_string());
-        properties.insert("type".to_string(), "esp32-manager".to_string());
+        properties.insert("type".to_string(), "device-manager".to_string());
         properties.insert("protocol".to_string(), "http".to_string());
 
         // Create service info for HTTP service

@@ -1,4 +1,4 @@
-// ESP32 device event store for multiuser functionality
+// Device event store for multiuser functionality
 
 use crate::events::{DeviceEvent, EventWithMetadata, ServerMessage};
 use std::collections::HashMap;
@@ -187,7 +187,7 @@ impl DeviceEventStore {
         })?;
 
         // Check if this is a debug message (UdpBroadcast)
-        let is_debug_message = matches!(event, crate::events::DeviceEvent::Esp32UdpBroadcast { .. });
+        let is_debug_message = matches!(event, crate::events::DeviceEvent::DeviceUdpBroadcast { .. });
 
         // Read limit BEFORE taking write lock to avoid deadlock
         let max_debug = if is_debug_message {
@@ -215,14 +215,14 @@ impl DeviceEventStore {
 
                 // Count existing debug messages
                 let debug_count = device_events.iter()
-                    .filter(|e| matches!(e.event, crate::events::DeviceEvent::Esp32UdpBroadcast { .. }))
+                    .filter(|e| matches!(e.event, crate::events::DeviceEvent::DeviceUdpBroadcast { .. }))
                     .count();
 
                 // If limit reached, remove oldest debug message
                 if debug_count >= max_debug {
                     // Find and remove the oldest debug message
                     if let Some(oldest_debug_idx) = device_events.iter()
-                        .position(|e| matches!(e.event, crate::events::DeviceEvent::Esp32UdpBroadcast { .. }))
+                        .position(|e| matches!(e.event, crate::events::DeviceEvent::DeviceUdpBroadcast { .. }))
                     {
                         device_events.remove(oldest_debug_idx);
                     }
@@ -261,9 +261,9 @@ impl DeviceEventStore {
         }
     }
     
-    // Get device-specific information (placeholder for ESP32 device info)
+    // Get device-specific information (placeholder for device device info)
     pub async fn get_device_info(&self, _device_id: &str) -> Vec<DeviceEvent> {
-        // For ESP32 devices, we might return device status, sensor data, etc.
+        // For device devices, we might return device status, sensor data, etc.
         // For now, return empty - this can be extended for device-specific info
         Vec::new()
     }
@@ -455,7 +455,7 @@ impl DeviceEventStore {
             }
         }
         
-        // ESP32 devices don't have shape selections to clean up
+        // device devices don't have shape selections to clean up
         debug!("Client {} disconnected from device {}", client_id, device_id);
         
         Ok(())
@@ -556,7 +556,7 @@ impl DeviceEventStore {
 
         if let Some(device_connections) = connections.get(device_id) {
             // Check if this event should be sent to light subscriptions
-            let is_connection_status = matches!(event, DeviceEvent::Esp32ConnectionStatus { .. });
+            let is_connection_status = matches!(event, DeviceEvent::DeviceConnectionStatus { .. });
 
             let message = ServerMessage::device_events(
                 device_id.to_string(),

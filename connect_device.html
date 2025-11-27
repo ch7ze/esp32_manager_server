@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Connect ESP32</title>
+    <title>Connect Device</title>
 </head>
 <body>
-    <h1>ESP32 Connection Test</h1>
+    <h1>Device Connection Test</h1>
     <div id="status">Connecting...</div>
     <div id="log"></div>
 
@@ -22,7 +22,7 @@
             status.innerText = 'WebSocket Connected';
             addLog('WebSocket connected');
 
-            // Register for the discovered ESP32 device
+            // Register for the discovered Device device
             const message = {
                 "type": "registerForDevice",
                 "deviceId": "10-20-BA-42-71-E0"
@@ -40,9 +40,9 @@
             if (data.device_id === "10-20-BA-42-71-E0") {
                 if (data.events_for_device) {
                     data.events_for_device.forEach(evt => {
-                        if (evt.type === "Esp32ConnectionStatus") {
+                        if (evt.type === "DeviceConnectionStatus") {
                             addLog('CONNECTION STATUS: ' + (evt.connected ? 'CONNECTED' : 'DISCONNECTED'));
-                            status.innerText = evt.connected ? 'ESP32 Connected!' : 'ESP32 Disconnected';
+                            status.innerText = evt.connected ? 'Device Connected!' : 'Device Disconnected';
                         }
                     });
                 }

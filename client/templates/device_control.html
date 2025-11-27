@@ -1,27 +1,27 @@
-<!-- ESP32 Control Page Content -->
+<!-- Device Control Page Content -->
 <div class="page-content">
-    <div class="esp32-container">
+    <div class="device-container">
         <!-- Loading State -->
-        <div id="loading-state" class="esp32-loading-state">
-            <div class="esp32-spinner" role="status">
-                <span class="sr-only">Loading ESP32 devices...</span>
+        <div id="loading-state" class="device-loading-state">
+            <div class="device-spinner" role="status">
+                <span class="sr-only">Loading devices...</span>
             </div>
-            <p>Connecting to ESP32 devices...</p>
+            <p>Connecting to devices...</p>
         </div>
 
         <!-- No Devices State -->
-        <div id="no-devices-state" class="esp32-no-devices" style="display: none;">
-            <div class="esp32-info-box">
-                <h4>ℹ️ No ESP32 devices available</h4>
-                <p>No ESP32 devices are currently configured or connected.</p>
-                <button class="esp32-btn esp32-btn-primary" onclick="refreshDevices()">
+        <div id="no-devices-state" class="device-no-devices" style="display: none;">
+            <div class="device-info-box">
+                <h4>ℹ️ No devices available</h4>
+                <p>No devices are currently configured or connected.</p>
+                <button class="device-btn device-btn-primary" onclick="refreshDevices()">
                     🔄 Refresh
                 </button>
             </div>
         </div>
 
         <!-- Main Layout with Sidebar -->
-        <div id="esp32-main-layout" class="esp32-main-layout" style="display: none;">
+        <div id="device-main-layout" class="device-main-layout" style="display: none;">
             <!-- Sidebar Overlay (for mobile) -->
             <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
 
@@ -30,10 +30,10 @@
                 ☰
             </button>
 
-            <!-- ESP32 Device Sidebar -->
-            <div id="esp32-sidebar" class="esp32-sidebar">
+            <!-- Device Sidebar -->
+            <div id="device-sidebar" class="device-sidebar">
                 <div class="sidebar-header">
-                    <h6>Available ESP32s</h6>
+                    <h6>Available Devices</h6>
                     <button class="sidebar-mode-btn-compact" onclick="cycleSidebarMode()" title="Sidebar-Modus ändern">
                         <span id="sidebar-mode-icon">🔄</span>
                     </button>
@@ -48,19 +48,19 @@
             </div>
 
             <!-- Main Content Area -->
-            <div class="esp32-content-area">
+            <div class="device-content-area">
                 <!-- Tab Layout (Desktop) -->
-                <div id="esp32-tabs" class="esp32-tabs">
-                    <ul class="esp32-nav-tabs" id="deviceTabs" role="tablist">
+                <div id="device-tabs" class="device-tabs">
+                    <ul class="device-nav-tabs" id="deviceTabs" role="tablist">
                         <!-- Dynamic tabs will be inserted here -->
                     </ul>
-                    <div class="esp32-tab-content" id="deviceTabContent">
+                    <div class="device-tab-content" id="deviceTabContent">
                         <!-- Dynamic tab content will be inserted here -->
                     </div>
                 </div>
 
                 <!-- Stack Layout (Mobile) -->
-                <div id="esp32-stack" class="esp32-stack">
+                <div id="device-stack" class="device-stack">
                     <!-- Dynamic stacked devices will be inserted here -->
                 </div>
             </div>

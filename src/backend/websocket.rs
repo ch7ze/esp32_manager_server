@@ -1,5 +1,5 @@
 // ============================================================================
-// WEBSOCKET HANDLER - WebSocket Communication for ESP32 Device Management
+// WEBSOCKET HANDLER - WebSocket Communication for Device Management
 // ============================================================================
 
 use crate::auth::{validate_jwt, Claims};
@@ -30,8 +30,8 @@ use tracing::{info, warn, error, debug};
 pub struct WebSocketState {
     pub device_store: SharedDeviceStore,
     pub db: Arc<DatabaseManager>,
-    pub esp32_manager: Arc<crate::esp32_manager::Esp32Manager>,
-    pub esp32_discovery: Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
+    pub device_manager: Arc<crate::device_manager::DeviceManager>,
+    pub device_discovery: Arc<tokio::sync::Mutex<crate::device_discovery::DeviceDiscovery>>,
     pub uart_connection: Arc<tokio::sync::Mutex<crate::uart_connection::UartConnection>>,
 }
 
@@ -155,8 +155,8 @@ async fn handle_websocket_connection(
                     &text,
                     &device_store,
                     &db,
-                    &state.esp32_manager,
-                    &state.esp32_discovery,
+                    &state.device_manager,
+                    &state.device_discovery,
                     &state.uart_connection,
                     &user_id,
                     &display_name,
@@ -223,8 +223,8 @@ async fn handle_client_message(
     message_text: &str,
     device_store: &SharedDeviceStore,
     db: &Arc<DatabaseManager>,
-    esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
-    esp32_discovery: &Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
+    device_manager: &Arc<crate::device_manager::DeviceManager>,
+    device_discovery: &Arc<tokio::sync::Mutex<crate::device_discovery::DeviceDiscovery>>,
     uart_connection: &Arc<tokio::sync::Mutex<crate::uart_connection::UartConnection>>,
     user_id: &str,
     display_name: &str,
@@ -271,8 +271,8 @@ async fn handle_client_message(
             handle_register_for_device(
                 device_id,
                 device_store,
-                esp32_manager,
-                esp32_discovery,
+                device_manager,
+                device_discovery,
                 uart_connection,
                 db,
                 user_id,
@@ -299,7 +299,7 @@ async fn handle_client_message(
                 events_for_device,
                 device_store,
                 db,
-                esp32_manager,
+                device_manager,
                 uart_connection,
                 user_id,
                 client_id,
@@ -313,8 +313,8 @@ async fn handle_client_message(
 async fn handle_register_for_device(
     device_id: String,
     device_store: &SharedDeviceStore,
-    esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
-    esp32_discovery: &Arc<tokio::sync::Mutex<crate::esp32_discovery::Esp32Discovery>>,
+    device_manager: &Arc<crate::device_manager::DeviceManager>,
+    device_discovery: &Arc<tokio::sync::Mutex<crate::device_discovery::DeviceDiscovery>>,
     uart_connection: &Arc<tokio::sync::Mutex<crate::uart_connection::UartConnection>>,
     db: &Arc<DatabaseManager>,
     user_id: &str,
@@ -326,16 +326,16 @@ async fn handle_register_for_device(
 ) -> Result<(), String> {
     info!("handle_register_for_device called - device_id: {}, user_id: {}, client_id: {}", device_id, user_id, client_id);
     // Check if user has permission to access this device (requires at least Read permission)
-    // Allow access to "system" device for all authenticated users (for ESP32 discovery)
-    // Also allow access to discovered ESP32 devices (identified by device_id starting with "esp32-" or MAC address format)
+    // Allow access to "system" device for all authenticated users (for device discovery)
+    // Also allow access to discovered devices (identified by device_id starting with "device-" or MAC address format)
     let has_permission = if user_id == "guest" {
         true  // TEMPORARY: Allow guest user to access all devices
     } else if device_id == "system" {
         true  // Allow all authenticated users to access system events
-    } else if device_id.starts_with("esp32-") {
-        true  // Allow all authenticated users to access discovered ESP32 devices
+    } else if device_id.starts_with("device-") {
+        true  // Allow all authenticated users to access discovered devices
     } else if is_mac_address_format(&device_id) || is_mac_key_format(&device_id) {
-        true  // Allow all authenticated users to access ESP32 devices identified by MAC address
+        true  // Allow all authenticated users to access devices identified by MAC address
     } else if is_stm32_uid_format(&device_id) {
         true  // Allow all authenticated users to access STM32 devices identified by UID (24 hex chars)
     } else {
@@ -368,70 +368,70 @@ async fn handle_register_for_device(
 
     // Check device type from registry (or infer from format if not yet registered)
     // Only connect for FULL subscriptions - light subscriptions just need status
-    let device_type = esp32_manager.get_device_connection_type(&device_id).await;
-    let is_uart_device = device_type == Some(crate::esp32_manager::DeviceConnectionType::Uart);
-    let is_tcp_udp_device = device_type == Some(crate::esp32_manager::DeviceConnectionType::TcpUdp);
+    let device_type = device_manager.get_device_connection_type(&device_id).await;
+    let is_uart_device = device_type == Some(crate::device_manager::DeviceConnectionType::Uart);
+    let is_tcp_udp_device = device_type == Some(crate::device_manager::DeviceConnectionType::TcpUdp);
 
     // For devices not yet in registry, infer from format (MAC addresses are TCP/UDP)
     let inferred_tcp_udp = device_type.is_none() && (is_mac_address_format(&device_id) || is_mac_key_format(&device_id));
-    let is_esp32_tcp_device = is_tcp_udp_device || inferred_tcp_udp;
+    let is_tcp_udp_device_type = is_tcp_udp_device || inferred_tcp_udp;
 
-    if is_esp32_tcp_device && subscription_type == crate::events::SubscriptionType::Full {
-        info!("Attempting to add and connect TCP/UDP ESP32 device: {} (full subscription)", device_id);
+    if is_tcp_udp_device_type && subscription_type == crate::events::SubscriptionType::Full {
+        info!("Attempting to add and connect TCP/UDP device: {} (full subscription)", device_id);
 
         // First check if device is already added to manager
-        let device_exists = esp32_manager.get_device_config(&device_id).await.is_some();
+        let device_exists = device_manager.get_device_config(&device_id).await.is_some();
 
         if !device_exists {
             // Try to get device configuration from discovery data
-            info!("ESP32 device {} not in manager, trying to find it in discovery data", device_id);
+            info!("device {} not in manager, trying to find it in discovery data", device_id);
 
             // Look up the device in discovery data
             let discovery_config = {
-                let discovery = esp32_discovery.lock().await;
+                let discovery = device_discovery.lock().await;
                 let discovered_devices = discovery.get_discovered_devices().await;
                 discovered_devices.get(&device_id).map(|d| d.device_config.clone())
             };
 
             let config = match discovery_config {
                 Some(discovered_config) => {
-                    info!("Found ESP32 device {} in discovery data: {}:{}",
+                    info!("Found device {} in discovery data: {}:{}",
                           device_id, discovered_config.ip_address, discovered_config.tcp_port);
                     discovered_config
                 }
                 None => {
-                    info!("ESP32 device {} not found in discovery data, using default config", device_id);
+                    info!("device {} not found in discovery data, using default config", device_id);
                     // Fallback to default configuration
-                    crate::esp32_types::Esp32DeviceConfig::new(
+                    crate::device_types::DeviceConfig::new(
                         device_id.clone(),
                         std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 100)), // Default fallback
-                        3232, // ESP32 TCP port
-                        3232, // ESP32 UDP port
+                        3232, // Device TCP port
+                        3232, // Device UDP port
                     )
                 }
             };
 
             // Add the device to the manager
-            match esp32_manager.add_device(config).await {
+            match device_manager.add_device(config).await {
                 Ok(()) => {
-                    info!("Successfully added ESP32 device {} to manager", device_id);
+                    info!("Successfully added device {} to manager", device_id);
                 }
                 Err(e) => {
-                    warn!("Failed to add ESP32 device {} to manager: {}", device_id, e);
+                    warn!("Failed to add device {} to manager: {}", device_id, e);
                     // Don't return error here - the device might still work if manually configured
                 }
             }
         } else {
-            info!("ESP32 device {} already exists in manager", device_id);
+            info!("device {} already exists in manager", device_id);
         }
 
         // Now try to connect the device
-        match esp32_manager.connect_device(&device_id).await {
+        match device_manager.connect_device(&device_id).await {
             Ok(()) => {
-                info!("Successfully connected ESP32 device: {}", device_id);
+                info!("Successfully connected device: {}", device_id);
             }
             Err(e) => {
-                warn!("Failed to connect ESP32 device {}: {}. Device will show as disconnected until manually connected.", device_id, e);
+                warn!("Failed to connect device {}: {}. Device will show as disconnected until manually connected.", device_id, e);
                 // Don't fail the registration - user should still be able to see the device
             }
         }
@@ -455,48 +455,48 @@ async fn handle_register_for_device(
         } else {
             info!("Tab opened notification sent to UART device {}", device_id);
         }
-    } else if is_esp32_tcp_device {
-        info!("Light subscription for TCP/UDP ESP32 device {} - will add to manager but not connect", device_id);
+    } else if is_tcp_udp_device_type {
+        info!("Light subscription for TCP/UDP device {} - will add to manager but not connect", device_id);
 
         // For light subscriptions, add device to manager (if not exists) but don't connect
-        let device_exists = esp32_manager.get_device_config(&device_id).await.is_some();
+        let device_exists = device_manager.get_device_config(&device_id).await.is_some();
 
         if !device_exists {
             // Try to get device configuration from discovery data
-            info!("ESP32 device {} not in manager, trying to find it in discovery data for light subscription", device_id);
+            info!("device {} not in manager, trying to find it in discovery data for light subscription", device_id);
 
             // Look up the device in discovery data
             let discovery_config = {
-                let discovery = esp32_discovery.lock().await;
+                let discovery = device_discovery.lock().await;
                 let discovered_devices = discovery.get_discovered_devices().await;
                 discovered_devices.get(&device_id).map(|d| d.device_config.clone())
             };
 
             let config = match discovery_config {
                 Some(discovered_config) => {
-                    info!("Found ESP32 device {} in discovery data: {}:{}",
+                    info!("Found device {} in discovery data: {}:{}",
                           device_id, discovered_config.ip_address, discovered_config.tcp_port);
                     discovered_config
                 }
                 None => {
-                    info!("ESP32 device {} not found in discovery data, using default config", device_id);
+                    info!("device {} not found in discovery data, using default config", device_id);
                     // Fallback to default configuration
-                    crate::esp32_types::Esp32DeviceConfig::new(
+                    crate::device_types::DeviceConfig::new(
                         device_id.clone(),
                         std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 100)), // Default fallback
-                        3232, // ESP32 TCP port
-                        3232, // ESP32 UDP port
+                        3232, // Device TCP port
+                        3232, // Device UDP port
                     )
                 }
             };
 
             // Add the device to the manager (but don't connect it)
-            match esp32_manager.add_device(config.clone()).await {
+            match device_manager.add_device(config.clone()).await {
                 Ok(()) => {
-                    info!("Successfully added ESP32 device {} to manager for light subscription", device_id);
+                    info!("Successfully added device {} to manager for light subscription", device_id);
 
                     // Send initial disconnected status for newly added device
-                    let status_event = crate::events::DeviceEvent::esp32_connection_status(
+                    let status_event = crate::events::DeviceEvent::device_connection_status(
                         device_id.clone(),
                         false, // Not connected yet
                         config.ip_address.to_string(),
@@ -514,20 +514,20 @@ async fn handle_register_for_device(
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to add ESP32 device {} to manager: {}", device_id, e);
+                    warn!("Failed to add device {} to manager: {}", device_id, e);
                 }
             }
         } else {
             // Device already exists, get and send current connection status
-            info!("ESP32 device {} already exists in manager, sending current status", device_id);
+            info!("device {} already exists in manager, sending current status", device_id);
 
-            if let Some(config) = esp32_manager.get_device_config(&device_id).await {
-                if let Some(state) = esp32_manager.get_device_state(&device_id).await {
+            if let Some(config) = device_manager.get_device_config(&device_id).await {
+                if let Some(state) = device_manager.get_device_state(&device_id).await {
                     let is_connected = state.is_connected();
                     info!("Sending initial connection status for light subscription: device {} is {}",
                           device_id, if is_connected { "connected" } else { "disconnected" });
 
-                    let status_event = crate::events::DeviceEvent::esp32_connection_status(
+                    let status_event = crate::events::DeviceEvent::device_connection_status(
                         device_id.clone(),
                         is_connected,
                         config.ip_address.to_string(),
@@ -603,7 +603,7 @@ async fn handle_device_events(
     events: Vec<DeviceEvent>,
     device_store: &SharedDeviceStore,
     db: &Arc<DatabaseManager>,
-    esp32_manager: &Arc<crate::esp32_manager::Esp32Manager>,
+    device_manager: &Arc<crate::device_manager::DeviceManager>,
     uart_connection: &Arc<tokio::sync::Mutex<crate::uart_connection::UartConnection>>,
     user_id: &str,
     client_id: &str,
@@ -618,15 +618,15 @@ async fn handle_device_events(
     }
     
     // Check write permissions for device operations
-    // Allow access to ESP32 devices (identified by MAC address format or esp32-XX format for UART) for all users
-    let is_esp32_device = is_mac_address_format(&device_id)
+    // Allow access to devices (identified by MAC address format or device-XX format for UART) for all users
+    let is_device = is_mac_address_format(&device_id)
         || is_mac_key_format(&device_id)
-        || device_id.starts_with("esp32-");  // UART devices use esp32-XX format
+        || device_id.starts_with("device-");  // UART devices use device-XX format
 
     let has_write_permission = if user_id == "guest" {
         true  // TEMPORARY: Allow guest user to write to all devices
-    } else if is_esp32_device {
-        true  // Allow all users to control ESP32 devices
+    } else if is_device {
+        true  // Allow all users to control devices
     } else if is_stm32_uid_format(&device_id) {
         true  // Allow all users to control STM32 devices identified by UID
     } else {
@@ -644,11 +644,11 @@ async fn handle_device_events(
     for event in events {
         debug!("Processing event from client {} for device {}: {:?}", client_id, device_id, event);
 
-        // Check if this is an ESP32 command event
-        if let DeviceEvent::Esp32Command { command, .. } = &event {
+        // Check if this is a device command event
+        if let DeviceEvent::DeviceCommand { command, .. } = &event {
             // Route command based on device type from registry
-            let device_type = esp32_manager.get_device_connection_type(&device_id).await;
-            let is_uart = device_type == Some(crate::esp32_manager::DeviceConnectionType::Uart);
+            let device_type = device_manager.get_device_connection_type(&device_id).await;
+            let is_uart = device_type == Some(crate::device_manager::DeviceConnectionType::Uart);
 
             if is_uart {
                 // UART device - route to UART connection
@@ -661,19 +661,21 @@ async fn handle_device_events(
                     return Err(format!("UART command failed: {}", e));
                 }
             } else {
-                // TCP/UDP device - route to ESP32 manager
+                // TCP/UDP device - route to device manager
+                let command_value: serde_json::Value = serde_json::from_str(&command)
+                    .unwrap_or_else(|_| serde_json::json!(command.clone()));
 
-                if let Err(e) = esp32_manager.handle_websocket_command(
+                if let Err(e) = device_manager.handle_websocket_command(
                     &device_id,
-                    command.clone(),
+                    command_value,
                     user_id,
                     client_id,
                 ).await {
-                    error!("Failed to handle ESP32 command for device {}: {}", device_id, e);
-                    return Err(format!("ESP32 command failed: {}", e));
+                    error!("Failed to handle device command for device {}: {}", device_id, e);
+                    return Err(format!("device command failed: {}", e));
                 }
 
-                debug!("ESP32 command processed successfully for device {}", device_id);
+                debug!("device command processed successfully for device {}", device_id);
             }
 
             continue; // Command handlers handle the event broadcasting
@@ -719,7 +721,7 @@ fn generate_client_id(email: &str) -> String {
 }
 
 /// Check if a device_id is in MAC address format (XX:XX:XX:XX:XX:XX)
-/// Used to identify discovered ESP32 devices that use MAC address as device_id
+/// Used to identify discovered devices that use MAC address as device_id
 fn is_mac_address_format(device_id: &str) -> bool {
     // Check if it matches MAC address pattern: XX:XX:XX:XX:XX:XX
     // where X is a hexadecimal digit
@@ -747,7 +749,7 @@ fn is_mac_address_format(device_id: &str) -> bool {
 
 
 /// Check if a device_id is in MAC key format (XX-XX-XX-XX-XX-XX)
-/// Used to identify ESP32 devices that use MAC address with dashes as device_id
+/// Used to identify devices that use MAC address with dashes as device_id
 fn is_mac_key_format(device_id: &str) -> bool {
     // Check if it matches MAC key pattern: XX-XX-XX-XX-XX-XX
     // where X is a hexadecimal digit
