@@ -96,8 +96,9 @@ impl ServerMessage {
 pub enum DeviceEvent {
     #[serde(rename = "deviceCommand")]
     DeviceCommand {
-        command: String,
-        parameters: Option<serde_json::Value>,
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        command: serde_json::Value,
     },
     #[serde(rename = "deviceStatusUpdate")]
     DeviceStatusUpdate {
@@ -233,8 +234,8 @@ pub struct EventWithMetadata {
 // ============================================================================
 
 impl DeviceEvent {
-    pub fn device_command(command: String, parameters: Option<serde_json::Value>) -> Self {
-        DeviceEvent::DeviceCommand { command, parameters }
+    pub fn device_command(device_id: String, command: serde_json::Value) -> Self {
+        DeviceEvent::DeviceCommand { device_id, command }
     }
     
     pub fn device_status_update(status: String, ip_address: Option<String>, firmware_version: Option<String>) -> Self {
@@ -259,11 +260,9 @@ impl DeviceEvent {
     
     // Device-specific event constructors with device_id
     pub fn device_command_for_device(device_id: String, command: serde_json::Value) -> Self {
-        // Note: The DeviceCommand variant doesn't have device_id field
-        // Using the first variant which has command and parameters
         DeviceEvent::DeviceCommand {
-            command: command.to_string(),
-            parameters: Some(command)
+            device_id,
+            command
         }
     }
     
@@ -314,9 +313,9 @@ impl DeviceEvent {
     /// Validate that the event has all required data for its type
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            DeviceEvent::DeviceCommand { command, .. } => {
-                if command.is_empty() {
-                    Err("DeviceCommand requires non-empty command".to_string())
+            DeviceEvent::DeviceCommand { device_id, .. } => {
+                if device_id.is_empty() {
+                    Err("DeviceCommand requires non-empty device_id".to_string())
                 } else {
                     Ok(())
                 }
@@ -351,13 +350,6 @@ impl DeviceEvent {
                 }
             },
             // Device event validations
-            DeviceEvent::DeviceCommand { command, .. } => {
-                if command.is_empty() {
-                    Err("DeviceCommand requires non-empty command".to_string())
-                } else {
-                    Ok(())
-                }
-            },
             DeviceEvent::DeviceVariableUpdate { device_id, variable_name, .. } => {
                 if device_id.is_empty() || variable_name.is_empty() {
                     Err("DeviceVariableUpdate requires non-empty device_id and variable_name".to_string())

@@ -652,6 +652,7 @@ async fn handle_device_events(
 
             if is_uart {
                 // UART device - route to UART connection
+                // command is serde_json::Value, serialize to string for UART
                 let command_json = serde_json::to_string(&command)
                     .map_err(|e| format!("Failed to serialize command: {}", e))?;
 
@@ -662,12 +663,10 @@ async fn handle_device_events(
                 }
             } else {
                 // TCP/UDP device - route to device manager
-                let command_value: serde_json::Value = serde_json::from_str(&command)
-                    .unwrap_or_else(|_| serde_json::json!(command.clone()));
-
+                // command is already serde_json::Value, use it directly
                 if let Err(e) = device_manager.handle_websocket_command(
                     &device_id,
-                    command_value,
+                    command.clone(),
                     user_id,
                     client_id,
                 ).await {

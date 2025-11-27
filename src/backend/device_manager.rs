@@ -716,9 +716,25 @@ impl DeviceManager {
             };
 
             let mut types_map = conn_types.write().await;
-            if !types_map.contains_key(device_id) {
+            let existing_type = types_map.get(device_id).copied();
+
+            // UART messages always override the device type (definitive connection)
+            // TCP/UDP messages only set type if not already registered
+            let should_update = match (&source, existing_type) {
+                (MessageSource::Uart, _) => true,  // UART always wins
+                (_, None) => true,  // No existing type, set it
+                _ => false,  // TCP/UDP doesn't override existing type
+            };
+
+            if should_update {
+                if existing_type.is_some() && existing_type != Some(device_type) {
+                    info!("{} MESSAGE: Updating device {} type from {:?} to {:?}",
+                          source_name, device_id, existing_type, device_type);
+                } else {
+                    debug!("{} MESSAGE: Registered device {} as {:?} type",
+                           source_name, device_id, device_type);
+                }
                 types_map.insert(device_id.to_string(), device_type);
-                debug!("{} MESSAGE: Registered device {} as {:?} type", source_name, device_id, device_type);
             }
         }
 
