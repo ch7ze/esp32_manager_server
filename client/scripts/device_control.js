@@ -313,7 +313,13 @@ async function addDeviceTab(deviceId) {
     if (!deviceDevices.has(deviceId)) {
         await createDeviceUI(deviceId);
     } else {
-        // Device already exists, just render
+        // Device already exists (from light subscription), but update with full info including alias
+        const deviceInfo = await getDeviceInfo(deviceId);
+        const existingDevice = deviceDevices.get(deviceId);
+        existingDevice.name = deviceInfo.name;
+        existingDevice.alias = deviceInfo.alias;
+        existingDevice.mac_address = deviceInfo.mac_address;
+
         renderDevices();
     }
 
@@ -451,8 +457,32 @@ async function handleDeviceEvents(deviceId, events) {
     });
 }
 
-// Get device display name (mDNS hostname if available, fallback to formatted deviceId)
-async function getDeviceDisplayName(deviceId) {
+// Get device info including alias, name, and MAC from persistent devices
+async function getDeviceInfo(deviceId) {
+    // First try to get from persistent devices list (has alias!)
+    try {
+        const response = await fetch('/api/devices', {
+            method: 'GET',
+            credentials: 'include'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const device = data.devices?.find(d => d.id === deviceId);
+
+            if (device) {
+                return {
+                    name: device.name,
+                    alias: device.alias,
+                    mac_address: device.mac_address
+                };
+            }
+        }
+    } catch (error) {
+        console.warn('Could not fetch device from persistent API:', error);
+    }
+
+    // Fallback: Try discovery API for mDNS hostname
     try {
         const response = await fetch('/api/devices/discovered', {
             method: 'GET',
@@ -464,30 +494,40 @@ async function getDeviceDisplayName(deviceId) {
             const device = data.devices?.find(d => d.deviceId === deviceId);
 
             if (device && device.mdnsHostname) {
-                return device.mdnsHostname;
+                return {
+                    name: device.mdnsHostname,
+                    alias: null,
+                    mac_address: device.macAddress
+                };
             }
         }
     } catch (error) {
-        console.warn('Could not fetch device display name from API:', error);
+        console.warn('Could not fetch device display name from discovery API:', error);
     }
 
-    // Fallback to formatted deviceId
+    // Final fallback to formatted deviceId
     let deviceName = deviceId;
     if (deviceId.startsWith('device-')) {
         deviceName = deviceId.replace('device-', 'device ').replace(/-/g, ' ').toUpperCase();
     } else {
         deviceName = deviceId.replace('test-', '').replace(/-/g, ' ').toUpperCase();
     }
-    return deviceName;
+    return {
+        name: deviceName,
+        alias: null,
+        mac_address: null
+    };
 }
 
 async function createDeviceUI(deviceId) {
-    // Try to get the mDNS hostname from discovered devices API
-    let deviceName = await getDeviceDisplayName(deviceId);
+    // Get device info including alias
+    const deviceInfo = await getDeviceInfo(deviceId);
 
     const device = {
         id: deviceId,
-        name: deviceName,
+        name: deviceInfo.name,
+        alias: deviceInfo.alias,
+        mac_address: deviceInfo.mac_address,
         connected: false,
         users: [],
         udpMessages: [],
