@@ -248,12 +248,14 @@
         
         const permissionName = permissionNames[canvas.your_permission] || canvas.your_permission;
         const canModerate = ['M', 'O'].includes(canvas.your_permission);
-        const canEdit = ['W', 'V', 'M', 'O'].includes(canvas.your_permission);
-        const canView = ['R', 'W', 'V', 'M', 'O'].includes(canvas.your_permission);
+        const canEdit = ['W', 'V', 'M', 'O', 'GUEST'].includes(canvas.your_permission);
+        const canView = ['R', 'W', 'V', 'M', 'O', 'GUEST'].includes(canvas.your_permission);
         const isOwner = canvas.your_permission === 'O';
-        
+        const isGuest = canvas.your_permission === 'GUEST';
+        const canManageDevice = isOwner || isGuest; // Guest has full permissions
+
         const moderatedBadge = canvas.is_moderated ? '<span class="moderated-badge">MODERIERT</span>' : '';
-        
+
         let actionButtons = '';
         if (canView) {
             const buttonText = canEdit ? 'Öffnen' : 'Anzeigen';
@@ -263,14 +265,22 @@
             const toggleText = canvas.is_moderated ? 'Demoderation' : 'Moderieren';
             actionButtons += `<button class="action-button edit-button" onclick="toggleModeration('${canvas.id}', ${!canvas.is_moderated})">${toggleText}</button>`;
         }
+        if (canManageDevice) {
+            actionButtons += `<button class="action-button edit-button" onclick="openAliasModal('${canvas.id}')">Alias bearbeiten</button>`;
+        }
         if (isOwner) {
             actionButtons += `<button class="action-button edit-button" onclick="managePermissions('${canvas.id}')">Berechtigungen</button>`;
             actionButtons += `<button class="action-button delete-button" onclick="deleteCanvas('${canvas.id}', '${canvas.name}')">Löschen</button>`;
         }
         
+        // Display name: prefer alias over name
+        const displayName = canvas.alias || canvas.name;
+
         return `
             <div class="canvas-card">
-                <h3>${canvas.name} ${moderatedBadge}</h3>
+                <h3>${displayName} ${moderatedBadge}</h3>
+                ${canvas.alias ? `<p><strong>Name:</strong> ${canvas.name}</p>` : ''}
+                <p><strong>MAC:</strong> ${canvas.mac_address || canvas.id}</p>
                 <p><strong>Berechtigung:</strong> <span class="permission-badge permission-${canvas.your_permission}">${canvas.your_permission}</span> ${permissionName}</p>
                 <p><strong>Erstellt:</strong> ${new Date(canvas.created_at).toLocaleDateString()}</p>
                 <div class="canvas-actions">
@@ -974,4 +984,162 @@
             showErrorMessage('Fehler beim Entfernen der Berechtigung');
         }
     };
+
+    // ============================================================================
+    // ALIAS EDITING - Functions for device alias management
+    // ============================================================================
+
+    let currentAliasDeviceId = null;
+    let currentAliasDeviceData = null;
+
+    window.openAliasModal = async function(deviceId) {
+        console.log('Opening alias modal for device:', deviceId);
+        currentAliasDeviceId = deviceId;
+
+        const modal = document.getElementById('alias-edit-modal');
+        if (modal) {
+            modal.style.display = 'flex';
+
+            // Load device info
+            await loadDeviceInfoForAliasModal(deviceId);
+
+            // Setup event listeners
+            setupAliasModalEventListeners();
+
+            // Focus on input field
+            setTimeout(() => {
+                const input = document.getElementById('device-alias-input');
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }, 100);
+        }
+    };
+
+    async function loadDeviceInfoForAliasModal(deviceId) {
+        try {
+            const response = await fetch(`/api/devices/${deviceId}`, {
+                credentials: 'include'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.canvas) {
+                    currentAliasDeviceData = data.canvas;
+
+                    // Populate modal
+                    document.getElementById('alias-modal-device-info').innerHTML = `
+                        <strong>Device:</strong> ${data.canvas.name}
+                    `;
+
+                    document.getElementById('device-alias-input').value = data.canvas.alias || '';
+                    document.getElementById('device-current-name').textContent = data.canvas.name;
+                    document.getElementById('device-mac-address').textContent = data.canvas.id;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading device info:', error);
+            showErrorMessage('Fehler beim Laden der Device-Informationen');
+            closeAliasModal();
+        }
+    }
+
+    function setupAliasModalEventListeners() {
+        const saveBtn = document.getElementById('save-alias-btn');
+        const cancelBtn = document.getElementById('cancel-alias-btn');
+        const input = document.getElementById('device-alias-input');
+
+        // Remove old listeners
+        const newSaveBtn = saveBtn.cloneNode(true);
+        const newCancelBtn = cancelBtn.cloneNode(true);
+        const newInput = input.cloneNode(true);
+
+        saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+        cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+        input.parentNode.replaceChild(newInput, input);
+
+        // Add new listeners
+        newSaveBtn.addEventListener('click', saveDeviceAlias);
+        newCancelBtn.addEventListener('click', closeAliasModal);
+        newInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                saveDeviceAlias();
+            }
+        });
+
+        // Escape key to close
+        document.addEventListener('keydown', function escapeHandler(e) {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('alias-edit-modal');
+                if (modal && modal.style.display === 'flex') {
+                    closeAliasModal();
+                    document.removeEventListener('keydown', escapeHandler);
+                }
+            }
+        });
+    }
+
+    async function saveDeviceAlias() {
+        if (!currentAliasDeviceId) {
+            showErrorMessage('Fehler: Kein Device ausgewählt');
+            return;
+        }
+
+        const input = document.getElementById('device-alias-input');
+        const aliasValue = input.value.trim();
+        const saveBtn = document.getElementById('save-alias-btn');
+
+        // Validation
+        if (aliasValue.length > 100) {
+            showErrorMessage('Alias darf maximal 100 Zeichen lang sein');
+            return;
+        }
+
+        // Show loading state
+        saveBtn.classList.add('loading');
+        saveBtn.disabled = true;
+        saveBtn.textContent = '⏳ Speichere...';
+
+        try {
+            const response = await fetch(`/api/devices/${currentAliasDeviceId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    alias: aliasValue === '' ? null : aliasValue  // Send explicit null if empty to clear alias
+                })
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                closeAliasModal();
+                loadCanvasList(); // Reload list to show updated alias
+                // Success - no alert needed, just reload the list
+            } else {
+                showErrorMessage('Fehler beim Speichern: ' + (data.message || 'Unbekannter Fehler'));
+            }
+        } catch (error) {
+            console.error('Error saving alias:', error);
+            showErrorMessage('Fehler beim Speichern: Netzwerkfehler');
+        } finally {
+            // Remove loading state
+            saveBtn.classList.remove('loading');
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Speichern';
+        }
+    }
+
+    function closeAliasModal() {
+        const modal = document.getElementById('alias-edit-modal');
+        if (modal) {
+            modal.style.display = 'none';
+            currentAliasDeviceId = null;
+            currentAliasDeviceData = null;
+            console.log('Alias modal closed');
+        }
+    }
 })();

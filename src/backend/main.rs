@@ -1029,6 +1029,7 @@ async fn list_devices_handler(
                         json!({
                             "id": device.mac_address.clone(),
                             "name": device.name,
+                            "alias": device.alias,
                             "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
                             "ip_address": device.ip_address,
                             "status": status,
@@ -1060,6 +1061,7 @@ async fn list_devices_handler(
                         json!({
                             "id": device.mac_address.clone(),
                             "name": device.name,
+                            "alias": device.alias,
                             "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
                             "ip_address": device.ip_address,
                             "status": status,
@@ -1150,6 +1152,7 @@ async fn create_device_handler(
             "device": {
                 "id": device.mac_address.clone(),
                 "name": device.name,
+                "alias": device.alias,
                 "mac_address": device.mac_address.replace('-', ":"),  // Show with colons for display
                 "ip_address": device.ip_address,
                 "status": device.status,
@@ -1228,6 +1231,7 @@ async fn get_device_handler(
         "canvas": {
             "id": canvas.mac_address,
             "name": canvas.name,
+            "alias": canvas.alias,
             "maintenance_mode": canvas.maintenance_mode,
             "owner_id": canvas.owner_id,
             "created_at": canvas.created_at.to_rfc3339(),
@@ -1271,7 +1275,8 @@ async fn update_device_handler(
     // (Authentication is optional, so no permission checks needed)
 
     // Validate name if provided
-    if let Some(name) = &req.name {
+    use crate::auth::MaybeAbsent;
+    if let MaybeAbsent::Value(name) = &req.name {
         if name.trim().is_empty() || name.len() > 100 {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
@@ -1281,11 +1286,49 @@ async fn update_device_handler(
         }
     }
 
+    // Validate alias if provided
+    if let MaybeAbsent::Value(alias) = &req.alias {
+        if alias.len() > 100 {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"success": false, "message": "Alias must be less than 100 characters"}).to_string()))
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
     // Update canvas
+    // Convert MaybeAbsent<String> -> Option<Option<&str>> for database
+    let name_update = match &req.name {
+        MaybeAbsent::Absent => None,
+        MaybeAbsent::Null => Some(None),
+        MaybeAbsent::Value(s) => Some(Some(s.trim())),
+    };
+
+    let alias_update = match &req.alias {
+        MaybeAbsent::Absent => None,  // Don't update
+        MaybeAbsent::Null => Some(None),  // Clear the alias (set to NULL)
+        MaybeAbsent::Value(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                Some(None)  // Empty string also clears the alias
+            } else {
+                Some(Some(trimmed))  // Set to the trimmed value
+            }
+        }
+    };
+
+    let maintenance_mode_update = match &req.maintenance_mode {
+        MaybeAbsent::Absent => None,
+        MaybeAbsent::Null => None,  // Null doesn't make sense for boolean, treat as absent
+        MaybeAbsent::Value(b) => Some(*b),
+    };
+
     if let Err(e) = app_state.db.update_device(
         &canvas_id,
-        req.name.as_ref().map(|s| s.trim()),
-        req.maintenance_mode
+        name_update,
+        alias_update,
+        maintenance_mode_update
     ).await {
         tracing::error!("Database error updating canvas: {:?}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -1312,6 +1355,7 @@ async fn update_device_handler(
             "canvas": {
                 "id": updated_canvas.mac_address.clone(),
                 "name": updated_canvas.name,
+                "alias": updated_canvas.alias,
                 "maintenance_mode": updated_canvas.maintenance_mode,
                 "owner_id": updated_canvas.owner_id,
                 "created_at": updated_canvas.created_at.to_rfc3339(),

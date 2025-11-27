@@ -40,6 +40,7 @@ pub struct DatabaseUser {
 pub struct Device {
     pub mac_address: String, // Primary key - moved to first position
     pub name: String,
+    pub alias: Option<String>, // User-defined display name
     pub owner_id: String,
     pub ip_address: Option<String>,
     pub status: DeviceStatus,
@@ -90,6 +91,7 @@ impl Device {
         Self {
             mac_address, // Primary key
             name,
+            alias: None, // Initially no alias set
             owner_id,
             ip_address: None,
             status: DeviceStatus::Offline,
@@ -106,6 +108,7 @@ impl Device {
         Self {
             mac_address,
             name,
+            alias: None, // Initially no alias set
             owner_id,
             ip_address: None,
             status: DeviceStatus::Offline,
@@ -281,6 +284,28 @@ impl DatabaseManager {
                 let error_msg = e.to_string();
                 if error_msg.contains("duplicate column") || error_msg.contains("already exists") {
                     tracing::debug!("Database migration: connection_type column already exists");
+                } else {
+                    tracing::warn!("Database migration warning: {}", error_msg);
+                }
+            }
+        }
+
+        // Migration: Add alias column if it doesn't exist (for existing databases)
+        let migration_result = sqlx::query(
+            r#"
+            ALTER TABLE devices ADD COLUMN alias TEXT
+            "#
+        )
+        .execute(&self.pool)
+        .await;
+
+        // Ignore error if column already exists
+        match migration_result {
+            Ok(_) => tracing::info!("Database migration: Added alias column to devices"),
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("duplicate column") || error_msg.contains("already exists") {
+                    tracing::debug!("Database migration: alias column already exists");
                 } else {
                     tracing::warn!("Database migration warning: {}", error_msg);
                 }
@@ -555,10 +580,11 @@ impl DatabaseManager {
         };
         
         sqlx::query(
-            "INSERT INTO devices (mac_address, name, owner_id, ip_address, status, maintenance_mode, firmware_version, last_seen, created_at, connection_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO devices (mac_address, name, alias, owner_id, ip_address, status, maintenance_mode, firmware_version, last_seen, created_at, connection_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&device.mac_address)
         .bind(&device.name)
+        .bind(&device.alias)
         .bind(&device.owner_id)
         .bind(&device.ip_address)
         .bind(status_str)
@@ -602,6 +628,7 @@ impl DatabaseManager {
                 Ok(Some(Device {
                     mac_address: row.get("mac_address"),
                     name: row.get("name"),
+                    alias: row.try_get("alias").ok(),
                     owner_id: row.get("owner_id"),
                     ip_address: row.get("ip_address"),
                     status,
@@ -646,10 +673,11 @@ impl DatabaseManager {
                 "Maintenance" => DeviceStatus::Maintenance,
                 _ => DeviceStatus::Offline,
             };
-            
+
             let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
+                alias: row.try_get("alias").ok(),
                 owner_id: row.get("owner_id"),
                 ip_address: row.get("ip_address"),
                 status,
@@ -659,7 +687,7 @@ impl DatabaseManager {
                 created_at,
                 connection_type: row.try_get("connection_type").unwrap_or_else(|_| "tcp".to_string()),
             };
-            
+
             let permission: String = row.get("permission");
             device_list.push((device, permission));
         }
@@ -694,10 +722,11 @@ impl DatabaseManager {
                 "Maintenance" => DeviceStatus::Maintenance,
                 _ => DeviceStatus::Offline,
             };
-            
+
             let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
+                alias: row.try_get("alias").ok(),
                 owner_id: row.get("owner_id"),
                 ip_address: row.get("ip_address"),
                 status,
@@ -707,17 +736,33 @@ impl DatabaseManager {
                 created_at,
                 connection_type: row.try_get("connection_type").unwrap_or_else(|_| "tcp".to_string()),
             };
-            
+
             device_list.push(device);
         }
 
         Ok(device_list)
     }
 
-    pub async fn update_device(&self, device_id: &str, name: Option<&str>, maintenance_mode: Option<bool>) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(name) = name {
+    pub async fn update_device(
+        &self,
+        device_id: &str,
+        name: Option<Option<&str>>,
+        alias: Option<Option<&str>>,
+        maintenance_mode: Option<bool>
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Handle name: Some(Some(value)) = set value, Some(None) = clear (not allowed for name), None = don't update
+        if let Some(name_value) = name {
             sqlx::query("UPDATE devices SET name = ? WHERE mac_address = ?")
-                .bind(name)
+                .bind(name_value) // This binds Option<&str>
+                .bind(device_id)
+                .execute(&self.pool)
+                .await?;
+        }
+
+        // Handle alias: Some(Some(value)) = set value, Some(None) = clear alias, None = don't update
+        if let Some(alias_value) = alias {
+            sqlx::query("UPDATE devices SET alias = ? WHERE mac_address = ?")
+                .bind(alias_value) // This binds Option<&str> which can be None to clear the field
                 .bind(device_id)
                 .execute(&self.pool)
                 .await?;
@@ -805,6 +850,7 @@ impl DatabaseManager {
             let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
+                alias: row.try_get("alias").ok(),
                 owner_id: row.get("owner_id"),
                 ip_address: row.get("ip_address"),
                 status,
@@ -853,6 +899,7 @@ impl DatabaseManager {
             let new_device = Device {
                 mac_address: mac_address.clone(),
                 name: device_name,
+                alias: None,
                 owner_id: "guest".to_string(),
                 ip_address,
                 status: DeviceStatus::Offline,

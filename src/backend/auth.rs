@@ -2,7 +2,7 @@
 
 use axum::http::HeaderValue;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 // JWT secret key - should be loaded from environment variable in production
@@ -26,6 +26,37 @@ pub struct Device {
     pub permissions: HashMap<String, String>,
 }
 
+// Custom type to distinguish between "not provided", "null", and "value"
+// This is needed for PATCH operations where we need to know if a field should be:
+// - Not updated (field not in JSON)
+// - Cleared/deleted (field is null in JSON)
+// - Set to a value (field has a value in JSON)
+#[derive(Debug, Clone)]
+pub enum MaybeAbsent<T> {
+    Absent,        // Field not in JSON
+    Null,          // Field is null in JSON
+    Value(T),      // Field has a value in JSON
+}
+
+impl<T> Default for MaybeAbsent<T> {
+    fn default() -> Self {
+        MaybeAbsent::Absent
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for MaybeAbsent<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<T>::deserialize(deserializer)
+            .map(|opt| match opt {
+                None => MaybeAbsent::Null,
+                Some(v) => MaybeAbsent::Value(v),
+            })
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateDeviceRequest {
     pub name: String,
@@ -34,8 +65,12 @@ pub struct CreateDeviceRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateDeviceRequest {
-    pub name: Option<String>,
-    pub maintenance_mode: Option<bool>,
+    #[serde(default)]
+    pub name: MaybeAbsent<String>,
+    #[serde(default)]
+    pub alias: MaybeAbsent<String>,
+    #[serde(default)]
+    pub maintenance_mode: MaybeAbsent<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

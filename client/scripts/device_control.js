@@ -688,6 +688,9 @@ function renderDevices() {
 }
 
 function createDeviceTabContent(device, isActive) {
+    // Display name: prefer alias over name
+    const displayName = device.alias || device.name;
+
     // Create tab
     const tab = document.createElement('li');
     tab.className = 'nav-item';
@@ -695,7 +698,7 @@ function createDeviceTabContent(device, isActive) {
         <div class="nav-link ${isActive ? 'active' : ''}" id="${device.id}-tab" role="tab">
             <div class="tab-clickable" onclick="switchToTab('${device.id}')">
                 <span class="status-dot ${getStatusClass(device.connected)}"></span>
-                <span>${device.name}</span>
+                <span>${displayName}</span>
             </div>
             <button class="tab-close-btn" onclick="event.stopPropagation(); removeDeviceTab('${device.id}')">
                 ×
@@ -741,12 +744,17 @@ function switchToTab(deviceId) {
 }
 
 function createDeviceStackContent(device) {
+    // Display name: prefer alias over name
+    const displayName = device.alias || device.name;
+
     const stackItem = document.createElement('div');
     stackItem.className = 'device-device-card mb-4';
     stackItem.innerHTML = `
         <div class="device-device-header">
             <div>
-                <h5 class="mb-1">${device.name}</h5>
+                <h5 class="mb-1">${displayName}</h5>
+                ${device.alias ? `<small class="text-muted">Name: ${device.name}</small>` : ''}
+                <small class="text-muted">MAC: ${device.mac_address || device.id}</small>
                 <div class="connection-status">
                     <span class="status-dot ${getStatusClass(device.connected)}"></span>
                     ${getStatusText(device.connected)}

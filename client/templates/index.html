@@ -83,6 +83,45 @@
       </div>
     </div>
 
+    <!-- Alias Edit Modal -->
+    <div id="alias-edit-modal" class="modal" style="display:none;">
+      <div class="modal-content alias-modal-content">
+        <h3>Alias bearbeiten</h3>
+        <div id="alias-modal-device-info" class="device-info-display">
+          <!-- Device info will be populated here -->
+        </div>
+
+        <div class="alias-edit-section">
+          <div class="form-group">
+            <label for="device-alias-input">Alias (optional):</label>
+            <input
+              type="text"
+              id="device-alias-input"
+              class="form-control"
+              placeholder="z.B. 'Wohnzimmer Sensor' oder leer lassen"
+              maxlength="100"
+            />
+            <small class="form-text">Wenn leer, wird der Gerätename angezeigt</small>
+          </div>
+
+          <div class="form-group">
+            <label>Aktueller Name:</label>
+            <div id="device-current-name" class="info-display"></div>
+          </div>
+
+          <div class="form-group">
+            <label>MAC-Adresse:</label>
+            <div id="device-mac-address" class="info-display"></div>
+          </div>
+        </div>
+
+        <div class="modal-buttons">
+          <button id="save-alias-btn" class="action-button create-button">Speichern</button>
+          <button id="cancel-alias-btn" class="action-button cancel-button">Abbrechen</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Edit Permission Modal -->
     <div id="edit-permission-modal" class="modal" style="display:none;">
       <div class="modal-content edit-permission-modal-content">
