@@ -45,6 +45,8 @@ pub struct UartConnection {
     db: Option<Arc<DatabaseManager>>,
     /// Shutdown channel
     shutdown_sender: Option<mpsc::UnboundedSender<()>>,
+    /// Task handle for the listener task
+    task_handle: Option<tokio::task::JoinHandle<()>>,
     /// Connection status
     is_connected: Arc<RwLock<bool>>,
     /// Unified connection states (shared with DeviceManager)
@@ -69,6 +71,7 @@ impl UartConnection {
             device_store,
             db: None,
             shutdown_sender: None,
+            task_handle: None,
             is_connected: Arc::new(RwLock::new(false)),
             unified_connection_states,
             unified_activity_tracker,
@@ -118,7 +121,8 @@ impl UartConnection {
         // Start UART listener task
         let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel();
         self.shutdown_sender = Some(shutdown_tx);
-        self.start_uart_listener_task(shutdown_rx).await;
+        let task_handle = self.start_uart_listener_task(shutdown_rx).await;
+        self.task_handle = Some(task_handle);
 
         info!("UART connection established on port {}", port);
         Ok(())
@@ -128,12 +132,28 @@ impl UartConnection {
     pub async fn disconnect(&mut self) -> Result<(), String> {
         info!("Disconnecting UART connection");
 
-        // Send shutdown signal
+        // Send shutdown signal to listener task
         if let Some(shutdown_tx) = &self.shutdown_sender {
             let _ = shutdown_tx.send(());
         }
 
-        // Close serial port
+        // Wait for listener task to finish (with timeout)
+        if let Some(task_handle) = self.task_handle.take() {
+            info!("Waiting for UART listener task to finish...");
+            match tokio::time::timeout(Duration::from_secs(3), task_handle).await {
+                Ok(Ok(())) => {
+                    info!("UART listener task finished successfully");
+                }
+                Ok(Err(e)) => {
+                    warn!("UART listener task panicked: {:?}", e);
+                }
+                Err(_) => {
+                    warn!("UART listener task did not finish within timeout, continuing anyway");
+                }
+            }
+        }
+
+        // Now it's safe to close serial port (task is finished)
         {
             let mut stream = self.serial_stream.write().await;
             *stream = None;
@@ -159,7 +179,7 @@ impl UartConnection {
     }
 
     /// Start background task for UART message handling
-    async fn start_uart_listener_task(&self, mut shutdown_rx: mpsc::UnboundedReceiver<()>) {
+    async fn start_uart_listener_task(&self, mut shutdown_rx: mpsc::UnboundedReceiver<()>) -> tokio::task::JoinHandle<()> {
         let serial_stream = Arc::clone(&self.serial_stream);
         let device_store = self.device_store.clone();
         let is_connected = Arc::clone(&self.is_connected);
@@ -271,7 +291,7 @@ impl UartConnection {
             }
 
             info!("UART listener task ended");
-        });
+        })
     }
 
     /// Handle incoming UART message with unified state tracking
@@ -440,5 +460,45 @@ impl Drop for UartConnection {
         if let Some(shutdown_tx) = &self.shutdown_sender {
             let _ = shutdown_tx.send(());
         }
+
+        // CRITICAL: Wait for listener task to finish before dropping SerialStream
+        // This prevents Windows COM port driver from crashing when device is physically removed
+        if let Some(task_handle) = self.task_handle.take() {
+            info!("Drop: Waiting for UART listener task to finish (blocking)...");
+
+            // Use block_in_place to wait synchronously for the async task
+            // This is necessary because Drop cannot be async
+            let wait_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::try_current().ok().and_then(|handle| {
+                        Some(handle.block_on(async {
+                            match tokio::time::timeout(Duration::from_secs(5), task_handle).await {
+                                Ok(Ok(())) => {
+                                    info!("Drop: UART listener task finished successfully");
+                                    true
+                                }
+                                Ok(Err(e)) => {
+                                    warn!("Drop: UART listener task panicked: {:?}", e);
+                                    true
+                                }
+                                Err(_) => {
+                                    warn!("Drop: UART listener task did not finish within 5s timeout");
+                                    false
+                                }
+                            }
+                        }))
+                    })
+                })
+            }));
+
+            match wait_result {
+                Ok(Some(true)) => info!("Drop: Task cleanup completed"),
+                Ok(Some(false)) => warn!("Drop: Task cleanup timeout"),
+                Ok(None) => warn!("Drop: No tokio runtime available for cleanup"),
+                Err(_) => error!("Drop: Panic during task cleanup"),
+            }
+        }
+
+        info!("UART connection drop completed");
     }
 }
