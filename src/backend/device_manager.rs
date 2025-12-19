@@ -985,11 +985,36 @@ impl DeviceManager {
         };
 
         // Parse simple key-value variable updates using regex
-        // This handles messages like {"ledBlinkDelay":"1000"} or {"var":123}
-        // These are valid JSON but not structured like startOptions/changeableVariables
-        // Parse for string variable updates: {"name": "value"}
-        let re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\}"#).unwrap();
-        for captures in re.captures_iter(message) {
+        // Only NUMERIC values (including string-encoded numbers) are treated as variables
+        // String values like {"debug":"..."} remain as UdpBroadcast for frontend categorization
+
+        // Parse for numeric variable updates: {"name": 123} or {"name": 25.5}
+        // Supports integers and floats
+        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+\.?\d*)\}"#).unwrap();
+        for captures in numeric_re.captures_iter(message) {
+            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
+                let name_str = name.as_str().trim();
+                // Skip known structured fields to avoid duplicates
+                if name_str != "uptime" && name_str != "value" {
+                    let variable_event = crate::events::DeviceEvent::device_variable_update(
+                        device_id.to_string(),
+                        name_str.to_string(),
+                        value.as_str().trim().to_string(),
+                    );
+                    let _ = device_store.add_event(
+                        device_id.to_string(),
+                        variable_event,
+                        "device_system".to_string(),
+                        format!("{}_data", source_name.to_lowercase())
+                    ).await;
+                }
+            }
+        }
+
+        // Parse for string-encoded numeric values: {"name": "123"} or {"name": "25.5"}
+        // This handles devices that send numbers as strings
+        let string_numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*\"(\d+\.?\d*)\"\}"#).unwrap();
+        for captures in string_numeric_re.captures_iter(message) {
             if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
                 let name_str = name.as_str().trim();
                 // Skip known structured fields to avoid duplicates
@@ -1010,27 +1035,8 @@ impl DeviceManager {
             }
         }
 
-        // Parse for numeric variable updates: {"name": 123}
-        let numeric_re = regex::Regex::new(r#"\{\"([^\"]+)\"\s*:\s*(\d+)\}"#).unwrap();
-        for captures in numeric_re.captures_iter(message) {
-            if let (Some(name), Some(value)) = (captures.get(1), captures.get(2)) {
-                let name_str = name.as_str().trim();
-                // Skip known structured fields to avoid duplicates
-                if name_str != "uptime" && name_str != "value" {
-                    let variable_event = crate::events::DeviceEvent::device_variable_update(
-                        device_id.to_string(),
-                        name_str.to_string(),
-                        value.as_str().trim().to_string(),
-                    );
-                    let _ = device_store.add_event(
-                        device_id.to_string(),
-                        variable_event,
-                        "device_system".to_string(),
-                        format!("{}_data", source_name.to_lowercase())
-                    ).await;
-                }
-            }
-        }
+        // String values like {"debug": "message"} or {"error": "..."} are NOT parsed here
+        // They remain as UdpBroadcast events and will be categorized in the frontend
     }
 
     // ========================================================================

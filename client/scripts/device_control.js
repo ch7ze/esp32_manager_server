@@ -535,11 +535,13 @@ async function createDeviceUI(deviceId) {
         mac_address: deviceInfo.mac_address,
         connected: false,
         users: [],
-        udpMessages: [],
+        udpMessages: [], // Now stores structured message objects
         tcpMessages: [],
         variables: new Map(),
         startOptions: [],
-        changeableVariables: [] // Store changeable variables for re-rendering
+        changeableVariables: [], // Store changeable variables for re-rendering
+        messageFilters: new Map(), // Track which categories are enabled/disabled
+        messageCategories: new Set() // Track discovered categories
     };
 
     deviceDevices.set(deviceId, device);
@@ -551,6 +553,88 @@ async function createDeviceUI(deviceId) {
     if (openTabs.has(deviceId)) {
         renderDevices();
     }
+}
+
+// HTML escape function to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Parse and categorize debug message
+function parseAndCategorizeMessage(rawMessage, deviceId) {
+    const timestamp = new Date();
+
+    // Try to parse as JSON
+    let parsed = null;
+    let category = 'OTHER';
+    let categoryKey = null;
+
+    try {
+        parsed = JSON.parse(rawMessage);
+
+        // Detect category from JSON keys
+        // Priority order: error > warn > info > debug > sensor > wifi > system
+        if (parsed.error !== undefined) {
+            category = 'ERROR';
+            categoryKey = 'error';
+        } else if (parsed.warn !== undefined || parsed.warning !== undefined) {
+            category = 'WARN';
+            categoryKey = parsed.warn !== undefined ? 'warn' : 'warning';
+        } else if (parsed.info !== undefined) {
+            category = 'INFO';
+            categoryKey = 'info';
+        } else if (parsed.debug !== undefined) {
+            category = 'DEBUG';
+            categoryKey = 'debug';
+        } else if (parsed.sensor !== undefined) {
+            category = 'SENSOR';
+            categoryKey = 'sensor';
+        } else if (parsed.wifi !== undefined || parsed.network !== undefined) {
+            category = 'WIFI';
+            categoryKey = parsed.wifi !== undefined ? 'wifi' : 'network';
+        } else if (parsed.system !== undefined) {
+            category = 'SYSTEM';
+            categoryKey = 'system';
+        } else {
+            // Unknown JSON structure - use first key as category
+            const keys = Object.keys(parsed);
+            if (keys.length > 0) {
+                categoryKey = keys[0];
+                category = categoryKey.toUpperCase();
+            }
+        }
+    } catch (e) {
+        // Not JSON - plain text message
+        category = 'TEXT';
+    }
+
+    return {
+        timestamp: timestamp,
+        rawMessage: rawMessage,
+        parsed: parsed,
+        category: category,
+        categoryKey: categoryKey,
+        // Extract display text
+        displayText: parsed && categoryKey ? parsed[categoryKey] : rawMessage
+    };
+}
+
+// Get color for message category
+function getCategoryColor(category) {
+    const colors = {
+        'ERROR': '#ef4444',     // Red
+        'WARN': '#f59e0b',      // Orange
+        'INFO': '#10b981',      // Green
+        'DEBUG': '#3b82f6',     // Blue
+        'SENSOR': '#8b5cf6',    // Purple
+        'WIFI': '#06b6d4',      // Cyan
+        'SYSTEM': '#6b7280',    // Gray
+        'TEXT': '#9ca3af',      // Light Gray
+        'OTHER': '#9ca3af'      // Light Gray
+    };
+    return colors[category] || '#9ca3af';
 }
 
 function processDeviceEvent(deviceId, event) {
@@ -624,10 +708,29 @@ function processDeviceEvent(deviceId, event) {
             break;
 
         case 'deviceUdpBroadcast':
-            const newMessage = `[${new Date().toLocaleTimeString()}] ${eventData.message}`;
-            device.udpMessages.push(newMessage);
+            // Initialize new properties if they don't exist (for devices created before this feature)
+            if (!device.messageFilters) {
+                device.messageFilters = new Map();
+            }
+            if (!device.messageCategories) {
+                device.messageCategories = new Set();
+            }
+
+            // Parse and categorize the message
+            const messageObj = parseAndCategorizeMessage(eventData.message, deviceId);
+            device.udpMessages.push(messageObj);
+
+            // Track discovered categories and update filters only if new
+            const isNewCategory = !device.messageCategories.has(messageObj.category);
+            device.messageCategories.add(messageObj.category);
+
+            // Initialize filter for new categories (enabled by default)
+            if (!device.messageFilters.has(messageObj.category)) {
+                device.messageFilters.set(messageObj.category, true);
+            }
+
             // Note: Backend now handles message limiting per device (configurable in settings)
-            appendToMonitor(deviceId, newMessage);
+            appendToMonitor(deviceId, messageObj, isNewCategory);
             break;
 
         case 'deviceVariableUpdate':
@@ -879,6 +982,12 @@ function createDeviceContent(device, suffix = '') {
                 <div class="right-panel">
                     <!-- UDP Monitor -->
                     <div class="udp-monitor-section">
+                        <div class="monitor-header">
+                            <h6><i class="bi bi-terminal"></i> Debug Monitor</h6>
+                            <div class="monitor-filters" id="${idPrefix}-monitor-filters">
+                                <!-- Filter buttons will be dynamically added here -->
+                            </div>
+                        </div>
                         <div class="monitor-area" id="${idPrefix}-udp-monitor"></div>
                     </div>
                 </div>
@@ -1019,9 +1128,18 @@ function updateConnectionStatus(deviceId, connected) {
 }
 
 
-// Simple append - just add new message to bottom
-// Smart append with PlatformIO-style auto-scroll behavior
-function appendToMonitor(deviceId, message) {
+// Smart append with PlatformIO-style auto-scroll behavior and filtering
+function appendToMonitor(deviceId, messageObj, isNewCategory = false) {
+    const device = deviceDevices.get(deviceId);
+    if (!device) return;
+
+    // Check if this category is filtered
+    const isFiltered = device.messageFilters.get(messageObj.category);
+    if (isFiltered === false) {
+        // Message is filtered out, don't display
+        return;
+    }
+
     const suffixes = ['tab', 'stack'];
 
     suffixes.forEach(suffix => {
@@ -1042,9 +1160,19 @@ function appendToMonitor(deviceId, message) {
                 monitorEl.removeChild(monitorEl.firstChild);
             }
 
-            // Add new message
+            // Create styled message element
             const messageDiv = document.createElement('div');
-            messageDiv.textContent = message;
+            messageDiv.className = 'monitor-message';
+            messageDiv.setAttribute('data-category', messageObj.category);
+
+            // Format: [HH:MM:SS] [CATEGORY] message
+            const timeStr = messageObj.timestamp.toLocaleTimeString();
+            const categoryColor = getCategoryColor(messageObj.category);
+            const escapedText = escapeHtml(messageObj.displayText);
+            const escapedCategory = escapeHtml(messageObj.category);
+
+            messageDiv.innerHTML = `<span class="message-time">[${timeStr}]</span> <span class="message-category" style="color: ${categoryColor};">[${escapedCategory}]</span> <span class="message-text">${escapedText}</span>`;
+
             monitorEl.appendChild(messageDiv);
 
             // Only auto-scroll if enabled
@@ -1052,6 +1180,104 @@ function appendToMonitor(deviceId, message) {
                 scrollState.isProgrammaticScroll = true;
                 monitorEl.scrollTop = monitorEl.scrollHeight;
             }
+        }
+    });
+
+    // Update filter buttons only if new category discovered
+    if (isNewCategory) {
+        updateFilterButtons(deviceId);
+    }
+}
+
+// Update filter buttons to show available categories
+function updateFilterButtons(deviceId) {
+    const device = deviceDevices.get(deviceId);
+    if (!device) return;
+
+    const suffixes = ['tab', 'stack'];
+
+    suffixes.forEach(suffix => {
+        const filtersId = `${deviceId}-${suffix}-monitor-filters`;
+        const filtersEl = document.getElementById(filtersId);
+
+        if (filtersEl) {
+            // Clear existing buttons
+            filtersEl.innerHTML = '';
+
+            // Create button for each discovered category
+            const categories = Array.from(device.messageCategories).sort();
+            categories.forEach(category => {
+                const isEnabled = device.messageFilters.get(category) !== false;
+                const color = getCategoryColor(category);
+
+                const button = document.createElement('button');
+                button.className = `filter-btn ${isEnabled ? 'active' : ''}`;
+                button.setAttribute('data-category', category);
+                button.style.borderColor = color;
+                button.style.color = isEnabled ? color : '#6b7280';
+                button.textContent = category;
+                button.onclick = () => toggleCategoryFilter(deviceId, category);
+
+                filtersEl.appendChild(button);
+            });
+        }
+    });
+}
+
+// Toggle category filter on/off
+function toggleCategoryFilter(deviceId, category) {
+    const device = deviceDevices.get(deviceId);
+    if (!device) return;
+
+    // Toggle filter state
+    const currentState = device.messageFilters.get(category);
+    const newState = !currentState;
+    device.messageFilters.set(category, newState);
+
+    // Update buttons
+    updateFilterButtons(deviceId);
+
+    // Re-render monitor to apply filter
+    rerenderMonitor(deviceId);
+}
+
+// Re-render monitor with current filters
+function rerenderMonitor(deviceId) {
+    const device = deviceDevices.get(deviceId);
+    if (!device) return;
+
+    const suffixes = ['tab', 'stack'];
+
+    suffixes.forEach(suffix => {
+        const monitorId = `${deviceId}-${suffix}-udp-monitor`;
+        const monitorEl = document.getElementById(monitorId);
+
+        if (monitorEl) {
+            // Clear monitor
+            monitorEl.innerHTML = '';
+
+            // Re-add all messages that pass the filter
+            device.udpMessages.forEach(messageObj => {
+                const isFiltered = device.messageFilters.get(messageObj.category);
+                if (isFiltered !== false) {
+                    // Create message element
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'monitor-message';
+                    messageDiv.setAttribute('data-category', messageObj.category);
+
+                    const timeStr = messageObj.timestamp.toLocaleTimeString();
+                    const categoryColor = getCategoryColor(messageObj.category);
+                    const escapedText = escapeHtml(messageObj.displayText);
+                    const escapedCategory = escapeHtml(messageObj.category);
+
+                    messageDiv.innerHTML = `<span class="message-time">[${timeStr}]</span> <span class="message-category" style="color: ${categoryColor};">[${escapedCategory}]</span> <span class="message-text">${escapedText}</span>`;
+
+                    monitorEl.appendChild(messageDiv);
+                }
+            });
+
+            // Scroll to bottom
+            monitorEl.scrollTop = monitorEl.scrollHeight;
         }
     });
 }
