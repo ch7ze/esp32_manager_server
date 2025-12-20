@@ -790,7 +790,7 @@ pub async fn websocket_stats_handler(
 ) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
     let stats = state.device_store.get_stats().await;
     let active_devices = state.device_store.get_active_devices().await;
-    
+
     Ok(axum::Json(serde_json::json!({
         "websocket_stats": {
             "total_devices": stats.total_devices,
@@ -800,6 +800,57 @@ pub async fn websocket_stats_handler(
             "average_events_per_device": stats.average_events_per_device,
             "average_connections_per_device": stats.average_connections_per_device,
             "active_device_details": active_devices
+        }
+    })))
+}
+
+/// Health check endpoint with optimized event storage metrics
+/// Returns server health status and detailed memory metrics
+pub async fn health_check_handler(
+    State(state): State<WebSocketState>,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    let stats = state.device_store.get_stats().await;
+
+    // Calculate estimated memory usage
+    // Each state snapshot: ~400 bytes average
+    // Each debug message: ~500 bytes average
+    let estimated_state_memory_kb = (stats.state_snapshots * 400) / 1024;
+    let estimated_debug_memory_kb = (stats.debug_messages * 500) / 1024;
+    let estimated_legacy_memory_kb = (stats.legacy_events * 400) / 1024;
+    let total_memory_kb = estimated_state_memory_kb + estimated_debug_memory_kb + estimated_legacy_memory_kb;
+
+    Ok(axum::Json(serde_json::json!({
+        "status": "healthy",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "event_storage": {
+            "optimized": {
+                "state_snapshots": stats.state_snapshots,
+                "debug_messages": stats.debug_messages,
+                "total_optimized": stats.state_snapshots + stats.debug_messages,
+                "estimated_memory_kb": estimated_state_memory_kb + estimated_debug_memory_kb
+            },
+            "legacy": {
+                "events": stats.legacy_events,
+                "estimated_memory_kb": estimated_legacy_memory_kb,
+                "note": "Will be removed after migration"
+            },
+            "total": {
+                "devices": stats.total_devices,
+                "events": stats.total_events,
+                "estimated_memory_kb": total_memory_kb,
+                "estimated_memory_mb": total_memory_kb / 1024
+            }
+        },
+        "connections": {
+            "active_devices": stats.active_devices,
+            "total_connections": stats.total_connections,
+            "average_per_device": stats.average_connections_per_device
+        },
+        "limits": {
+            "debug_messages_per_device": state.device_store.get_max_debug_messages().await,
+            "legacy_events_per_device": 500,
+            "note": "State snapshots have no limit (only latest value stored)"
         }
     })))
 }
@@ -831,14 +882,26 @@ pub async fn device_users_handler(
 
 /// Background task to clean up stale WebSocket connections
 pub async fn start_cleanup_task(device_store: SharedDeviceStore) {
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-    
+    let mut connection_cleanup_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+    let mut device_cleanup_interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // 5 minutes
+
     loop {
-        interval.tick().await;
-        
-        match device_store.cleanup_stale_connections().await {
-            count if count > 0 => info!("Cleaned up {} stale WebSocket connections", count),
-            _ => debug!("No stale connections to clean up"),
+        tokio::select! {
+            _ = connection_cleanup_interval.tick() => {
+                // Cleanup stale WebSocket connections (every 30 seconds)
+                match device_store.cleanup_stale_connections().await {
+                    count if count > 0 => info!("Cleaned up {} stale WebSocket connections", count),
+                    _ => debug!("No stale connections to clean up"),
+                }
+            }
+
+            _ = device_cleanup_interval.tick() => {
+                // Cleanup events for disconnected devices (every 5 minutes)
+                match device_store.cleanup_disconnected_devices().await {
+                    count if count > 0 => info!("Cleaned up events for {} disconnected devices", count),
+                    _ => debug!("No disconnected devices to clean up"),
+                }
+            }
         }
     }
 }

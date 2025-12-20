@@ -76,7 +76,7 @@ use database::{DatabaseManager};
 
 // Import Event Store and WebSocket functions
 use device_store::{create_shared_store, SharedDeviceStore};
-use websocket::{websocket_handler, websocket_stats_handler, device_users_handler, start_cleanup_task, WebSocketState};
+use websocket::{websocket_handler, websocket_stats_handler, health_check_handler, device_users_handler, start_cleanup_task, WebSocketState};
 
 // Import centralized AppState
 use app_state::AppState;
@@ -401,10 +401,13 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         
         // WebSocket statistics endpoint for monitoring/debugging
         .route("/api/websocket/stats", get(websocket_stats_handler))
-        
+
+        // Health check endpoint with event storage metrics
+        .route("/api/health", get(health_check_handler))
+
         // Get users connected to a device
         .route("/api/devices/:device_id/users", get(device_users_handler))
-        
+
         .with_state(websocket_state);
 
     // Add API routes to main router

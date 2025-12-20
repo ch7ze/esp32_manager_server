@@ -140,10 +140,21 @@ impl ClientConnection {
 // Thread-safe in-memory store for device events and active connections
 #[derive(Debug)]
 pub struct DeviceEventStore {
-    // Events stored per device ID
+    // OPTIMIZED STORAGE: Separate maps for different event types
+
+    // State snapshot events - only latest value per key
+    state_snapshots: RwLock<HashMap<String, EventWithMetadata>>,
+
+    // History events - FIFO queue with configurable limit
+    debug_messages: RwLock<HashMap<String, std::collections::VecDeque<EventWithMetadata>>>,
+
+    // LEGACY: Old unified storage (will be phased out gradually)
+    // Kept for backward compatibility during migration
     device_events: RwLock<HashMap<String, Vec<EventWithMetadata>>>,
+
     // Active client connections per device ID
     active_connections: RwLock<HashMap<String, Vec<ClientConnection>>>,
+
     // Debug message limit per device (configurable)
     max_debug_messages_per_device: RwLock<usize>,
 }
@@ -152,6 +163,8 @@ impl DeviceEventStore {
     // Create a new empty event store
     pub fn new() -> Self {
         Self {
+            state_snapshots: RwLock::new(HashMap::new()),
+            debug_messages: RwLock::new(HashMap::new()),
             device_events: RwLock::new(HashMap::new()),
             active_connections: RwLock::new(HashMap::new()),
             max_debug_messages_per_device: RwLock::new(200), // Default: 200
@@ -186,15 +199,8 @@ impl DeviceEventStore {
             format!("Invalid event: {}", e)
         })?;
 
-        // Check if this is a debug message (UdpBroadcast)
-        let is_debug_message = matches!(event, crate::events::DeviceEvent::DeviceUdpBroadcast { .. });
-
-        // Read limit BEFORE taking write lock to avoid deadlock
-        let max_debug = if is_debug_message {
-            *self.max_debug_messages_per_device.read().await
-        } else {
-            0 // Not used for non-debug messages
-        };
+        // Get persistence strategy for this event
+        let persistence = event.persistence_strategy();
 
         // Create event with metadata
         let event_with_metadata = EventWithMetadata {
@@ -205,28 +211,72 @@ impl DeviceEventStore {
             is_replay: None,
         };
 
-        // Store event with limit enforcement for debug messages
-        {
+        // Route event to appropriate storage based on persistence strategy
+        use crate::events::EventPersistence;
+        match persistence {
+            EventPersistence::Ephemeral => {
+                // Don't store - just broadcast
+                debug!("Ephemeral event not stored: {:?}", event);
+            }
+
+            EventPersistence::StateSnapshot => {
+                // Store only latest value for this state key
+                if let Some(state_key) = event.state_key() {
+                    let mut snapshots = self.state_snapshots.write().await;
+                    snapshots.insert(state_key.clone(), event_with_metadata.clone());
+                    debug!("State snapshot updated: {} -> {}", state_key, event_with_metadata.id);
+                } else {
+                    // Event has no state_key (e.g., legacy events without device_id)
+                    // Fall back to legacy storage to avoid losing the event
+                    warn!("StateSnapshot event has no state_key, storing in legacy: {:?}", event);
+                    let mut events = self.device_events.write().await;
+                    let device_events = events.entry(device_id.clone()).or_insert_with(Vec::new);
+                    const MAX_LEGACY_EVENTS: usize = 500;
+                    if device_events.len() >= MAX_LEGACY_EVENTS {
+                        device_events.remove(0);
+                    }
+                    device_events.push(event_with_metadata.clone());
+                }
+            }
+
+            EventPersistence::BoundedHistory(default_limit) => {
+                // Store in FIFO queue with configurable limit
+                let max_debug = *self.max_debug_messages_per_device.read().await;
+                let limit = if max_debug > 0 { max_debug } else { default_limit };
+
+                let mut debug_msgs = self.debug_messages.write().await;
+                let queue = debug_msgs.entry(device_id.clone()).or_insert_with(std::collections::VecDeque::new);
+
+                // Enforce limit
+                if queue.len() >= limit {
+                    queue.pop_front(); // Remove oldest
+                }
+
+                queue.push_back(event_with_metadata.clone());
+                debug!("Debug message added (queue size: {}/{})", queue.len(), limit);
+            }
+
+            EventPersistence::Permanent => {
+                // TODO: Store in database (Phase 4)
+                // For now, log and store in legacy storage
+                info!("Permanent event received (DB storage not yet implemented): {:?}", event);
+                let mut events = self.device_events.write().await;
+                let device_events = events.entry(device_id.clone()).or_insert_with(Vec::new);
+                device_events.push(event_with_metadata.clone());
+            }
+        }
+
+        // LEGACY: Also store in old unified storage for backward compatibility during transition
+        // This can be removed once all code uses the new get_replay_events() method
+        // NOTE: We don't store Ephemeral events in legacy storage (waste of memory)
+        if !matches!(persistence, EventPersistence::Ephemeral) {
             let mut events = self.device_events.write().await;
             let device_events = events.entry(device_id.clone()).or_insert_with(Vec::new);
 
-            if is_debug_message && max_debug > 0 {
-                // Apply limit only to debug messages (skip if limit is 0)
-
-                // Count existing debug messages
-                let debug_count = device_events.iter()
-                    .filter(|e| matches!(e.event, crate::events::DeviceEvent::DeviceUdpBroadcast { .. }))
-                    .count();
-
-                // If limit reached, remove oldest debug message
-                if debug_count >= max_debug {
-                    // Find and remove the oldest debug message
-                    if let Some(oldest_debug_idx) = device_events.iter()
-                        .position(|e| matches!(e.event, crate::events::DeviceEvent::DeviceUdpBroadcast { .. }))
-                    {
-                        device_events.remove(oldest_debug_idx);
-                    }
-                }
+            // Apply simple limit to prevent unbounded growth during migration period
+            const MAX_LEGACY_EVENTS: usize = 500;
+            if device_events.len() >= MAX_LEGACY_EVENTS {
+                device_events.remove(0); // Remove oldest
             }
 
             device_events.push(event_with_metadata);
@@ -244,10 +294,74 @@ impl DeviceEventStore {
         Ok(())
     }
     
-    // Get all events for a device (for replay when client connects)
+    // OPTIMIZED: Get replay events for a device (only latest state + bounded history)
+    /// Returns events that should be replayed to newly connected clients
+    /// This is much more efficient than get_device_events() which returns ALL events
+    pub async fn get_replay_events(&self, device_id: &str, include_debug: bool) -> Vec<DeviceEvent> {
+        let mut replay_events = Vec::new();
+
+        // 1. Get all state snapshots for this device
+        {
+            let snapshots = self.state_snapshots.read().await;
+            for (key, event_meta) in snapshots.iter() {
+                // SAFE: Extract device_id from state_key (format: "type:device_id" or "type:device_id:var_name")
+                // We must use exact matching, not contains(), to avoid substring false-positives
+                let parts: Vec<&str> = key.split(':').collect();
+                if parts.len() >= 2 {
+                    let key_device_id = parts[1];
+                    if key_device_id == device_id {
+                        replay_events.push(event_meta.event.clone());
+                    }
+                }
+            }
+        }
+
+        // 2. Synthesize UserJoined events for currently connected users
+        // UserJoined/UserLeft are Ephemeral (not stored), but new clients need to know
+        // who is currently connected, so we generate synthetic UserJoined events
+        {
+            let connections = self.active_connections.read().await;
+            if let Some(device_connections) = connections.get(device_id) {
+                // Collect unique users (de-duplicate by user_id)
+                let mut seen_users = std::collections::HashSet::new();
+                for conn in device_connections {
+                    if seen_users.insert(&conn.user_id) {
+                        // Generate synthetic UserJoined event for this user
+                        let user_joined = crate::events::DeviceEvent::user_joined(
+                            conn.user_id.clone(),
+                            conn.display_name.clone(),
+                            conn.user_color.clone()
+                        );
+                        replay_events.push(user_joined);
+                    }
+                }
+            }
+        }
+
+        // 3. Optionally include debug messages (bounded history)
+        if include_debug {
+            let debug_msgs = self.debug_messages.read().await;
+            if let Some(queue) = debug_msgs.get(device_id) {
+                // Add debug messages in chronological order
+                for event_meta in queue.iter() {
+                    replay_events.push(event_meta.event.clone());
+                }
+            }
+        }
+
+        debug!("Replay events for device {}: {} events (debug: {}, includes active users)",
+               device_id, replay_events.len(), include_debug);
+
+        replay_events
+    }
+
+    // LEGACY: Get all events for a device (backward compatibility)
+    /// WARNING: This returns ALL events including hundreds of debug messages
+    /// Use get_replay_events() instead for better performance
+    #[deprecated(note = "Use get_replay_events() for optimized event replay")]
     pub async fn get_device_events(&self, device_id: &str) -> Vec<DeviceEvent> {
         let events = self.device_events.read().await;
-        
+
         match events.get(device_id) {
             Some(device_events) => {
                 device_events.iter()
@@ -382,12 +496,14 @@ impl DeviceEventStore {
             }
         }
         
-        // Return all existing events for replay
-        let events = self.get_device_events(&device_id).await;
-        
-        debug!("Sending {} events to newly registered client {}", 
-               events.len(), client_id);
-        
+        // Return optimized replay events (only latest state + optional debug messages)
+        // Full subscriptions get debug messages, Light subscriptions don't
+        let include_debug = subscription_type == crate::events::SubscriptionType::Full;
+        let events = self.get_replay_events(&device_id, include_debug).await;
+
+        debug!("Sending {} optimized replay events to newly registered client {} (debug: {})",
+               events.len(), client_id, include_debug);
+
         Ok(events)
     }
     
@@ -608,53 +724,161 @@ impl DeviceEventStore {
     pub async fn cleanup_stale_connections(&self) -> usize {
         let mut connections = self.active_connections.write().await;
         let mut removed_count = 0;
-        
+
         // Check each device
         let device_ids: Vec<String> = connections.keys().cloned().collect();
-        
+
         for device_id in device_ids {
             if let Some(device_connections) = connections.get_mut(&device_id) {
                 let initial_count = device_connections.len();
-                
+
                 // Keep only connections with open channels
                 device_connections.retain(|conn| !conn.sender.is_closed());
-                
+
                 let removed_for_device = initial_count - device_connections.len();
                 removed_count += removed_for_device;
-                
+
                 if removed_for_device > 0 {
                     debug!("Removed {} stale connections from device {}", removed_for_device, device_id);
                 }
-                
+
                 // Remove empty device entries
                 if device_connections.is_empty() {
                     connections.remove(&device_id);
                 }
             }
         }
-        
+
         if removed_count > 0 {
             info!("Cleaned up {} stale connections", removed_count);
         }
-        
+
         removed_count
+    }
+
+    /// Cleanup events for disconnected devices
+    /// Removes events from devices that have no active connections
+    /// Returns the number of devices cleaned up
+    pub async fn cleanup_disconnected_devices(&self) -> usize {
+        // IMPORTANT: We must hold the connections lock during the entire cleanup
+        // to prevent TOCTOU race condition where a device connects while we're cleaning up
+        let connections = self.active_connections.read().await;
+        let active_device_ids: std::collections::HashSet<String> = connections.keys().cloned().collect();
+        // NOTE: We keep the read lock held until the end to ensure consistency
+
+        let mut cleanup_count = 0;
+
+        // Cleanup state snapshots for disconnected devices
+        {
+            let mut snapshots = self.state_snapshots.write().await;
+            let keys_to_remove: Vec<String> = snapshots.keys()
+                .filter(|key| {
+                    // Extract device_id from state_key (format: "type:device_id" or "type:device_id:var_name")
+                    let parts: Vec<&str> = key.split(':').collect();
+                    if parts.len() >= 2 {
+                        let device_id = parts[1];
+                        !active_device_ids.contains(device_id)
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+                .collect();
+
+            for key in keys_to_remove {
+                snapshots.remove(&key);
+                cleanup_count += 1;
+            }
+        }
+
+        // Cleanup debug messages for disconnected devices
+        {
+            let mut debug_msgs = self.debug_messages.write().await;
+            let device_ids_to_remove: Vec<String> = debug_msgs.keys()
+                .filter(|device_id| !active_device_ids.contains(*device_id))
+                .cloned()
+                .collect();
+
+            for device_id in &device_ids_to_remove {
+                if let Some(queue) = debug_msgs.remove(device_id) {
+                    debug!("Removed {} debug messages for disconnected device {}", queue.len(), device_id);
+                }
+            }
+            cleanup_count += device_ids_to_remove.len();
+        }
+
+        // Cleanup legacy events for disconnected devices
+        {
+            let mut events = self.device_events.write().await;
+            let device_ids_to_remove: Vec<String> = events.keys()
+                .filter(|device_id| !active_device_ids.contains(*device_id))
+                .cloned()
+                .collect();
+
+            for device_id in &device_ids_to_remove {
+                if let Some(event_list) = events.remove(device_id) {
+                    debug!("Removed {} legacy events for disconnected device {}", event_list.len(), device_id);
+                }
+            }
+        }
+
+        if cleanup_count > 0 {
+            info!("Cleaned up events for {} disconnected devices", cleanup_count);
+        }
+
+        // Explicitly drop the connections lock at the end (was held for consistency)
+        drop(connections);
+
+        cleanup_count
     }
     
     /// Get storage statistics for monitoring
     pub async fn get_stats(&self) -> DeviceStoreStats {
         let events = self.device_events.read().await;
+        let snapshots = self.state_snapshots.read().await;
+        let debug_msgs = self.debug_messages.read().await;
         let connections = self.active_connections.read().await;
-        
-        let total_events: usize = events.values().map(|v| v.len()).sum();
+
+        let legacy_events: usize = events.values().map(|v| v.len()).sum();
+        let state_snapshots_count = snapshots.len();
+        let debug_messages_count: usize = debug_msgs.values().map(|q| q.len()).sum();
         let total_connections: usize = connections.values().map(|v| v.len()).sum();
-        
+
+        let total_optimized_events = state_snapshots_count + debug_messages_count;
+
+        // Count unique devices across all storage types
+        let mut unique_devices = std::collections::HashSet::new();
+
+        // Devices with legacy events
+        for device_id in events.keys() {
+            unique_devices.insert(device_id.clone());
+        }
+
+        // Devices with debug messages
+        for device_id in debug_msgs.keys() {
+            unique_devices.insert(device_id.clone());
+        }
+
+        // Devices with state snapshots (extract device_id from state_key)
+        for key in snapshots.keys() {
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() >= 2 {
+                unique_devices.insert(parts[1].to_string());
+            }
+        }
+
+        let total_devices = unique_devices.len();
+
         DeviceStoreStats {
-            total_devices: events.len(),
-            total_events,
+            total_devices,
+            total_events: total_optimized_events,
             active_devices: connections.len(),
             total_connections,
-            average_events_per_device: if events.is_empty() { 0.0 } else { total_events as f64 / events.len() as f64 },
+            average_events_per_device: if total_devices == 0 { 0.0 } else { total_optimized_events as f64 / total_devices as f64 },
             average_connections_per_device: if connections.is_empty() { 0.0 } else { total_connections as f64 / connections.len() as f64 },
+            state_snapshots: state_snapshots_count,
+            debug_messages: debug_messages_count,
+            legacy_events: legacy_events,
         }
     }
 }
@@ -663,7 +887,7 @@ impl DeviceEventStore {
 // STATISTICS & MONITORING
 // ============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeviceStoreStats {
     pub total_devices: usize,
     pub total_events: usize,
@@ -671,6 +895,10 @@ pub struct DeviceStoreStats {
     pub total_connections: usize,
     pub average_events_per_device: f64,
     pub average_connections_per_device: f64,
+    // New optimized storage metrics
+    pub state_snapshots: usize,
+    pub debug_messages: usize,
+    pub legacy_events: usize,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

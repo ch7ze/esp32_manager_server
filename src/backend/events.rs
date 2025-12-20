@@ -403,3 +403,111 @@ impl DeviceEvent {
     }
 }
 
+// ============================================================================
+// EVENT PERSISTENCE STRATEGY - Memory Management & Lifecycle
+// ============================================================================
+
+/// Defines how events should be persisted and managed in memory
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventPersistence {
+    /// Event is not stored (transactional only)
+    Ephemeral,
+
+    /// Only the latest event is stored (overwrites previous)
+    /// Use for: State that changes over time but only current value matters
+    StateSnapshot,
+
+    /// Store bounded history with FIFO eviction
+    /// Use for: Debug logs, message history with configurable limit
+    BoundedHistory(usize),
+
+    /// Store in database permanently
+    /// Use for: Audit logs, analytics, discovery events
+    Permanent,
+}
+
+impl DeviceEvent {
+    /// Get the persistence strategy for this event type
+    ///
+    /// This determines how the event is stored and for how long:
+    /// - Ephemeral: Not stored (commands, transactional)
+    /// - StateSnapshot: Only latest value (connection status, variables)
+    /// - BoundedHistory: FIFO queue with limit (debug messages)
+    /// - Permanent: Database storage (discovery, audit)
+    pub fn persistence_strategy(&self) -> EventPersistence {
+        match self {
+            // Transactional events - not stored
+            DeviceEvent::DeviceCommand { .. } => EventPersistence::Ephemeral,
+
+            // State events - only current value matters
+            DeviceEvent::DeviceConnectionStatus { .. } => EventPersistence::StateSnapshot,
+            DeviceEvent::DeviceVariableUpdate { .. } => EventPersistence::StateSnapshot,
+            DeviceEvent::DeviceStartOptions { .. } => EventPersistence::StateSnapshot,
+            DeviceEvent::DeviceChangeableVariables { .. } => EventPersistence::StateSnapshot,
+            DeviceEvent::DeviceDeviceInfo { .. } => EventPersistence::StateSnapshot,
+
+            // History events - bounded FIFO queue
+            // Default: 200 messages (configurable via database settings)
+            DeviceEvent::DeviceUdpBroadcast { .. } => EventPersistence::BoundedHistory(200),
+
+            // Permanent events - stored in database
+            DeviceEvent::DeviceDiscovered { .. } => EventPersistence::Permanent,
+
+            // Session events - ephemeral (managed by connection lifecycle)
+            DeviceEvent::UserJoined { .. } => EventPersistence::Ephemeral,
+            DeviceEvent::UserLeft { .. } => EventPersistence::Ephemeral,
+
+            // Legacy/unused events - snapshot for backward compatibility
+            DeviceEvent::DeviceStatusUpdate { .. } => EventPersistence::StateSnapshot,
+            DeviceEvent::DeviceConfigUpdate { .. } => EventPersistence::StateSnapshot,
+            DeviceEvent::DeviceSensorData { .. } => EventPersistence::StateSnapshot,
+        }
+    }
+
+    /// Check if this event should be included in replay for new clients
+    pub fn should_replay(&self) -> bool {
+        match self.persistence_strategy() {
+            EventPersistence::Ephemeral => false,
+            EventPersistence::StateSnapshot => true,
+            EventPersistence::BoundedHistory(_) => true,
+            EventPersistence::Permanent => false, // Loaded from DB separately
+        }
+    }
+
+    /// Get a unique key for state snapshot events
+    /// Used to deduplicate events of the same type for a device
+    pub fn state_key(&self) -> Option<String> {
+        match self {
+            DeviceEvent::DeviceConnectionStatus { device_id, .. } => {
+                Some(format!("connection:{}", device_id))
+            }
+            DeviceEvent::DeviceVariableUpdate { device_id, variable_name, .. } => {
+                Some(format!("variable:{}:{}", device_id, variable_name))
+            }
+            DeviceEvent::DeviceStartOptions { device_id, .. } => {
+                Some(format!("start_options:{}", device_id))
+            }
+            DeviceEvent::DeviceChangeableVariables { device_id, .. } => {
+                Some(format!("changeable_vars:{}", device_id))
+            }
+            DeviceEvent::DeviceDeviceInfo { device_id, .. } => {
+                Some(format!("device_info:{}", device_id))
+            }
+            // Legacy events without device_id field - cannot create proper state key
+            // These events are not used in the codebase, but we handle them safely
+            DeviceEvent::DeviceStatusUpdate { .. } => {
+                None  // Cannot create unique key without device_id
+            }
+            DeviceEvent::DeviceConfigUpdate { .. } => {
+                None  // Cannot create unique key without device_id
+            }
+            DeviceEvent::DeviceSensorData { .. } => {
+                // Only sensor name available - not unique across devices
+                // Return None to avoid collisions
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
