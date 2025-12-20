@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 /// mDNS server for advertising the Device Manager Server
 pub struct MdnsServer {
     daemon: Option<ServiceDaemon>,
-    service_info: Option<ServiceInfo>,
+    service_infos: Vec<ServiceInfo>,
     stop_tx: Option<mpsc::UnboundedSender<()>>,
     is_running: bool,
 }
@@ -17,7 +17,7 @@ impl MdnsServer {
     pub fn new() -> Result<Self, String> {
         Ok(Self {
             daemon: None,
-            service_info: None,
+            service_infos: Vec::new(),
             stop_tx: None,
             is_running: false,
         })
@@ -33,11 +33,19 @@ impl MdnsServer {
         let daemon = ServiceDaemon::new()
             .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
-        // Get local IP addresses
+        // Get local IP addresses (IPv4 and IPv6)
         let local_ips = self.get_local_ip_addresses()?;
         if local_ips.is_empty() {
             return Err("No local IP addresses found".to_string());
         }
+
+        // Find the first IPv4 address (most compatible with mDNS clients)
+        let primary_ip = local_ips.iter()
+            .find(|ip| ip.is_ipv4())
+            .or_else(|| local_ips.first())
+            .ok_or("No usable IP address found")?;
+
+        info!("Using primary IP for mDNS: {}", primary_ip);
 
         // Create TXT records with server information
         let mut properties = HashMap::new();
@@ -46,12 +54,12 @@ impl MdnsServer {
         properties.insert("type".to_string(), "device-manager".to_string());
         properties.insert("protocol".to_string(), "http".to_string());
 
-        // Create service info for HTTP service
+        // Register service with primary IP address
         let service_info = ServiceInfo::new(
             "_http._tcp.local.",
-            "esp-server",
-            "esp-server.local.",
-            local_ips[0],
+            "device-manager",
+            "device-manager.local.",
+            *primary_ip,
             port,
             properties,
         ).map_err(|e| format!("Failed to create service info: {}", e))?;
@@ -60,10 +68,11 @@ impl MdnsServer {
         daemon.register(service_info.clone())
             .map_err(|e| format!("Failed to register mDNS service: {}", e))?;
 
-        info!("mDNS server advertising 'esp-server.local' on port {} with IPs: {:?}", port, local_ips);
+        info!("mDNS server advertising 'device-manager.local' on port {} with IP {}",
+              port, primary_ip);
 
         self.daemon = Some(daemon);
-        self.service_info = Some(service_info);
+        self.service_infos = vec![service_info];
         self.is_running = true;
 
         // Start keep-alive task
@@ -93,9 +102,12 @@ impl MdnsServer {
             let _ = stop_tx.send(());
         }
 
-        if let (Some(daemon), Some(service_info)) = (self.daemon.take(), self.service_info.take()) {
-            if let Err(e) = daemon.unregister(service_info.get_fullname()) {
-                warn!("Failed to unregister mDNS service: {}", e);
+        if let Some(daemon) = self.daemon.take() {
+            // Unregister all services
+            for service_info in self.service_infos.drain(..) {
+                if let Err(e) = daemon.unregister(service_info.get_fullname()) {
+                    warn!("Failed to unregister mDNS service: {}", e);
+                }
             }
 
             if let Err(e) = daemon.shutdown() {
@@ -107,21 +119,118 @@ impl MdnsServer {
         info!("mDNS server advertising stopped");
     }
 
-    /// Get local IP addresses for the server
+    /// Get ALL local IP addresses on all interfaces (for mDNS to respond on all networks)
     fn get_local_ip_addresses(&self) -> Result<Vec<IpAddr>, String> {
-        use std::net::UdpSocket;
+        use if_addrs::get_if_addrs;
+        use std::io::Write;
 
-        // Try to get the local IP by connecting to a remote address
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("Failed to create socket: {}", e))?;
+        // Open debug log file
+        let mut debug_log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("mdns_debug.log")
+            .ok();
 
-        socket.connect("8.8.8.8:80")
-            .map_err(|e| format!("Failed to connect to remote: {}", e))?;
+        let mut addresses = Vec::new();
 
-        let local_addr = socket.local_addr()
-            .map_err(|e| format!("Failed to get local address: {}", e))?;
+        // Get all network interfaces
+        match get_if_addrs() {
+            Ok(interfaces) => {
+                for iface in interfaces {
+                    let ip = iface.ip();
 
-        Ok(vec![local_addr.ip()])
+                    // Skip loopback addresses (127.0.0.1, ::1)
+                    if ip.is_loopback() {
+                        let msg = format!("Skipping loopback address: {} on {}\n", ip, iface.name);
+                        info!("{}", msg.trim());
+                        if let Some(ref mut log) = debug_log {
+                            let _ = log.write_all(msg.as_bytes());
+                        }
+                        continue;
+                    }
+
+                    // Skip VPN interfaces (NordLynx, OpenVPN, WireGuard, etc.)
+                    let iface_name_lower = iface.name.to_lowercase();
+                    if iface_name_lower.contains("nordlynx")
+                        || iface_name_lower.contains("vpn")
+                        || iface_name_lower.contains("tun")
+                        || iface_name_lower.contains("tap")
+                        || iface_name_lower.contains("wireguard") {
+                        let msg = format!("Skipping VPN interface: {} ({})\n", iface.name, ip);
+                        info!("{}", msg.trim());
+                        if let Some(ref mut log) = debug_log {
+                            let _ = log.write_all(msg.as_bytes());
+                        }
+                        continue;
+                    }
+
+                    // Skip virtual/VM interfaces (VirtualBox, VMware, Docker)
+                    if iface_name_lower.contains("virtualbox")
+                        || iface_name_lower.contains("vmware")
+                        || iface_name_lower.contains("vethernet")
+                        || iface_name_lower.contains("docker") {
+                        let msg = format!("Skipping virtual interface: {} ({})\n", iface.name, ip);
+                        info!("{}", msg.trim());
+                        if let Some(ref mut log) = debug_log {
+                            let _ = log.write_all(msg.as_bytes());
+                        }
+                        continue;
+                    }
+
+                    // Skip VirtualBox Host-Only networks (192.168.56.x, 192.168.99.x)
+                    if let IpAddr::V4(ipv4) = ip {
+                        let octets = ipv4.octets();
+                        if (octets[0] == 192 && octets[1] == 168 && (octets[2] == 56 || octets[2] == 99))
+                            || (octets[0] == 10 && octets[1] == 5) {  // NordLynx uses 10.5.x.x
+                            let msg = format!("Skipping VM/VPN network: {} ({})\n", iface.name, ip);
+                            info!("{}", msg.trim());
+                            if let Some(ref mut log) = debug_log {
+                                let _ = log.write_all(msg.as_bytes());
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Skip link-local IPv6 addresses (fe80::) - these cause mDNS errors
+                    if let IpAddr::V6(ipv6) = ip {
+                        if ipv6.segments()[0] == 0xfe80 {
+                            let msg = format!("Skipping link-local IPv6 address: {} on {}\n", ip, iface.name);
+                            info!("{}", msg.trim());
+                            if let Some(ref mut log) = debug_log {
+                                let _ = log.write_all(msg.as_bytes());
+                            }
+                            continue;
+                        }
+                    }
+
+                    let msg = format!("Registering mDNS on interface: {} with IP {} ({})\n",
+                          iface.name,
+                          ip,
+                          if ip.is_ipv4() { "IPv4" } else { "IPv6" });
+                    info!("{}", msg.trim());
+                    if let Some(ref mut log) = debug_log {
+                        let _ = log.write_all(msg.as_bytes());
+                    }
+                    addresses.push(ip);
+                }
+            }
+            Err(e) => {
+                return Err(format!("Failed to enumerate network interfaces: {}", e));
+            }
+        }
+
+        if addresses.is_empty() {
+            return Err("No usable IP addresses found on any interface".to_string());
+        }
+
+        let msg = format!("Total mDNS IP addresses registered: {}\n", addresses.len());
+        info!("{}", msg.trim());
+        if let Some(ref mut log) = debug_log {
+            let _ = log.write_all(msg.as_bytes());
+            let _ = log.flush();
+        }
+
+        Ok(addresses)
     }
 
     /// Check if server is running
@@ -136,8 +245,11 @@ impl Drop for MdnsServer {
             let _ = stop_tx.send(());
         }
 
-        if let (Some(daemon), Some(service_info)) = (self.daemon.take(), self.service_info.take()) {
-            let _ = daemon.unregister(service_info.get_fullname());
+        if let Some(daemon) = self.daemon.take() {
+            // Unregister all services
+            for service_info in self.service_infos.drain(..) {
+                let _ = daemon.unregister(service_info.get_fullname());
+            }
             let _ = daemon.shutdown();
         }
     }

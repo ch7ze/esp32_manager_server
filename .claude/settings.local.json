@@ -43,7 +43,10 @@
       "Bash(npm start)",
       "Read(//c/Users/chris/documents/git/hub/ESP32_manager_server/client/scripts/**)",
       "Bash(cat:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(tee:*)",
+      "Bash(timeout 30 cargo run:*)",
+      "Bash(timeout 60 cargo run:*)"
     ],
     "deny": [],
     "ask": []

@@ -44,7 +44,7 @@ mod device_types; // device_types.rs - Device communication types
 mod device_connection; // device_connection.rs - Device TCP/UDP connection handling
 mod device_manager; // device_manager.rs - Device management
 mod mdns_discovery; // mdns_discovery.rs - mDNS-based device discovery
-mod mdns_server;    // mdns_server.rs - mDNS server for advertising esp-server.local
+mod mdns_server;    // mdns_server.rs - mDNS server for advertising device-manager.local
 mod device_discovery; // device_discovery.rs - Device discovery service
 mod debug_logger;   // debug_logger.rs - Debug event logging
 mod uart_connection; // uart_connection.rs - UART/Serial connection handling
@@ -94,9 +94,23 @@ async fn debug_websocket_handler() -> Result<String, (axum::http::StatusCode, St
 
 #[tokio::main]  // This attribute makes main() async-capable with Tokio runtime
 async fn main() {
-    // Enhanced logging configuration with environment variable support
+    // Delete old log file at startup
+    let _ = std::fs::remove_file("server_startup.log");
+
+    // Setup simple file logging
+    use std::io::Write;
+    let mut log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("server_startup.log")
+        .expect("Failed to open log file");
+
+    // Enhanced logging configuration with console output
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
         .with_target(true)
         .with_line_number(true)
         .with_file(true)
@@ -159,7 +173,7 @@ async fn main() {
         }
     });
 
-    // Start mDNS Server for advertising esp-server.local
+    // Start mDNS Server for advertising device-manager.local
     tracing::info!("Starting mDNS Server...");
     let mdns_server = Arc::new(tokio::sync::Mutex::new(
         mdns_server::MdnsServer::new().map_err(|e| {
@@ -174,7 +188,7 @@ async fn main() {
         if let Err(e) = server.start_advertising(3000).await {
             tracing::error!("mDNS server failed to start: {}", e);
         } else {
-            tracing::info!("mDNS server started - esp-server.local advertised on port 3000");
+            tracing::info!("mDNS server started - device-manager.local advertised on port 3000");
         }
     });
     
