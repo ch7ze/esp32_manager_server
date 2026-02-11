@@ -39,13 +39,19 @@ impl MdnsServer {
             return Err("No local IP addresses found".to_string());
         }
 
-        // Find the first IPv4 address (most compatible with mDNS clients)
-        let primary_ip = local_ips.iter()
-            .find(|ip| ip.is_ipv4())
-            .or_else(|| local_ips.first())
-            .ok_or("No usable IP address found")?;
+        // Register ALL collected IPs, not just the first IPv4.
+        // mdns-sd filters A-Record responses via get_addrs_on_intf(): only
+        // addresses in the same subnet as the incoming query's interface are
+        // returned. A single registered IP means queries arriving on any other
+        // interface (different subnet) get no answer. ESP32 mdns_query_a()
+        // relies strictly on an A-Record reply, so it fails silently.
+        // ServiceInfo::new accepts multiple IPs as a comma-separated string.
+        let ip_list: String = local_ips.iter()
+            .map(|ip| ip.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
 
-        info!("Using primary IP for mDNS: {}", primary_ip);
+        info!("Registering mDNS with all IPs: {}", ip_list);
 
         // Create TXT records with server information
         let mut properties = HashMap::new();
@@ -54,12 +60,12 @@ impl MdnsServer {
         properties.insert("type".to_string(), "device-manager".to_string());
         properties.insert("protocol".to_string(), "http".to_string());
 
-        // Register service with primary IP address
+        // Register service with all local IP addresses
         let service_info = ServiceInfo::new(
             "_http._tcp.local.",
             "device-manager",
             "device-manager.local.",
-            *primary_ip,
+            ip_list.as_str(),
             port,
             properties,
         ).map_err(|e| format!("Failed to create service info: {}", e))?;
@@ -68,8 +74,6 @@ impl MdnsServer {
         daemon.register(service_info.clone())
             .map_err(|e| format!("Failed to register mDNS service: {}", e))?;
 
-        info!("mDNS server advertising 'device-manager.local' on port {} with IP {}",
-              port, primary_ip);
 
         self.daemon = Some(daemon);
         self.service_infos = vec![service_info];

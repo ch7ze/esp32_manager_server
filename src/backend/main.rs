@@ -1569,6 +1569,10 @@ async fn discovered_devices_handler(
     // Extract JWT token from cookie (optional)
     let _token = cookie_jar.get("auth_token").map(|cookie| cookie.value());
 
+    // Get real-time connection states from DeviceManager
+    let connection_states = app_state.device_manager.get_unified_connection_states();
+    let connection_states_map = connection_states.read().await;
+
     // Authentication is optional for device discovery
     // Get discovered devices from DeviceDiscovery service (TCP/mDNS devices)
     let discovered_devices = {
@@ -1617,7 +1621,13 @@ async fn discovered_devices_handler(
         }
 
         // Try to load alias and name from database if we have a MAC address
+        // Also check connection status
         if let Some(ref mac_key) = mac_address_key {
+            // Check real-time connection status using MAC address key
+            let is_connected = connection_states_map.get(mac_key).copied().unwrap_or(false);
+            device_json["connected"] = json!(is_connected);
+            tracing::info!("Device {} connection status: {}", mac_key, is_connected);
+
             match app_state.db.get_device_by_id(mac_key).await {
                 Ok(Some(device)) => {
                     if let Some(alias) = device.alias {
@@ -1634,6 +1644,9 @@ async fn discovered_devices_handler(
                     tracing::warn!("Error loading device from database for MAC {}: {}", mac_key, e);
                 }
             }
+        } else {
+            // No MAC address, cannot determine connection status
+            device_json["connected"] = json!(false);
         }
 
         devices_json.push(device_json);
@@ -1653,6 +1666,9 @@ async fn discovered_devices_handler(
 
     // Add UART devices to response
     for uart_device in uart_devices_from_db {
+        // Check real-time connection status for UART device
+        let is_connected = connection_states_map.get(&uart_device.mac_address).copied().unwrap_or(false);
+
         let mut uart_json = json!({
             "deviceId": uart_device.mac_address.clone(),
             "deviceIp": "0.0.0.0",  // UART devices have no IP
@@ -1662,15 +1678,16 @@ async fn discovered_devices_handler(
             "connectionType": "uart",
             "mdnsHostname": Some(format!("uart-{}", uart_device.mac_address)),
             "macAddress": uart_device.mac_address.replace('-', ":"),  // Show MAC with colons
-            "name": uart_device.name.clone()
+            "name": uart_device.name.clone(),
+            "connected": is_connected
         });
 
         // Add alias if available
         if let Some(alias) = uart_device.alias {
             uart_json["alias"] = json!(alias);
-            tracing::info!("Added UART device from DB with alias: {} (alias: {})", uart_device.mac_address, alias);
+            tracing::info!("Added UART device from DB with alias: {} (alias: {}, connected: {})", uart_device.mac_address, alias, is_connected);
         } else {
-            tracing::info!("Added UART device from DB to discovered list: {}", uart_device.mac_address);
+            tracing::info!("Added UART device from DB to discovered list: {} (connected: {})", uart_device.mac_address, is_connected);
         }
 
         devices_json.push(uart_json);

@@ -156,6 +156,11 @@ impl DatabaseManager {
     }
 
     async fn init_database(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Foreign Keys aktivieren (SQLite erzwingt diese standardmäßig NICHT)
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&self.pool)
+            .await?;
+
         // Users Tabelle erstellen
         sqlx::query(
             r#"
@@ -175,11 +180,9 @@ impl DatabaseManager {
         // Create system "guest" user with fixed ID (required for FOREIGN KEY constraints)
         // This user is independent from initial_users.json and cannot be deleted
         sqlx::query(
-            r#"
-            INSERT OR IGNORE INTO users (id, email, display_name, password_hash, created_at, is_admin)
-            VALUES ('guest', 'guest@system.local', 'Guest User', '', datetime('now'), FALSE)
-            "#
+            "INSERT OR IGNORE INTO users (id, email, display_name, password_hash, created_at, is_admin) VALUES ('guest', 'guest@system.local', 'Guest User', '', ?, FALSE)"
         )
+        .bind(Utc::now().to_rfc3339())
         .execute(&self.pool)
         .await?;
 
@@ -464,8 +467,14 @@ impl DatabaseManager {
     }
 
     pub async fn delete_user(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        // Zuerst Canvas Permissions löschen
+        // Zuerst Permissions löschen
         sqlx::query("DELETE FROM device_permissions WHERE user_id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        // Devices des Users auf Guest übertragen (FK-Constraint: owner_id muss existieren)
+        sqlx::query("UPDATE devices SET owner_id = 'guest' WHERE owner_id = ?")
             .bind(user_id)
             .execute(&self.pool)
             .await?;
@@ -628,7 +637,7 @@ impl DatabaseManager {
                 Ok(Some(Device {
                     mac_address: row.get("mac_address"),
                     name: row.get("name"),
-                    alias: row.try_get("alias").ok(),
+                    alias: row.try_get::<Option<String>, _>("alias").unwrap_or(None),
                     owner_id: row.get("owner_id"),
                     ip_address: row.get("ip_address"),
                     status,
@@ -677,7 +686,7 @@ impl DatabaseManager {
             let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
-                alias: row.try_get("alias").ok(),
+                alias: row.try_get::<Option<String>, _>("alias").unwrap_or(None),
                 owner_id: row.get("owner_id"),
                 ip_address: row.get("ip_address"),
                 status,
@@ -726,7 +735,7 @@ impl DatabaseManager {
             let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
-                alias: row.try_get("alias").ok(),
+                alias: row.try_get::<Option<String>, _>("alias").unwrap_or(None),
                 owner_id: row.get("owner_id"),
                 ip_address: row.get("ip_address"),
                 status,
@@ -850,7 +859,7 @@ impl DatabaseManager {
             let device = Device {
                 mac_address: row.get("mac_address"),
                 name: row.get("name"),
-                alias: row.try_get("alias").ok(),
+                alias: row.try_get::<Option<String>, _>("alias").unwrap_or(None),
                 owner_id: row.get("owner_id"),
                 ip_address: row.get("ip_address"),
                 status,
@@ -1090,5 +1099,970 @@ impl DatabaseManager {
         .await?;
 
         Ok(())
+    }
+}
+
+// ============================================================================
+// UNIT TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // HELPER FUNCTIONS FOR TESTS
+    // ========================================================================
+
+    /// Create a temporary in-memory test database
+    async fn create_test_db() -> DatabaseManager {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let db = DatabaseManager { pool };
+        db.init_database().await.unwrap();
+        db
+    }
+
+    /// Create a test user with default values
+    fn create_test_user(email: &str, password: &str) -> DatabaseUser {
+        DatabaseUser::new(
+            email.to_string(),
+            "Test User".to_string(),
+            password,
+        ).unwrap()
+    }
+
+    /// Create a test device with default values
+    fn create_test_device(mac: &str, owner_id: &str) -> Device {
+        Device::new(
+            "Test Device".to_string(),
+            owner_id.to_string(),
+            mac.to_string(),
+        )
+    }
+
+    // ========================================================================
+    // STRUCT TESTS - DatabaseUser
+    // ========================================================================
+
+    #[test]
+    fn test_database_user_new() {
+        let user = DatabaseUser::new(
+            "test@example.com".to_string(),
+            "Test User".to_string(),
+            "password123",
+        ).unwrap();
+
+        assert_eq!(user.email, "test@example.com");
+        assert_eq!(user.display_name, "Test User");
+        assert_eq!(user.is_admin, false);
+        assert!(!user.id.is_empty());
+        assert!(!user.password_hash.is_empty());
+        assert_ne!(user.password_hash, "password123");
+    }
+
+    #[test]
+    fn test_database_user_verify_password_correct() {
+        let user = create_test_user("test@example.com", "correct_password");
+        let result = user.verify_password("correct_password").unwrap();
+        assert!(result, "Correct password should verify successfully");
+    }
+
+    #[test]
+    fn test_database_user_verify_password_incorrect() {
+        let user = create_test_user("test@example.com", "correct_password");
+        let result = user.verify_password("wrong_password").unwrap();
+        assert!(!result, "Incorrect password should fail verification");
+    }
+
+    #[test]
+    fn test_database_user_password_hash_not_plaintext() {
+        let user = create_test_user("test@example.com", "mypassword");
+        assert_ne!(user.password_hash, "mypassword");
+        assert!(user.password_hash.starts_with("$2"));
+    }
+
+    // ========================================================================
+    // STRUCT TESTS - Device
+    // ========================================================================
+
+    #[test]
+    fn test_device_new_tcp() {
+        let device = Device::new(
+            "ESP32-001".to_string(),
+            "user-123".to_string(),
+            "AA:BB:CC:DD:EE:FF".to_string(),
+        );
+
+        assert_eq!(device.mac_address, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(device.name, "ESP32-001");
+        assert_eq!(device.owner_id, "user-123");
+        assert_eq!(device.connection_type, "tcp");
+        assert_eq!(device.alias, None);
+        assert!(matches!(device.status, DeviceStatus::Offline));
+        assert_eq!(device.maintenance_mode, false);
+    }
+
+    #[test]
+    fn test_device_new_uart() {
+        let device = Device::new_uart(
+            "ESP32-UART".to_string(),
+            "user-456".to_string(),
+            "11:22:33:44:55:66".to_string(),
+        );
+
+        assert_eq!(device.connection_type, "uart");
+        assert_eq!(device.name, "ESP32-UART");
+    }
+
+    #[test]
+    fn test_device_update_status() {
+        let mut device = create_test_device("AA:BB:CC:DD:EE:FF", "user-1");
+        let initial_time = device.last_seen;
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        device.update_status(
+            DeviceStatus::Online,
+            Some("192.168.1.100".to_string()),
+        );
+
+        assert!(matches!(device.status, DeviceStatus::Online));
+        assert_eq!(device.ip_address, Some("192.168.1.100".to_string()));
+        assert!(device.last_seen > initial_time);
+    }
+
+    // ========================================================================
+    // DATABASE TESTS - User Management
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_create_and_get_user_by_email() {
+        let db = create_test_db().await;
+        let user = create_test_user("john@example.com", "password123");
+
+        db.create_user(user.clone()).await.unwrap();
+
+        let retrieved = db.get_user_by_email("john@example.com").await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved_user = retrieved.unwrap();
+        assert_eq!(retrieved_user.email, "john@example.com");
+        assert_eq!(retrieved_user.display_name, "Test User");
+    }
+
+    #[tokio::test]
+    async fn test_get_user_by_email_not_found() {
+        let db = create_test_db().await;
+        let result = db.get_user_by_email("nonexistent@example.com").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_create_user_duplicate_email_fails() {
+        let db = create_test_db().await;
+        let user1 = create_test_user("duplicate@example.com", "pass1");
+        let user2 = create_test_user("duplicate@example.com", "pass2");
+
+        db.create_user(user1).await.unwrap();
+        let result = db.create_user(user2).await;
+        assert!(result.is_err(), "Duplicate email should fail");
+    }
+
+    #[tokio::test]
+    async fn test_get_user_by_id() {
+        let db = create_test_db().await;
+        let user = create_test_user("test@example.com", "password");
+        let user_id = user.id.clone();
+
+        db.create_user(user).await.unwrap();
+
+        let retrieved = db.get_user_by_id(&user_id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().id, user_id);
+    }
+
+    #[tokio::test]
+    async fn test_update_user_display_name() {
+        let db = create_test_db().await;
+        let user = create_test_user("user@example.com", "password");
+        let user_id = user.id.clone();
+
+        db.create_user(user).await.unwrap();
+        db.update_user_display_name(&user_id, "New Name").await.unwrap();
+
+        let updated = db.get_user_by_id(&user_id).await.unwrap().unwrap();
+        assert_eq!(updated.display_name, "New Name");
+    }
+
+    #[tokio::test]
+    async fn test_get_all_users() {
+        let db = create_test_db().await;
+
+        let user1 = create_test_user("user1@example.com", "pass1");
+        let user2 = create_test_user("user2@example.com", "pass2");
+
+        db.create_user(user1).await.unwrap();
+        db.create_user(user2).await.unwrap();
+
+        let all_users = db.get_all_users().await.unwrap();
+        // guest (system) + 2 created
+        assert_eq!(all_users.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_search_users_by_email() {
+        let db = create_test_db().await;
+
+        let user1 = create_test_user("john.doe@example.com", "pass");
+        let user2 = create_test_user("jane.smith@example.com", "pass");
+
+        db.create_user(user1).await.unwrap();
+        db.create_user(user2).await.unwrap();
+
+        let results = db.search_users("john").await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].email, "john.doe@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_search_users_by_display_name() {
+        let db = create_test_db().await;
+
+        let mut user = create_test_user("test@example.com", "pass");
+        user.display_name = "Johnny Tester".to_string();
+
+        db.create_user(user).await.unwrap();
+
+        let results = db.search_users("Johnny").await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].display_name, "Johnny Tester");
+    }
+
+    #[tokio::test]
+    async fn test_get_users_paginated() {
+        let db = create_test_db().await;
+
+        for i in 1..=5 {
+            let user = create_test_user(&format!("user{}@example.com", i), "pass");
+            db.create_user(user).await.unwrap();
+        }
+
+        let page1 = db.get_users_paginated(0, 2).await.unwrap();
+        assert_eq!(page1.len(), 2);
+
+        let page2 = db.get_users_paginated(2, 2).await.unwrap();
+        assert_eq!(page2.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_delete_user() {
+        let db = create_test_db().await;
+        let user = create_test_user("delete@example.com", "pass");
+        let user_id = user.id.clone();
+
+        db.create_user(user).await.unwrap();
+        assert!(db.get_user_by_id(&user_id).await.unwrap().is_some());
+
+        db.delete_user(&user_id).await.unwrap();
+        assert!(db.get_user_by_id(&user_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_user_admin_status() {
+        let db = create_test_db().await;
+        let user = create_test_user("admin@example.com", "pass");
+        let user_id = user.id.clone();
+
+        db.create_user(user).await.unwrap();
+
+        let user_before = db.get_user_by_id(&user_id).await.unwrap().unwrap();
+        assert_eq!(user_before.is_admin, false);
+
+        db.update_user_admin_status(&user_id, true).await.unwrap();
+
+        let user_after = db.get_user_by_id(&user_id).await.unwrap().unwrap();
+        assert_eq!(user_after.is_admin, true);
+    }
+
+    #[tokio::test]
+    async fn test_guest_user_exists_after_init() {
+        let db = create_test_db().await;
+        let guest = db.get_user_by_id("guest").await.unwrap();
+
+        assert!(guest.is_some());
+        let guest_user = guest.unwrap();
+        assert_eq!(guest_user.id, "guest");
+        assert_eq!(guest_user.email, "guest@system.local");
+    }
+
+    // ========================================================================
+    // DATABASE TESTS - Device Management
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_create_and_get_device() {
+        let db = create_test_db().await;
+
+        let owner = create_test_user("owner@example.com", "pass");
+        let owner_id = owner.id.clone();
+        db.create_user(owner).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &owner_id);
+        db.create_device(device).await.unwrap();
+
+        let retrieved = db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved_device = retrieved.unwrap();
+        assert_eq!(retrieved_device.mac_address, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(retrieved_device.name, "Test Device");
+    }
+
+    #[tokio::test]
+    async fn test_create_device_with_guest_owner() {
+        let db = create_test_db().await;
+        let device = create_test_device("11:22:33:44:55:66", "guest");
+
+        let result = db.create_device(device).await;
+        assert!(result.is_ok(), "Device with guest owner should be created");
+    }
+
+    #[tokio::test]
+    async fn test_list_user_devices() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        let user_id = user.id.clone();
+        db.create_user(user).await.unwrap();
+
+        let device1 = create_test_device("AA:BB:CC:DD:EE:FF", &user_id);
+        let device2 = create_test_device("11:22:33:44:55:66", &user_id);
+
+        db.create_device(device1).await.unwrap();
+        db.create_device(device2).await.unwrap();
+
+        let devices = db.list_user_devices(&user_id).await.unwrap();
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].1, "O");
+        assert_eq!(devices[1].1, "O");
+    }
+
+    #[tokio::test]
+    async fn test_list_all_devices() {
+        let db = create_test_db().await;
+
+        let device1 = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        let device2 = create_test_device("11:22:33:44:55:66", "guest");
+
+        db.create_device(device1).await.unwrap();
+        db.create_device(device2).await.unwrap();
+
+        let all_devices = db.list_all_devices().await.unwrap();
+        assert_eq!(all_devices.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_device_name() {
+        let db = create_test_db().await;
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        db.create_device(device).await.unwrap();
+
+        db.update_device("AA:BB:CC:DD:EE:FF", Some(Some("New Device Name")), None, None)
+            .await.unwrap();
+
+        let updated = db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap().unwrap();
+        assert_eq!(updated.name, "New Device Name");
+    }
+
+    #[tokio::test]
+    async fn test_update_device_alias() {
+        let db = create_test_db().await;
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        db.create_device(device).await.unwrap();
+
+        db.update_device("AA:BB:CC:DD:EE:FF", None, Some(Some("My Custom Alias")), None)
+            .await.unwrap();
+
+        let updated = db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap().unwrap();
+        assert_eq!(updated.alias, Some("My Custom Alias".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_update_device_alias_clear() {
+        let db = create_test_db().await;
+        let mut device = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        device.alias = Some("Initial Alias".to_string());
+        db.create_device(device).await.unwrap();
+
+        db.update_device("AA:BB:CC:DD:EE:FF", None, Some(None), None)
+            .await.unwrap();
+
+        let updated = db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap().unwrap();
+        assert_eq!(updated.alias, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_device_maintenance_mode() {
+        let db = create_test_db().await;
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        db.create_device(device).await.unwrap();
+
+        db.update_device("AA:BB:CC:DD:EE:FF", None, None, Some(true))
+            .await.unwrap();
+
+        let updated = db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap().unwrap();
+        assert_eq!(updated.maintenance_mode, true);
+    }
+
+    #[tokio::test]
+    async fn test_update_device_status() {
+        let db = create_test_db().await;
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        db.create_device(device).await.unwrap();
+
+        db.update_device_status(
+            "AA:BB:CC:DD:EE:FF",
+            &DeviceStatus::Online,
+            Some("192.168.1.50"),
+            Some("v1.2.3"),
+        ).await.unwrap();
+
+        let updated = db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap().unwrap();
+        assert!(matches!(updated.status, DeviceStatus::Online));
+        assert_eq!(updated.ip_address, Some("192.168.1.50".to_string()));
+        assert_eq!(updated.firmware_version, Some("v1.2.3".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_delete_device() {
+        let db = create_test_db().await;
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        db.create_device(device).await.unwrap();
+
+        assert!(db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap().is_some());
+
+        db.delete_device("AA:BB:CC:DD:EE:FF").await.unwrap();
+
+        assert!(db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_devices_by_connection_type() {
+        let db = create_test_db().await;
+
+        let tcp_device = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        let uart_device = Device::new_uart(
+            "UART Device".to_string(),
+            "guest".to_string(),
+            "11:22:33:44:55:66".to_string(),
+        );
+
+        db.create_device(tcp_device).await.unwrap();
+        db.create_device(uart_device).await.unwrap();
+
+        let tcp_devices = db.get_devices_by_connection_type("tcp").await.unwrap();
+        assert_eq!(tcp_devices.len(), 1);
+        assert_eq!(tcp_devices[0].connection_type, "tcp");
+
+        let uart_devices = db.get_devices_by_connection_type("uart").await.unwrap();
+        assert_eq!(uart_devices.len(), 1);
+        assert_eq!(uart_devices[0].connection_type, "uart");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_discovered_device_new() {
+        let db = create_test_db().await;
+
+        db.upsert_discovered_device(
+            "AA:BB:CC:DD:EE:FF".to_string(),
+            "Discovered ESP32".to_string(),
+            Some("192.168.1.100".to_string()),
+            Some("tcp".to_string()),
+        ).await.unwrap();
+
+        let device = db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap();
+        assert!(device.is_some());
+        let device = device.unwrap();
+        assert_eq!(device.name, "Discovered ESP32");
+        assert_eq!(device.owner_id, "guest");
+        assert_eq!(device.ip_address, Some("192.168.1.100".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_upsert_discovered_device_existing() {
+        let db = create_test_db().await;
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", "guest");
+        db.create_device(device).await.unwrap();
+
+        db.upsert_discovered_device(
+            "AA:BB:CC:DD:EE:FF".to_string(),
+            "Updated Name".to_string(),
+            Some("192.168.1.200".to_string()),
+            Some("tcp".to_string()),
+        ).await.unwrap();
+
+        let device = db.get_device_by_id("AA:BB:CC:DD:EE:FF").await.unwrap().unwrap();
+        assert_eq!(device.name, "Test Device"); // Name unchanged
+        assert_eq!(device.ip_address, Some("192.168.1.200".to_string()));
+    }
+
+    // ========================================================================
+    // DATABASE TESTS - Device Permissions
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_set_and_get_device_permission() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        let user_id = user.id.clone();
+        db.create_user(user).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user_id);
+        db.create_device(device).await.unwrap();
+
+        let permission = db.get_user_device_permission("AA:BB:CC:DD:EE:FF", &user_id)
+            .await.unwrap();
+        assert_eq!(permission, Some("O".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_set_device_permission_manual() {
+        let db = create_test_db().await;
+
+        let user1 = create_test_user("user1@example.com", "pass");
+        let user2 = create_test_user("user2@example.com", "pass");
+        let user1_id = user1.id.clone();
+        let user2_id = user2.id.clone();
+
+        db.create_user(user1).await.unwrap();
+        db.create_user(user2).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user1_id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user2_id, "R")
+            .await.unwrap();
+
+        let permission = db.get_user_device_permission("AA:BB:CC:DD:EE:FF", &user2_id)
+            .await.unwrap();
+        assert_eq!(permission, Some("R".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_device_permissions() {
+        let db = create_test_db().await;
+
+        let user1 = create_test_user("user1@example.com", "pass");
+        let user2 = create_test_user("user2@example.com", "pass");
+        db.create_user(user1.clone()).await.unwrap();
+        db.create_user(user2.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user1.id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user2.id, "W")
+            .await.unwrap();
+
+        let permissions = db.get_device_permissions("AA:BB:CC:DD:EE:FF")
+            .await.unwrap();
+        assert_eq!(permissions.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_remove_device_permission() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        assert!(db.get_user_device_permission("AA:BB:CC:DD:EE:FF", &user.id)
+            .await.unwrap().is_some());
+
+        db.remove_device_permission("AA:BB:CC:DD:EE:FF", &user.id)
+            .await.unwrap();
+
+        assert!(db.get_user_device_permission("AA:BB:CC:DD:EE:FF", &user.id)
+            .await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_user_has_device_permission_read() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "R")
+            .await.unwrap();
+
+        let has_read = db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "R")
+            .await.unwrap();
+        assert!(has_read);
+
+        let has_write = db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W")
+            .await.unwrap();
+        assert!(!has_write, "Read permission should not grant write");
+    }
+
+    #[tokio::test]
+    async fn test_user_has_device_permission_hierarchy() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "O")
+            .await.unwrap();
+
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "R").await.unwrap());
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W").await.unwrap());
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "V").await.unwrap());
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "M").await.unwrap());
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "O").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_user_has_device_permission_maintenance_mode() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W")
+            .await.unwrap();
+
+        let can_write = db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W")
+            .await.unwrap();
+        assert!(can_write);
+
+        db.update_device("AA:BB:CC:DD:EE:FF", None, None, Some(true))
+            .await.unwrap();
+
+        let can_write_maintenance = db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W")
+            .await.unwrap();
+        assert!(!can_write_maintenance, "Write should be blocked in maintenance mode");
+    }
+
+    // ========================================================================
+    // DATABASE TESTS - UART Settings
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_get_uart_settings_default() {
+        let db = create_test_db().await;
+        let settings = db.get_uart_settings().await.unwrap();
+
+        assert!(settings.is_some());
+        let (port, baud_rate, auto_connect) = settings.unwrap();
+        assert_eq!(port, None);
+        assert_eq!(baud_rate, 115200);
+        assert_eq!(auto_connect, false);
+    }
+
+    #[tokio::test]
+    async fn test_update_uart_settings() {
+        let db = create_test_db().await;
+
+        db.update_uart_settings(Some("COM3"), 9600, true)
+            .await.unwrap();
+
+        let settings = db.get_uart_settings().await.unwrap().unwrap();
+        assert_eq!(settings.0, Some("COM3".to_string()));
+        assert_eq!(settings.1, 9600);
+        assert_eq!(settings.2, true);
+    }
+
+    #[tokio::test]
+    async fn test_update_uart_settings_clear_port() {
+        let db = create_test_db().await;
+
+        db.update_uart_settings(Some("COM3"), 115200, false)
+            .await.unwrap();
+
+        db.update_uart_settings(None, 115200, false)
+            .await.unwrap();
+
+        let settings = db.get_uart_settings().await.unwrap().unwrap();
+        assert_eq!(settings.0, None);
+    }
+
+    // ========================================================================
+    // DATABASE TESTS - Debug Settings
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_get_debug_settings_default() {
+        let db = create_test_db().await;
+        let max_messages = db.get_debug_settings().await.unwrap();
+
+        assert!(max_messages.is_some());
+        assert_eq!(max_messages.unwrap(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_update_debug_settings() {
+        let db = create_test_db().await;
+
+        db.update_debug_settings(500).await.unwrap();
+
+        let max_messages = db.get_debug_settings().await.unwrap().unwrap();
+        assert_eq!(max_messages, 500);
+    }
+
+    // ========================================================================
+    // EDGE CASE TESTS
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_delete_user_cascades_permissions() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        let user_id = user.id.clone();
+        db.create_user(user).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user_id);
+        db.create_device(device).await.unwrap();
+
+        assert!(db.get_user_device_permission("AA:BB:CC:DD:EE:FF", &user_id)
+            .await.unwrap().is_some());
+
+        db.delete_user(&user_id).await.unwrap();
+
+        let permissions = db.get_device_permissions("AA:BB:CC:DD:EE:FF")
+            .await.unwrap();
+        assert_eq!(permissions.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_delete_device_cascades_permissions() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        db.delete_device("AA:BB:CC:DD:EE:FF").await.unwrap();
+
+        let permissions = db.get_device_permissions("AA:BB:CC:DD:EE:FF")
+            .await.unwrap();
+        assert_eq!(permissions.len(), 0);
+    }
+
+    #[test]
+    fn test_device_status_enum_serialization() {
+        let status = DeviceStatus::Online;
+        let status_str = match status {
+            DeviceStatus::Online => "Online",
+            DeviceStatus::Offline => "Offline",
+            DeviceStatus::Error => "Error",
+            DeviceStatus::Updating => "Updating",
+            DeviceStatus::Maintenance => "Maintenance",
+        };
+        assert_eq!(status_str, "Online");
+    }
+
+    #[tokio::test]
+    async fn test_foreign_key_constraint_invalid_owner() {
+        let db = create_test_db().await;
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", "non-existent-user-id");
+        let result = db.create_device(device).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_search_users_empty_query() {
+        let db = create_test_db().await;
+        let results = db.search_users("").await.unwrap();
+
+        assert!(results.len() >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_pagination_beyond_results() {
+        let db = create_test_db().await;
+
+        let page = db.get_users_paginated(100, 10).await.unwrap();
+        assert_eq!(page.len(), 0);
+    }
+
+    // ========================================================================
+    // PERMISSION HIERARCHY TESTS - Alle Stufen einzeln prüfen
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_permission_hierarchy_write() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W")
+            .await.unwrap();
+
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "R").await.unwrap(),
+            "W should grant R");
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W").await.unwrap(),
+            "W should grant W");
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "V").await.unwrap(),
+            "W should NOT grant V");
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "M").await.unwrap(),
+            "W should NOT grant M");
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "O").await.unwrap(),
+            "W should NOT grant O");
+    }
+
+    #[tokio::test]
+    async fn test_permission_hierarchy_view() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "V")
+            .await.unwrap();
+
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "R").await.unwrap(),
+            "V should grant R");
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W").await.unwrap(),
+            "V should grant W");
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "V").await.unwrap(),
+            "V should grant V");
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "M").await.unwrap(),
+            "V should NOT grant M");
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "O").await.unwrap(),
+            "V should NOT grant O");
+    }
+
+    #[tokio::test]
+    async fn test_permission_hierarchy_manage() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "M")
+            .await.unwrap();
+
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "R").await.unwrap(),
+            "M should grant R");
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W").await.unwrap(),
+            "M should grant W");
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "V").await.unwrap(),
+            "M should grant V");
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "M").await.unwrap(),
+            "M should grant M");
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "O").await.unwrap(),
+            "M should NOT grant O");
+    }
+
+    #[tokio::test]
+    async fn test_maintenance_mode_higher_permissions_can_write() {
+        let db = create_test_db().await;
+
+        let user_v = create_test_user("view@example.com", "pass");
+        let user_m = create_test_user("manage@example.com", "pass");
+        let user_o = create_test_user("owner@example.com", "pass");
+        db.create_user(user_v.clone()).await.unwrap();
+        db.create_user(user_m.clone()).await.unwrap();
+        db.create_user(user_o.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user_o.id);
+        db.create_device(device).await.unwrap();
+
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user_v.id, "V").await.unwrap();
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user_m.id, "M").await.unwrap();
+
+        // Maintenance-Mode aktivieren
+        db.update_device("AA:BB:CC:DD:EE:FF", None, None, Some(true)).await.unwrap();
+
+        // V, M, O können trotz Maintenance-Mode schreiben
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user_v.id, "W").await.unwrap(),
+            "V should still write in maintenance mode");
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user_m.id, "W").await.unwrap(),
+            "M should still write in maintenance mode");
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user_o.id, "W").await.unwrap(),
+            "O should still write in maintenance mode");
+    }
+
+    #[tokio::test]
+    async fn test_user_has_no_permission() {
+        let db = create_test_db().await;
+
+        let owner = create_test_user("owner@example.com", "pass");
+        let other = create_test_user("other@example.com", "pass");
+        db.create_user(owner.clone()).await.unwrap();
+        db.create_user(other.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &owner.id);
+        db.create_device(device).await.unwrap();
+
+        // other hat keine Permission für das Device
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &other.id, "R").await.unwrap(),
+            "User without any permission should not have R");
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &other.id, "W").await.unwrap(),
+            "User without any permission should not have W");
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &other.id, "O").await.unwrap(),
+            "User without any permission should not have O");
+    }
+
+    #[tokio::test]
+    async fn test_permission_upgrade_overwrites() {
+        let db = create_test_db().await;
+
+        let user = create_test_user("user@example.com", "pass");
+        db.create_user(user.clone()).await.unwrap();
+
+        let device = create_test_device("AA:BB:CC:DD:EE:FF", &user.id);
+        db.create_device(device).await.unwrap();
+
+        // Setze R
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "R").await.unwrap();
+        assert!(!db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W").await.unwrap(),
+            "R should not grant W");
+
+        // Upgrade auf W
+        db.set_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W").await.unwrap();
+        assert!(db.user_has_device_permission("AA:BB:CC:DD:EE:FF", &user.id, "W").await.unwrap(),
+            "After upgrade to W, should have W");
+
+        // Nur eine Permission-Zeile sollte existieren
+        let perms = db.get_device_permissions("AA:BB:CC:DD:EE:FF").await.unwrap();
+        let user_perms: Vec<_> = perms.iter().filter(|p| p.user_id == user.id).collect();
+        assert_eq!(user_perms.len(), 1, "Should have exactly one permission entry after upgrade");
+        assert_eq!(user_perms[0].permission, "W");
+    }
+
+    #[tokio::test]
+    async fn test_get_device_by_id_not_found() {
+        let db = create_test_db().await;
+
+        let result = db.get_device_by_id("non-existent-mac").await.unwrap();
+        assert!(result.is_none(), "Non-existent device should return None");
     }
 }

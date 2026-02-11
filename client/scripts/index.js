@@ -66,24 +66,36 @@
     
     function displayDeviceDevicesList(devicesList) {
         const deviceListElement = document.getElementById('device-list');
-        
-        if (devicesList.length === 0) {
-            deviceListElement.innerHTML = '<div class="loading">Keine Device Geräte gefunden. Stellen Sie sicher, dass Geräte im Netzwerk verfügbar sind.</div>';
+
+        // Filter nur verbundene Geräte
+        const connectedDevices = devicesList.filter(device => device.connected === true);
+
+        if (connectedDevices.length === 0) {
+            deviceListElement.innerHTML = '<div class="loading">Keine verbundenen Device Geräte gefunden. Stellen Sie sicher, dass Geräte im Netzwerk verfügbar und verbunden sind.</div>';
             return;
         }
-        
+
         let html = '';
-        devicesList.forEach(device => {
+        connectedDevices.forEach(device => {
             console.log('Device data:', device);
             console.log('MAC Address:', device.macAddress);
             console.log('mDNS Hostname:', device.mdnsHostname);
+            console.log('Connected:', device.connected);
 
-            // Use mDNS hostname for display name, fallback to deviceId
-            const displayName = device.mdnsHostname || device.deviceId;
+            // Use alias, mDNS hostname, or deviceId for display name
+            const displayName = device.alias || device.mdnsHostname || device.deviceId;
+
+            // Status-Indikator (grüner Punkt für verbunden)
+            const statusClass = device.connected ? 'status-connected' : 'status-disconnected';
+            const statusText = device.connected ? 'Verbunden' : 'Getrennt';
 
             html += `
                 <div class="device-device" data-device-id="${device.deviceId}">
                     <h4>${displayName}</h4>
+                    <div class="connection-status">
+                        <span class="status-dot ${statusClass}"></span>
+                        ${statusText}
+                    </div>
                     <div class="device-device-info">
                         <span><strong>IP:</strong> ${device.deviceIp}</span>
                         <span><strong>TCP Port:</strong> ${device.tcpPort}</span>
@@ -96,10 +108,10 @@
                 </div>
             `;
         });
-        
+
         console.log('Setting Device device list HTML...');
         deviceListElement.innerHTML = html;
-        console.log('Device device list HTML set. Device count:', devicesList.length);
+        console.log('Device device list HTML set. Connected devices count:', connectedDevices.length, 'of', devicesList.length, 'total');
     }
     
     function setupDeviceDiscovery() {
@@ -160,6 +172,10 @@
 
                         // Show notification
                         showDeviceDiscoveryNotification(event.deviceId, event.deviceIp, event.mdnsHostname);
+                    } else if (event.event === 'deviceConnected' || event.event === 'deviceDisconnected') {
+                        console.log('Device connection status changed via WebSocket:', event.event, event.deviceId);
+                        // Reload the device list to update connection status
+                        loadDeviceDevicesList();
                     }
                 });
             }

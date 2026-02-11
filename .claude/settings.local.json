@@ -46,7 +46,8 @@
       "Bash(tree:*)",
       "Bash(tee:*)",
       "Bash(timeout 30 cargo run:*)",
-      "Bash(timeout 60 cargo run:*)"
+      "Bash(timeout 60 cargo run:*)",
+      "Read(//c/Users/chris/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mdns-sd-0.11.5/src/**)"
     ],
     "deny": [],
     "ask": []
