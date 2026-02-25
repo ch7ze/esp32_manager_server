@@ -137,6 +137,14 @@ pub struct DatabaseManager {
 }
 
 impl DatabaseManager {
+    #[cfg(test)]
+    pub async fn new_memory() -> Result<Self, Box<dyn std::error::Error>> {
+        let pool = SqlitePool::connect("sqlite::memory:").await?;
+        let db_manager = Self { pool };
+        db_manager.init_database().await?;
+        Ok(db_manager)
+    }
+
     pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
         // Erstelle SQLite-Datenbankdatei wenn sie nicht existiert
         std::fs::create_dir_all("data").ok();

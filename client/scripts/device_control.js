@@ -945,8 +945,11 @@ function createDeviceContent(device, suffix = '') {
                                 <button class="btn btn-success me-2" onclick="sendStartOption('${device.id}')">
                                     <i class="bi bi-play"></i> Start
                                 </button>
-                                <button class="btn btn-danger" onclick="sendReset('${device.id}')">
+                                <button class="btn btn-danger me-2" onclick="sendReset('${device.id}')">
                                     <i class="bi bi-arrow-clockwise"></i> Reset
+                                </button>
+                                <button class="btn btn-secondary btn-sm mt-1" id="${idPrefix}-tcp-btn" onclick="handleTcpConnection('${device.id}')">
+                                    <i class="bi bi-ethernet"></i> TCP Verbinden
                                 </button>
                             </div>
                         </div>
@@ -1125,6 +1128,9 @@ function updateConnectionStatus(deviceId, connected) {
 
     // Variable Controls auch entsprechend dem Connection Status aktualisieren
     updateVariableControlsConnectionState(deviceId, connected);
+
+    // TCP button aktualisieren
+    updateTcpButton(deviceId, connected);
 }
 
 
@@ -1579,6 +1585,52 @@ function sendReset(deviceId) {
     }
 }
 
+async function handleTcpConnection(deviceId) {
+    const btn = document.getElementById(`${deviceId}-tcp-btn`) ||
+                document.getElementById(`${deviceId}-tab-tcp-btn`);
+    const isConnected = btn && btn.dataset.connected === 'true';
+
+    let endpoint;
+    if (isConnected) {
+        endpoint = `/api/devices/${encodeURIComponent(deviceId)}/disconnect`;
+    } else {
+        endpoint = `/api/devices/${encodeURIComponent(deviceId)}/connect`;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> ...';
+    }
+
+    try {
+        const response = await fetch(endpoint, { method: 'POST', credentials: 'include' });
+        const data = await response.json();
+        if (!data.success) {
+            console.error('TCP action failed:', data.message);
+        }
+    } catch (e) {
+        console.error('TCP action error:', e);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function updateTcpButton(deviceId, isConnected) {
+    // Button may exist in tab or stack view — update both if present
+    [`${deviceId}-tcp-btn`, `${deviceId}-tab-tcp-btn`, `${deviceId}-stack-tcp-btn`].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.dataset.connected = isConnected ? 'true' : 'false';
+        if (isConnected) {
+            btn.className = 'btn btn-warning btn-sm mt-1';
+            btn.innerHTML = '<i class="bi bi-ethernet"></i> TCP Trennen';
+        } else {
+            btn.className = 'btn btn-secondary btn-sm mt-1';
+            btn.innerHTML = '<i class="bi bi-ethernet"></i> TCP Verbinden';
+        }
+    });
+}
+
 // Expose functions to global scope for HTML onclick handlers
 window.sendReset = sendReset;
 window.sendStartOption = sendStartOption;
@@ -1587,6 +1639,7 @@ window.handleVariableChange = handleVariableChange;
 window.handleVariableKeyPress = handleVariableKeyPress;
 window.refreshDevices = refreshDevices;
 window.initializeWebSocket = initializeWebSocket;
+window.handleTcpConnection = handleTcpConnection;
 
 function sendVariable(deviceId, variableName) {
 

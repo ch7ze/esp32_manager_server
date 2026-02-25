@@ -201,10 +201,17 @@ async fn handle_websocket_connection(
         }
     }
     
-    // Cleanup: unregister from all devices
+    // Cleanup: unregister from all devices and disconnect TCP if no more clients
     for device_id in registered_devices {
         if let Err(e) = device_store.unregister_client(&device_id, &client_id).await {
             error!("Failed to unregister client {} from device {}: {}", client_id, device_id, e);
+        }
+        let remaining = device_store.get_full_subscription_count(&device_id).await;
+        if remaining == 0 {
+            info!("No more clients for device {}, disconnecting TCP", device_id);
+            if let Err(e) = state.device_manager.disconnect_device(&device_id).await {
+                warn!("Failed to disconnect device {} on connection close: {}", device_id, e);
+            }
         }
     }
     
@@ -288,6 +295,7 @@ async fn handle_client_message(
             handle_unregister_for_device(
                 device_id,
                 device_store,
+                device_manager,
                 client_id,
                 registered_devices
             ).await
@@ -583,17 +591,27 @@ async fn handle_register_for_device(
 async fn handle_unregister_for_device(
     device_id: String,
     device_store: &SharedDeviceStore,
+    device_manager: &Arc<crate::device_manager::DeviceManager>,
     client_id: &str,
     registered_devices: &mut Vec<String>,
 ) -> Result<(), String> {
     info!("Unregistering client {} from device {}", client_id, device_id);
-    
+
     // Unregister from device store
     device_store.unregister_client(&device_id, client_id).await?;
-    
+
     // Remove from registered devices list
     registered_devices.retain(|id| id != &device_id);
-    
+
+    // Disconnect TCP if no more clients are viewing this device
+    let remaining = device_store.get_full_subscription_count(&device_id).await;
+    if remaining == 0 {
+        info!("No more clients for device {}, disconnecting TCP", device_id);
+        if let Err(e) = device_manager.disconnect_device(&device_id).await {
+            warn!("Failed to disconnect device {} after tab close: {}", device_id, e);
+        }
+    }
+
     Ok(())
 }
 

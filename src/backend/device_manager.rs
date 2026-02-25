@@ -158,12 +158,27 @@ impl DeviceManager {
     /// Remove device
     pub async fn remove_device(&self, device_id: &str) -> DeviceResult<()> {
         info!("Removing device: {}", device_id);
-        
-        // Disconnect if connected
-        if let Err(e) = self.disconnect_device(device_id).await {
-            warn!("Error disconnecting device {} during removal: {}", device_id, e);
+
+        // Disconnect if connected; if it fails (e.g. DeviceNotFound), ensure
+        // ip_to_device_id is still cleaned up via the config as a fallback
+        let disconnect_failed = match self.disconnect_device(device_id).await {
+            Ok(()) => false,
+            Err(e) => {
+                warn!("Error disconnecting device {} during removal: {}", device_id, e);
+                true
+            }
+        };
+        if disconnect_failed {
+            let config = {
+                let configs = self.device_configs.read().await;
+                configs.get(device_id).cloned()
+            };
+            if let Some(config) = config {
+                warn!("Ensuring UDP routing cleanup for device {} after failed disconnect", device_id);
+                self.unregister_device_from_udp(&config.ip_address).await;
+            }
         }
-        
+
         // Remove from collections
         {
             let mut connections = self.connections.write().await;
@@ -172,12 +187,37 @@ impl DeviceManager {
             crate::debug_logger::DebugLogger::log_device_manager_state(device_id, "REMOVED from connections HashMap");
         }
 
-
         {
             let mut configs = self.device_configs.write().await;
             configs.remove(device_id);
         }
-        
+
+        // Remove from unified activity tracker to prevent the timeout monitor
+        // from auto-re-registering this device as a UART device
+        {
+            let mut tracker = self.unified_activity_tracker.write().await;
+            if tracker.remove(device_id).is_some() {
+                info!("Removed device {} from unified activity tracker", device_id);
+            }
+        }
+
+        // Remove from unified connection states to prevent spurious
+        // disconnect events being sent to WebSocket clients after removal
+        {
+            let mut states = self.unified_connection_states.write().await;
+            if states.remove(device_id).is_some() {
+                info!("Removed device {} from unified connection states", device_id);
+            }
+        }
+
+        // Remove from device connection types to prevent stale type lookups
+        {
+            let mut conn_types = self.device_connection_types.write().await;
+            if conn_types.remove(device_id).is_some() {
+                info!("Removed device {} from device connection types", device_id);
+            }
+        }
+
         info!("device {} removed", device_id);
         Ok(())
     }

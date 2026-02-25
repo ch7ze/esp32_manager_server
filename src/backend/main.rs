@@ -351,14 +351,23 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         // POST /api/devices - Create new device
         .route("/api/devices", post(create_device_handler))
         
+        // GET /api/devices/discovered - List discovered devices (must be before /:id to avoid conflict)
+        .route("/api/devices/discovered", get(discovered_devices_handler))
+
         // GET /api/devices/:id - Details of an device
         .route("/api/devices/:id", get(get_device_handler).put(update_device_handler).delete(delete_device_handler))
-        
+
         // POST /api/device-permissions/:id - Manage permissions for a device
         .route("/api/device-permissions/:id", post(simple_permissions_handler))
-        
-        // GET /api/devices/discovered - List discovered devices  
-        .route("/api/devices/discovered", get(discovered_devices_handler))
+
+        // POST /api/devices/:id/connect - Connect TCP to device
+        .route("/api/devices/:id/connect", post(tcp_connect_handler))
+
+        // POST /api/devices/:id/disconnect - Disconnect TCP from device
+        .route("/api/devices/:id/disconnect", post(tcp_disconnect_handler))
+
+        // POST /api/devices/:id/reconnect - Reconnect TCP to device
+        .route("/api/devices/:id/reconnect", post(tcp_reconnect_handler))
         
         // GET /api/users/search - Search for users for permission management
         .route("/api/users/search", get(search_users_handler))
@@ -1559,6 +1568,43 @@ async fn list_users_handler(
         "success": true,
         "users": users
     })))
+}
+
+// POST /api/devices/:id/connect - Establish TCP connection to device
+async fn tcp_connect_handler(
+    State(app_state): State<AppState>,
+    Path(device_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    tracing::info!("TCP connect request for device: {}", device_id);
+    match app_state.device_manager.connect_device(&device_id).await {
+        Ok(()) => Ok(Json(json!({ "success": true, "message": "TCP connection established" }))),
+        Err(e) => Ok(Json(json!({ "success": false, "message": format!("TCP connect failed: {}", e) }))),
+    }
+}
+
+// POST /api/devices/:id/disconnect - Disconnect TCP from device
+async fn tcp_disconnect_handler(
+    State(app_state): State<AppState>,
+    Path(device_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    tracing::info!("TCP disconnect request for device: {}", device_id);
+    match app_state.device_manager.disconnect_device(&device_id).await {
+        Ok(()) => Ok(Json(json!({ "success": true, "message": "TCP disconnected" }))),
+        Err(e) => Ok(Json(json!({ "success": false, "message": format!("TCP disconnect failed: {}", e) }))),
+    }
+}
+
+// POST /api/devices/:id/reconnect - Disconnect then reconnect TCP to device
+async fn tcp_reconnect_handler(
+    State(app_state): State<AppState>,
+    Path(device_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    tracing::info!("TCP reconnect request for device: {}", device_id);
+    let _ = app_state.device_manager.disconnect_device(&device_id).await;
+    match app_state.device_manager.connect_device(&device_id).await {
+        Ok(()) => Ok(Json(json!({ "success": true, "message": "TCP reconnected" }))),
+        Err(e) => Ok(Json(json!({ "success": false, "message": format!("TCP reconnect failed: {}", e) }))),
+    }
 }
 
 // GET /api/devices/discovered - List discovered devices (authentication optional)

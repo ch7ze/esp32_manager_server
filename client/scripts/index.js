@@ -67,16 +67,13 @@
     function displayDeviceDevicesList(devicesList) {
         const deviceListElement = document.getElementById('device-list');
 
-        // Filter nur verbundene Geräte
-        const connectedDevices = devicesList.filter(device => device.connected === true);
-
-        if (connectedDevices.length === 0) {
-            deviceListElement.innerHTML = '<div class="loading">Keine verbundenen Device Geräte gefunden. Stellen Sie sicher, dass Geräte im Netzwerk verfügbar und verbunden sind.</div>';
+        if (devicesList.length === 0) {
+            deviceListElement.innerHTML = '<div class="loading">Keine Device Geräte gefunden. Stellen Sie sicher, dass Geräte im Netzwerk verfügbar sind.</div>';
             return;
         }
 
         let html = '';
-        connectedDevices.forEach(device => {
+        devicesList.forEach(device => {
             console.log('Device data:', device);
             console.log('MAC Address:', device.macAddress);
             console.log('mDNS Hostname:', device.mdnsHostname);
@@ -111,7 +108,7 @@
 
         console.log('Setting Device device list HTML...');
         deviceListElement.innerHTML = html;
-        console.log('Device device list HTML set. Connected devices count:', connectedDevices.length, 'of', devicesList.length, 'total');
+        console.log('Device device list HTML set.', devicesList.length, 'devices total');
     }
     
     function setupDeviceDiscovery() {

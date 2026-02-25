@@ -154,15 +154,21 @@ impl DeviceDiscovery {
                         let mdns_hostname = Some(mdns_hostname_string.clone());
 
                         // Create UDP device config with MAC address as device_id
+                        // Normalize MAC to dash format (AA-BB-CC-DD-EE-FF) — consistent with
+                        // the rest of the system (main.rs manual add, DB primary key convention)
                         let (final_device_id, udp_device_config) = if let Some(ref mac) = mac_address {
-                            let config = crate::device_types::DeviceConfig::new_udp(
-                                mac.clone(), // MAC address IS the device_id
+                            let mac_key = mac.replace(':', "-");
+                            // Use mDNS port as TCP port — the ESP32 is the TCP server
+                            let mdns_tcp_port = mdns_device.port;
+                            let config = crate::device_types::DeviceConfig::new(
+                                mac_key.clone(), // normalized MAC as device_id
                                 device_config_spawn.ip_address,
-                                device_config_spawn.udp_port,
+                                mdns_tcp_port, // TCP port from mDNS (ESP32 listens here)
+                                mdns_tcp_port, // UDP port same
                             );
-                            (mac.clone(), config)
+                            (mac_key, config)
                         } else {
-                            // No MAC address - use original device_id
+                            // No MAC address - use original device_id (already dash-normalized)
                             (device_id_spawn.clone(), device_config_spawn.clone())
                         };
 
@@ -205,11 +211,10 @@ impl DeviceDiscovery {
                             }
                         }
 
-                        // Automatically add device to manager if available (but don't connect yet)
+                        // Add device to manager (TCP connect happens when user opens a tab)
                         if let Some(manager) = &device_manager_spawn {
                             tracing::info!("Adding discovered Device to manager: {} (MAC as device_id)", final_device_id);
 
-                            // Add UDP device with MAC as device_id
                             if let Err(e) = manager.add_device(udp_device_config).await {
                                 tracing::warn!("Failed to add discovered device to manager: {}", e);
                             } else {

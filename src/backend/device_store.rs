@@ -582,6 +582,14 @@ impl DeviceEventStore {
         let connections = self.active_connections.read().await;
         connections.get(device_id).map(|v| v.len()).unwrap_or(0)
     }
+
+    /// Count only Full-subscription clients for a device (used to decide TCP disconnect)
+    pub async fn get_full_subscription_count(&self, device_id: &str) -> usize {
+        let connections = self.active_connections.read().await;
+        connections.get(device_id)
+            .map(|v| v.iter().filter(|c| c.subscription_type == crate::events::SubscriptionType::Full).count())
+            .unwrap_or(0)
+    }
     
     /// Get all active devices with their connection counts
     pub async fn get_active_devices(&self) -> HashMap<String, usize> {
