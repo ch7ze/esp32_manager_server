@@ -94,6 +94,13 @@ async fn debug_websocket_handler() -> Result<String, (axum::http::StatusCode, St
 
 #[tokio::main]  // This attribute makes main() async-capable with Tokio runtime
 async fn main() {
+    // Ensure CWD is project root, even when started via double-click from Explorer
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(project_root) = exe_path.ancestors().nth(3) {
+            let _ = std::env::set_current_dir(project_root);
+        }
+    }
+
     // Delete old log file at startup
     let _ = std::fs::remove_file("server_startup.log");
 
