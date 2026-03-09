@@ -279,6 +279,37 @@ impl DatabaseManager {
         .execute(&self.pool)
         .await?;
 
+        // Create GitHub settings table (single-row config)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS github_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                token TEXT,
+                updated_at TEXT NOT NULL
+            )
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO github_settings (id, token, updated_at)
+            VALUES (1, NULL, datetime('now'))
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Migration: Add owner/repo/asset columns to github_settings if not present
+        for col in &["owner", "repo", "asset"] {
+            let _ = sqlx::query(&format!(
+                "ALTER TABLE github_settings ADD COLUMN {} TEXT", col
+            ))
+            .execute(&self.pool)
+            .await;
+        }
+
         // Migration: Add connection_type column if it doesn't exist (for existing databases)
         let migration_result = sqlx::query(
             r#"
@@ -1103,6 +1134,73 @@ impl DatabaseManager {
             "#
         )
         .bind(max_debug_messages as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get all GitHub settings (token, owner, repo, asset)
+    pub async fn get_github_settings(&self) -> Result<(Option<String>, Option<String>, Option<String>, Option<String>), Box<dyn std::error::Error>> {
+        let row = sqlx::query(
+            "SELECT token, owner, repo, asset FROM github_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok((
+                row.try_get("token")?,
+                row.try_get("owner")?,
+                row.try_get("repo")?,
+                row.try_get("asset")?,
+            )),
+            None => Ok((None, None, None, None)),
+        }
+    }
+
+    /// Save GitHub repo settings (owner, repo, asset) — token is handled separately
+    pub async fn set_github_settings(
+        &self,
+        owner: Option<&str>,
+        repo: Option<&str>,
+        asset: Option<&str>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        sqlx::query(
+            r#"
+            UPDATE github_settings
+            SET owner = ?,
+                repo  = ?,
+                asset = ?,
+                updated_at = datetime('now')
+            WHERE id = 1
+            "#
+        )
+        .bind(owner)
+        .bind(repo)
+        .bind(asset)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get the stored GitHub personal access token (None if not set)
+    pub async fn get_github_token(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let (token, _, _, _) = self.get_github_settings().await?;
+        Ok(token)
+    }
+
+    /// Save or clear the GitHub personal access token
+    pub async fn set_github_token(&self, token: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+        sqlx::query(
+            r#"
+            UPDATE github_settings
+            SET token = ?, updated_at = datetime('now')
+            WHERE id = 1
+            "#
+        )
+        .bind(token)
         .execute(&self.pool)
         .await?;
 

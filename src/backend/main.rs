@@ -416,6 +416,15 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
         // GET /api/debug/settings - Get current debug settings
         .route("/api/debug/settings", get(get_debug_settings_handler).post(update_debug_settings_handler))
 
+        // GET/POST /api/github/settings - GitHub token management
+        .route("/api/github/settings", get(get_github_settings_handler).post(update_github_settings_handler))
+
+        // POST /api/firmware/upload - Upload .bin firmware file
+        .route("/api/firmware/upload", post(firmware_upload_handler))
+
+        // POST /api/firmware/fetch - Download .bin firmware from a URL (e.g. GitHub Release)
+        .route("/api/firmware/fetch", post(firmware_fetch_handler))
+
         // with_state() gives all API routes access to both stores
         .with_state(app_state);
 
@@ -451,6 +460,9 @@ pub async fn create_app(db: Arc<DatabaseManager>, device_store: SharedDeviceStor
 
     // Serve static files from 'public' directory (no hash versioning)
     app = app.nest_service("/stylesheets", ServeDir::new("public/stylesheets"));
+
+    // Serve firmware .bin files for ESP32 OTA download
+    app = app.nest_service("/firmware", ServeDir::new("firmware/"));
 
     // SPA routes - all serve the same index.html shell
     app = app
@@ -1993,4 +2005,351 @@ async fn update_debug_settings_handler(
         "success": true,
         "message": "Debug settings updated successfully"
     })))
+}
+
+// ============================================================================
+// GITHUB SETTINGS HANDLERS
+// GET  /api/github/settings - returns whether a token is configured (not the token itself)
+// POST /api/github/settings - save or clear the GitHub personal access token
+// ============================================================================
+
+#[derive(serde::Deserialize)]
+struct UpdateGithubSettingsRequest {
+    token: Option<String>,
+    owner: Option<String>,
+    repo: Option<String>,
+    asset: Option<String>,
+}
+
+async fn get_github_settings_handler(
+    State(app_state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    match app_state.db.get_github_settings().await {
+        Ok((token, owner, repo, asset)) => Ok(Json(json!({
+            "success": true,
+            "hasToken": token.is_some(),
+            "owner": owner,
+            "repo": repo,
+            "asset": asset,
+        }))),
+        Err(e) => {
+            tracing::error!("Failed to get GitHub settings: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn update_github_settings_handler(
+    State(app_state): State<AppState>,
+    Json(req): Json<UpdateGithubSettingsRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    // token field semantics:
+    //   None (field absent in JSON) = do not touch the stored token
+    //   Some("") = clear the stored token
+    //   Some("ghp_...") = save new token
+    if let Some(token_val) = &req.token {
+        let token_ref = if token_val.is_empty() { None } else { Some(token_val.as_str()) };
+        match app_state.db.set_github_token(token_ref).await {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::error!("Failed to save GitHub token: {}", e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+
+    // Only update owner/repo/asset if at least one of them was present in the request
+    if req.owner.is_some() || req.repo.is_some() || req.asset.is_some() {
+        let owner_ref = req.owner.as_deref().filter(|s| !s.is_empty());
+        let repo_ref  = req.repo.as_deref().filter(|s| !s.is_empty());
+        let asset_ref = req.asset.as_deref().filter(|s| !s.is_empty());
+        match app_state.db.set_github_settings(owner_ref, repo_ref, asset_ref).await {
+            Ok(()) => {
+                tracing::info!("GitHub settings saved: owner={:?} repo={:?} asset={:?}", owner_ref, repo_ref, asset_ref);
+            }
+            Err(e) => {
+                tracing::error!("Failed to save GitHub settings: {}", e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+
+    Ok(Json(json!({ "success": true })))
+}
+
+// ============================================================================
+// FIRMWARE HANDLERS - Upload/fetch .bin files for ESP32 OTA
+// POST /api/firmware/upload  - multipart upload
+// POST /api/firmware/fetch   - download from URL (e.g. GitHub Release)
+// ============================================================================
+
+/// Request body for POST /api/firmware/fetch
+///
+/// Two modes:
+///   1. GitHub API (private repos): provide `owner`, `repo`, `tag`, `asset`, optionally `github_token`
+///   2. Direct URL (public): provide `url`, optionally `filename`
+#[derive(serde::Deserialize)]
+struct FirmwareFetchRequest {
+    // --- GitHub API mode ---
+    owner: Option<String>,
+    repo: Option<String>,
+    tag: Option<String>,
+    asset: Option<String>,
+    github_token: Option<String>,
+    // --- Direct URL mode ---
+    url: Option<String>,
+    filename: Option<String>,
+}
+
+async fn firmware_fetch_handler(
+    State(app_state): State<AppState>,
+    Json(req): Json<FirmwareFetchRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    // Direct URL mode: no DB lookup needed
+    if req.url.is_some() {
+        let url = req.url.as_deref().unwrap();
+
+        if !url.ends_with(".bin") {
+            return Ok(Json(json!({ "success": false, "message": "URL must point to a .bin file" })));
+        }
+
+        let filename = req.filename.clone().unwrap_or_else(|| {
+            url.split('/').last().unwrap_or("firmware.bin").to_string()
+        });
+        // Strip any directory component to prevent path traversal
+        let filename = std::path::Path::new(&filename)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("firmware.bin")
+            .to_string();
+
+        if !filename.ends_with(".bin") {
+            return Ok(Json(json!({ "success": false, "message": "Filename must end with .bin" })));
+        }
+
+        tracing::info!("Fetching firmware from URL: {}", url);
+
+        let response = reqwest::get(url).await.map_err(|e| {
+            tracing::error!("Failed to fetch firmware from {}: {}", url, e);
+            StatusCode::BAD_GATEWAY
+        })?;
+
+        if !response.status().is_success() {
+            tracing::error!("Firmware fetch failed: HTTP {}", response.status());
+            return Ok(Json(json!({
+                "success": false,
+                "message": format!("Remote returned HTTP {}", response.status())
+            })));
+        }
+
+        let data = response.bytes().await.map_err(|e| {
+            tracing::error!("Failed to read firmware response body: {}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
+
+        std::fs::create_dir_all("firmware").map_err(|e| {
+            tracing::error!("Failed to create firmware directory: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+        let path = format!("firmware/{}", filename);
+        std::fs::write(&path, &data).map_err(|e| {
+            tracing::error!("Failed to write firmware file {}: {}", path, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+        tracing::info!("Firmware fetched: {} ({} bytes) from {}", filename, data.len(), url);
+        return Ok(Json(json!({
+            "success": true,
+            "filename": filename,
+            "size": data.len()
+        })));
+    }
+
+    // GitHub mode: load DB settings as fallback for missing request fields
+    let (db_token, db_owner, db_repo, db_asset) = match app_state.db.get_github_settings().await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to load GitHub settings from DB: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // Merge: request fields take priority, DB values are fallback
+    let owner = req.owner.as_deref().or(db_owner.as_deref());
+    let repo  = req.repo.as_deref().or(db_repo.as_deref());
+    let asset = req.asset.as_deref().or(db_asset.as_deref());
+    let token = req.github_token.as_deref().or(db_token.as_deref());
+
+    if let (Some(owner), Some(repo), Some(asset_name)) = (owner, repo, asset) {
+        let tag = req.tag.as_deref();
+
+        // Validate asset filename and strip any directory component
+        let asset_name = std::path::Path::new(asset_name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(asset_name);
+        if !asset_name.ends_with(".bin") {
+            return Ok(Json(json!({ "success": false, "message": "Asset name must end with .bin" })));
+        }
+
+        let resolved_token = token.map(|t| t.to_string());
+        // ── GitHub API mode ──────────────────────────────────────────────────
+        let client = reqwest::Client::builder()
+            .user_agent("esp32-manager-server/1.0")
+            .build()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        // Step 1: fetch release metadata to get the asset ID
+        let release_url = match tag {
+            Some(t) => format!("https://api.github.com/repos/{}/{}/releases/tags/{}", owner, repo, t),
+            None    => format!("https://api.github.com/repos/{}/{}/releases/latest", owner, repo),
+        };
+        tracing::info!("Fetching GitHub release metadata: {}", release_url);
+
+        let mut meta_req = client.get(&release_url)
+            .header("Accept", "application/vnd.github+json");
+        if let Some(token) = &resolved_token {
+            meta_req = meta_req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let meta_resp = meta_req.send().await.map_err(|e| {
+            tracing::error!("Failed to reach GitHub API: {}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
+
+        if !meta_resp.status().is_success() {
+            tracing::error!("GitHub API returned HTTP {}", meta_resp.status());
+            return Ok(Json(json!({
+                "success": false,
+                "message": format!("GitHub API returned HTTP {}", meta_resp.status())
+            })));
+        }
+
+        let release: Value = meta_resp.json().await.map_err(|e| {
+            tracing::error!("Failed to parse GitHub release JSON: {}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
+
+        // Find the asset by name
+        let asset_id = release["assets"]
+            .as_array()
+            .and_then(|assets| {
+                assets.iter().find(|a| a["name"].as_str() == Some(asset_name))
+            })
+            .and_then(|a| a["id"].as_u64())
+            .ok_or_else(|| {
+                tracing::error!("Asset '{}' not found in release '{:?}'", asset_name, tag);
+                StatusCode::NOT_FOUND
+            })?;
+
+        // Step 2: download the asset via GitHub API (handles private repo redirects correctly)
+        let asset_url = format!(
+            "https://api.github.com/repos/{}/{}/releases/assets/{}",
+            owner, repo, asset_id
+        );
+        tracing::info!("Downloading GitHub asset: {}", asset_url);
+
+        let mut asset_req = client.get(&asset_url)
+            .header("Accept", "application/octet-stream");
+        if let Some(token) = &resolved_token {
+            asset_req = asset_req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let asset_resp = asset_req.send().await.map_err(|e| {
+            tracing::error!("Failed to download GitHub asset: {}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
+
+        if !asset_resp.status().is_success() {
+            tracing::error!("GitHub asset download failed: HTTP {}", asset_resp.status());
+            return Ok(Json(json!({
+                "success": false,
+                "message": format!("GitHub asset download returned HTTP {}", asset_resp.status())
+            })));
+        }
+
+        let data = asset_resp.bytes().await.map_err(|e| {
+            tracing::error!("Failed to read asset response body: {}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
+
+        std::fs::create_dir_all("firmware").map_err(|e| {
+            tracing::error!("Failed to create firmware directory: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+        let path = format!("firmware/{}", asset_name);
+        std::fs::write(&path, &data).map_err(|e| {
+            tracing::error!("Failed to write firmware file {}: {}", path, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+        tracing::info!("GitHub firmware saved: {} ({} bytes)", asset_name, data.len());
+        Ok(Json(json!({
+            "success": true,
+            "filename": asset_name,
+            "size": data.len()
+        })))
+    } else {
+        Ok(Json(json!({
+            "success": false,
+            "message": "Provide either (owner, repo, tag, asset) for GitHub or (url) for direct download"
+        })))
+    }
+}
+
+// ============================================================================
+// FIRMWARE UPLOAD HANDLER - Upload .bin files for ESP32 OTA
+// POST /api/firmware/upload
+// ============================================================================
+
+async fn firmware_upload_handler(
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<Value>, StatusCode> {
+    std::fs::create_dir_all("firmware").map_err(|e| {
+        tracing::error!("Failed to create firmware directory: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("Multipart error: {}", e);
+        StatusCode::BAD_REQUEST
+    })? {
+        let raw_name = field
+            .file_name()
+            .filter(|n| n.ends_with(".bin"))
+            .map(|n| n.to_string())
+            .ok_or_else(|| {
+                tracing::warn!("Firmware upload rejected: missing or non-.bin filename");
+                StatusCode::BAD_REQUEST
+            })?;
+        // Strip any directory component to prevent path traversal
+        let filename = std::path::Path::new(&raw_name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("firmware.bin")
+            .to_string();
+
+        let data = field.bytes().await.map_err(|e| {
+            tracing::error!("Failed to read firmware bytes: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+
+        let path = format!("firmware/{}", filename);
+        std::fs::write(&path, &data).map_err(|e| {
+            tracing::error!("Failed to write firmware file {}: {}", path, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+        tracing::info!("Firmware uploaded: {} ({} bytes)", filename, data.len());
+        return Ok(Json(json!({
+            "success": true,
+            "filename": filename,
+            "size": data.len()
+        })));
+    }
+
+    tracing::warn!("Firmware upload: no file field in multipart request");
+    Err(StatusCode::BAD_REQUEST)
 }

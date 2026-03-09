@@ -14,7 +14,7 @@ path = "src/backend/lib.rs"
 
 
 [dependencies]
-axum = { version = "0.7", features = ["ws"] }
+axum = { version = "0.7", features = ["ws", "multipart"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-tungstenite = "0.21"
 futures = "0.3"
@@ -41,12 +41,12 @@ mdns-sd = "0.11"
 socket2 = "0.5"
 tokio-serial = "5.4"
 if-addrs = "0.13"
+reqwest = { version = "0.11", features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winsock2", "ws2def"] }
 
 [dev-dependencies]
-reqwest = { version = "0.11", features = ["json"] }
 tokio-test = "0.4"
 futures-util = "0.3"
 

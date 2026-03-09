@@ -104,6 +104,55 @@
                     </div>
                 </div>
 
+                <!-- GitHub Settings Card -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <h5>🔑 GitHub Access Token</h5>
+                    </div>
+                    <div class="settings-card-body">
+                        <div class="settings-alert" id="github-token-status" role="alert">
+                            <div class="alert-content">
+                                <div class="settings-spinner" role="status"></div>
+                                <span>Loading...</span>
+                            </div>
+                        </div>
+                        <form id="github-settings-form">
+                            <div class="settings-field">
+                                <label for="github-owner-input" class="settings-label">Owner</label>
+                                <input type="text" class="settings-input" id="github-owner-input" placeholder="your-github-username">
+                            </div>
+                            <div class="settings-field">
+                                <label for="github-repo-input" class="settings-label">Repository</label>
+                                <input type="text" class="settings-input" id="github-repo-input" placeholder="your-repo-name">
+                            </div>
+                            <div class="settings-field">
+                                <label for="github-asset-input" class="settings-label">Asset filename</label>
+                                <input type="text" class="settings-input" id="github-asset-input" placeholder="firmware.bin">
+                            </div>
+                            <div class="settings-field">
+                                <label for="github-token-input" class="settings-label">Personal Access Token</label>
+                                <input
+                                    type="password"
+                                    class="settings-input"
+                                    id="github-token-input"
+                                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                                    autocomplete="off">
+                                <div class="settings-help">
+                                    Required for private repositories. Needs <code>Contents: Read-only</code> scope. Leave empty to keep existing token.
+                                </div>
+                            </div>
+                            <div class="settings-button-group">
+                                <button type="submit" class="settings-btn settings-btn-primary">
+                                    💾 Save Settings
+                                </button>
+                                <button type="button" class="settings-btn settings-btn-danger" id="github-token-clear-btn">
+                                    🗑️ Clear Token
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
                 <!-- Info Card -->
                 <div class="settings-card">
                     <div class="settings-card-header">
@@ -175,11 +224,16 @@ async function initSettingsPage() {
     // Load debug settings
     await loadDebugSettings();
 
+    // Load GitHub settings
+    await loadGithubSettings();
+
     // Set up event listeners
     document.getElementById('refresh-ports-btn').addEventListener('click', refreshPorts);
     document.getElementById('uart-connect-btn').addEventListener('click', connectUart);
     document.getElementById('uart-disconnect-btn').addEventListener('click', disconnectUart);
     document.getElementById('debug-settings-form').addEventListener('submit', saveDebugSettings);
+    document.getElementById('github-settings-form').addEventListener('submit', saveGithubToken);
+    document.getElementById('github-token-clear-btn').addEventListener('click', clearGithubToken);
 }
 
 // Load available serial ports
@@ -398,6 +452,72 @@ async function saveDebugSettings(event) {
     } catch (error) {
         console.error('Failed to save debug settings:', error);
         showToast('Failed to save debug settings', 'error');
+    }
+}
+
+async function loadGithubSettings() {
+    try {
+        const response = await fetch('/api/github/settings');
+        const data = await response.json();
+        const statusEl = document.getElementById('github-token-status');
+        if (data.hasToken) {
+            statusEl.className = 'settings-alert settings-alert-success';
+            statusEl.innerHTML = '<div class="alert-content">✅ GitHub token is configured</div>';
+        } else {
+            statusEl.className = 'settings-alert settings-alert-warning';
+            statusEl.innerHTML = '<div class="alert-content">⚠️ No GitHub token configured (only needed for private repos)</div>';
+        }
+        document.getElementById('github-owner-input').value = data.owner || '';
+        document.getElementById('github-repo-input').value  = data.repo  || '';
+        document.getElementById('github-asset-input').value = data.asset || '';
+    } catch (error) {
+        console.error('Failed to load GitHub settings:', error);
+    }
+}
+
+async function saveGithubToken(event) {
+    event.preventDefault();
+    const token = document.getElementById('github-token-input').value.trim();
+    const owner = document.getElementById('github-owner-input').value.trim();
+    const repo  = document.getElementById('github-repo-input').value.trim();
+    const asset = document.getElementById('github-asset-input').value.trim();
+    try {
+        const response = await fetch('/api/github/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token || null, owner, repo, asset })
+        });
+        const data = await response.json();
+        if (data.success) {
+            showToast('GitHub settings saved', 'success');
+            document.getElementById('github-token-input').value = '';
+            await loadGithubSettings();
+        } else {
+            showToast('Failed to save settings', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to save GitHub settings:', error);
+        showToast('Failed to save GitHub settings', 'error');
+    }
+}
+
+async function clearGithubToken() {
+    try {
+        const response = await fetch('/api/github/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: "" })
+        });
+        const data = await response.json();
+        if (data.success) {
+            showToast('GitHub token cleared', 'success');
+            await loadGithubSettings();
+        } else {
+            showToast('Failed to clear token', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to clear GitHub token:', error);
+        showToast('Failed to clear GitHub token', 'error');
     }
 }
 
